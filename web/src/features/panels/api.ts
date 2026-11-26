@@ -110,7 +110,7 @@ export function saveThreadFile(threadId: string, body: { path: string; content: 
   return request<FileContent>("PUT", `${thread(threadId)}/files/content`, body);
 }
 
-/** `repoId` names the repository of a multi-repository thread whose worktree holds the repo-relative `path`; left out, it is the primary repository (docs/multi-repo.md). */
+/** `repoId` resolves `path` in that repository's worktree, including the primary repository. Without it, browser preview resolves `path` in the thread's task folder (docs/multi-repo.md). */
 export function openThreadFileInBrowser(threadId: string, path: string, repoId?: string) {
   return request("POST", `${thread(threadId)}/previews/file`, { path, ...(repoId === undefined ? {} : { repo_id: repoId }) });
 }

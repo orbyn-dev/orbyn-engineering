@@ -101,12 +101,12 @@ function FileBody({
 }
 
 /** A file of the thread's checkout, or of a repository it holds, by what it holds. Exported so the bar's own controls can be tested from one file. */
-export function Viewer({ threadId, tabId, path, line, repoId, repoName, primaryRepo, locked: worktreeLocked = false, onBack }: { threadId: string; tabId: string; path: string; line: number | null; /** Another repository of a multi-repository thread: `path` is relative to it, and every read and write carries its `repo_id`. Absent is the thread's own checkout, as always. */ repoId?: string; /** The repository's name, so its chip and its line comments say where the file is. */ repoName?: string; /** The tab names the thread's primary repository of a multi-repository thread: the read, the write and every failure stay the thread's own (the service's absent `repo_id` is the primary), and only the repository's name is used. */ primaryRepo?: boolean; /** The thread's own worktree is locked: its files read and are never saved. */ locked?: boolean; onBack?(): void }) {
+export function Viewer({ threadId, tabId, path, line, repoId, repoName, primaryRepo, previewRepoId, locked: worktreeLocked = false, onBack }: { threadId: string; tabId: string; path: string; line: number | null; /** Another repository of a multi-repository thread: `path` is relative to it, and every read and write carries its `repo_id`. Absent is the thread's own checkout, as always. */ repoId?: string; /** The repository's name, so its chip and its line comments say where the file is. */ repoName?: string; /** The tab names the thread's primary repository of a multi-repository thread. */ primaryRepo?: boolean; /** Browser previews need the primary id because their absent-id path is relative to the task folder. */ previewRepoId?: string; /** The thread's own worktree is locked: its files read and are never saved. */ locked?: boolean; onBack?(): void }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
   // Every preview reads the raw route, which takes the repository: another repository's image, PDF, media, archive
   // and document load from its own worktree. The outside editor (`open-in-editor`) and the browser preview
   // (`previews/file`) take it too, so a foreign tab offers both; its line comment and its file chip name the repository.
-  // The primary repository's tab names it too, and sends no `repo_id`: absent one is the primary, as the thread's own.
+  // Primary file reads send no `repo_id`; browser previews instead need the explicit id because their default is the task folder.
   const foreign = repoId !== undefined;
   const media = mediaKind(path);
   // An archive is read as a folder list rather than as bytes, so it never
@@ -170,7 +170,7 @@ export function Viewer({ threadId, tabId, path, line, repoId, repoName, primaryR
   }, [threadId, tabId, locked, setLock]);
   const openInBrowser = async () => {
     try {
-      await openThreadFileInBrowser(threadId, path, repoId);
+      await openThreadFileInBrowser(threadId, path, repoId ?? previewRepoId);
       useUi.getState().showInBrowser("");
     } catch (failure) {
       pushToast(`Couldn't open it. ${toFailure(failure).message}`);
