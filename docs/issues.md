@@ -652,13 +652,25 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - **A write the tracker refuses** answers the usual `forbidden`, `not_found`, `rate_limited` or
   `tracker_unavailable` and changes nothing here. Issue text goes in as a JSON field value, never as an argument
   position.
-- **The web client calls `comment` only**: the issue page's comment box under the comments is one
-  `POST /api/issues/item/comment` through the page-wide one-write guard, and it shows the comment the service stored
-  after the tracker's own, keeps a failed draft and says nothing changed, refuses a blank or over-64 KiB body before
-  sending anything, and goes back to Planned when a first answer is a 404 or 405 that is not `not_found`
-  (`web/src/features/issues/IssueComment.tsx`, `http.ts`). Its create and react controls stay Planned until a web
-  slice builds them against these routes; `web/src/api/personKey.ts` lists all three routes, so the key already
-  goes with them.
+- **The web client calls `comment`, `create` and `react`.** The issue page's comment box under the comments is
+  one `POST /api/issues/item/comment` through the page-wide one-write guard, and it shows the comment the service
+  stored after the tracker's own, keeps a failed draft and says nothing changed, refuses a blank or over-64 KiB body
+  before sending anything, and goes back to Planned when a first answer is a 404 or 405 that is not `not_found`
+  (`web/src/features/issues/IssueComment.tsx`, `http.ts`). The Issues page bar's New issue opens the create dialog
+  (`IssueCreate.tsx`): one `POST /api/issues/item/create` through the dialog's own one-write guard; the tracker's own
+  templates fill a missing description and are read while the dialog is open (`GET /api/issues/templates`); the label
+  and assignee rows are drawn only where `candidates` is offered, so a tracker that cannot edit its issues shows the
+  template form alone; a create whose outcome is unknown says the service's own "possibly created" sentence and offers
+  Check the list, never a re-send, while another refusal keeps the draft and sends it once more on the next click; a
+  first answer that is a 404 or 405 that is not `not_found` puts the control back to Planned. The issue page's
+  description card carries the reaction bar (`IssueReactions.tsx`): the counts the last write reported drawn as the
+  tracker's words and counts, and one `POST /api/issues/item/react` per choice through the page-wide one-write guard;
+  a first "no such route" hides the bar. Three contract gaps shape it: a plain detail read carries no reactions, so
+  the bar is only as fresh as the last write — the page keeps the counts it showed when another write's answer leaves
+  them out, and a reload starts without any; the counts carry no "did this person react", so the bar adds only and
+  cannot take the person's own reaction back; and a reaction on a comment is supported by the service, but its answer
+  carries no comment counts, so comment reactions are not drawn.
+  `web/src/api/personKey.ts` lists all three routes, so the key goes with them.
 - **Not verified.** No real GitHub, GitLab, Forgejo, Azure DevOps or Linear issue was created, commented on or
   reacted to; every writer is tested against its own local fake server, and the REST/GraphQL shapes (field names,
   GitLab's award names and its delete-by-id, Forgejo's reaction `content` words and delete body, Azure DevOps' JSON
@@ -692,14 +704,14 @@ create form; nothing feeds it to an engine.
   form shows. At most 50 and 16 KiB of body. A failed label read is swallowed: the templates answer with empty labels
   rather than failing the read. [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) tracks making that
   visible.
-- **GitHub**: the repository's markdown issue templates (below). **Forgejo and Azure DevOps** answer `[]`. Forgejo
-  has **no issue-template endpoint** either: its templates are repository files under `.gitea`/`.forgejo`
+- **GitHub**: the repository's markdown issue templates, read through the person's own `gh` (below). **Forgejo** has
+  **no issue-template endpoint** either: its templates are repository files under `.gitea`/`.forgejo`
   `ISSUE_TEMPLATE`, which its contents API can list cheaply, and a later row reads them with a YAML reader for a
-  `.yml` form: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has no issue template
-  source at all (work item types are not templates). Neither invents a template.
-- **The web client does not call this read yet**: its template picker stays Planned until a web slice builds it, and
-  the Issues page has no create form for it to sit in; [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548)
-  tracks that picker and the create form's design.
+  `.yml` form: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). **Azure DevOps** has no issue
+  template source at all (work item types are not templates). Neither invents a template.
+- **The web client reads this with the create dialog**: its Template row is drawn only when the read answers one, so
+  Forgejo and Azure DevOps (both `[]`) draw no row while GitLab, Linear and GitHub draw theirs. Forgejo's template
+  files stay [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548).
 - **Not verified.** No real GitLab, Linear or GitHub template list was read; each is tested against its own fake, and
   the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
   `hasFormFields`, GitHub's contents listing and base64 body) are from the APIs as understood. No real `orbynd`

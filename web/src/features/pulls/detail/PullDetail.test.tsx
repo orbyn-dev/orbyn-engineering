@@ -6,6 +6,7 @@ import { dataChanged } from "../../../api/shell";
 import { COALESCE_MS, startDataRefresh } from "../../../lib/dataRefresh";
 import type { PullCheck, PullRequestDetail } from "../../../api/types";
 import { useConnection } from "../../../product/state/connection";
+import { useUi } from "../../../product/state/ui";
 import { setRunLinkClient } from "../../crew";
 import { resetMergeOptions } from "../model/mergeOptions";
 import { PullDetail } from "./PullDetail";
@@ -66,7 +67,7 @@ beforeEach(() => {
   vi.spyOn(pullsApi, "breakdown").mockResolvedValue({ files: 1n, added: 1n, modified: 0n, deleted: 0n, renamed: 0n, additions: 3n, deletions: 0n });
   vi.spyOn(pullsApi, "linkedThreads").mockResolvedValue([]);
   vi.spyOn(pullsApi, "files").mockResolvedValue([
-    { path: "auth/redirect.ts", previous_path: null, status: "modified", additions: 2, deletions: 1, patch: null, viewed: false },
+    { path: "auth/redirect.ts", previous_path: null, status: "modified", additions: 2, deletions: 1, patch: null, viewed: false, viewed_synced: false },
   ]);
   vi.spyOn(pullsApi, "details").mockResolvedValue({ details: [{ project_id: "p", number: 142, comment_count: 3 }], paused: [] } as never);
   vi.spyOn(pullsApi, "forges").mockResolvedValue([{ id: "github", name: "GitHub", program: "gh", installed: true, version: null, signed_in: true, accounts: ["me"], viewer: "me", problem: null }]);
@@ -74,6 +75,7 @@ beforeEach(() => {
   vi.spyOn(pullsApi, "reviewerCandidates").mockResolvedValue([]);
   vi.spyOn(pullsApi, "labelCandidates").mockResolvedValue([]);
   vi.spyOn(pullsApi, "update").mockResolvedValue(undefined);
+  vi.spyOn(pullsApi, "mergeMethodSetting").mockResolvedValue(null);
   vi.spyOn(pullsApi, "timeline").mockResolvedValue([1, 2, 3].map((id) => ({ id: String(id), kind: "commented", actor: "sam", created_at: null, text: `Comment ${id}` })) as never);
 });
 afterEach(() => {
@@ -357,6 +359,32 @@ describe("one pull request as a page", () => {
     expect(screen.getByRole("button", { name: /Rebase and merge/ })).toBeInTheDocument();
   });
 
+  it("starts the merge menu and its dialog on the project's merge method", async () => {
+    vi.mocked(pullsApi.mergeMethodSetting).mockResolvedValue("rebase");
+    await show(detail({ review_state: "approved" }));
+    expect(pullsApi.mergeMethodSetting).toHaveBeenCalledWith("p", expect.anything());
+    expect(screen.getByRole("button", { name: /Rebase and merge/ })).toBeInTheDocument();
+    fireEvent.click(merge());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    // The page's menu chose the method, so the dialog only says which.
+    expect(screen.getByText("Rebase and merge #142 into main.")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Merge method" })).toBeNull();
+  });
+
+  it("waits for the project's merge method before the page dialog opens", async () => {
+    let release: (value: string | null) => void = () => undefined;
+    const setting = new Promise<string | null>((resolve) => { release = resolve; });
+    vi.mocked(pullsApi.mergeMethodSetting).mockReturnValue(setting);
+    await show(detail({ review_state: "approved" }));
+    // The setting is still loading, so Merge waits for it instead of opening on the fallback.
+    fireEvent.click(merge());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.queryByText("Merge pull request")).toBeNull();
+    await act(async () => { release("rebase"); await Promise.resolve(); });
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getByText("Rebase and merge #142 into main.")).toBeInTheDocument();
+  });
+
   it("shares Merge when checks pass and Delete branch after merge between the menu and the dialog", async () => {
     vi.spyOn(pullsApi, "creditsSetting").mockResolvedValue(false);
     resetMergeOptions();
@@ -415,6 +443,42 @@ describe("one pull request as a page", () => {
     expect(screen.getByText("This pull request changes auth/redirect.ts.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
     expect(screen.queryByText(/No files match/)).toBeNull();
+  });
+
+  it("shows GitHub's own viewed state for the files and marks a file", async () => {
+    vi.mocked(pullsApi.files).mockResolvedValue([
+      { path: "auth/login.ts", previous_path: null, status: "modified", additions: 1, deletions: 0, patch: null, viewed: true, viewed_synced: true },
+      { path: "auth/redirect.ts", previous_path: null, status: "modified", additions: 2, deletions: 1, patch: null, viewed: false, viewed_synced: false },
+    ]);
+    const setViewed = vi.spyOn(pullsApi, "setViewed").mockResolvedValue(undefined);
+    await show(detail());
+    fireEvent.click(screen.getByRole("tab", { name: /^Files changed/ }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Viewed 1 of 2");
+    expect(screen.getByRole("checkbox", { name: "Viewed auth/login.ts" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed auth/redirect.ts" }));
+    expect(setViewed).toHaveBeenCalledWith("p", 142, ["auth/redirect.ts"], true);
+  });
+
+  it("keeps a mark GitHub did not save, says so, and re-reads the files", async () => {
+    const unmarked = { path: "auth/redirect.ts", previous_path: null, status: "modified", additions: 2, deletions: 1, patch: null, viewed: false, viewed_synced: false };
+    const kept = { ...unmarked, viewed: true, viewed_synced: false };
+    vi.mocked(pullsApi.files).mockResolvedValueOnce([unmarked]).mockResolvedValue([kept]);
+    vi.spyOn(pullsApi, "setViewed").mockRejectedValue(
+      new ApiFailure("viewed_unsynced", "GitHub did not save the viewed mark for auth/redirect.ts. It is kept in Orbyn. HTTP 403: Resource not accessible by integration", 502),
+    );
+    useUi.setState({ toasts: [] });
+    await show(detail());
+    fireEvent.click(screen.getByRole("tab", { name: /^Files changed/ }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed auth/redirect.ts" }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(useUi.getState().toasts.map((toast) => toast.text)).toEqual([
+      "Couldn't mark that. GitHub did not save the viewed mark for auth/redirect.ts. It is kept in Orbyn. HTTP 403: Resource not accessible by integration",
+    ]);
+    expect(pullsApi.files).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("checkbox", { name: "Viewed auth/redirect.ts" })).toBeChecked();
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("Viewed 1 of 1");
   });
 
   it("says how many checks failed above the Checks tab, in place of the state banner", async () => {

@@ -10,7 +10,7 @@ use super::{
     issue_query, issue_ref_value, issue_summary_value, matches_words, number, optional_text,
     pull_check_name, pull_checks_value, pull_comment_body, pull_detail_value, pull_filter,
     pull_limit, pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to,
-    pull_review, pull_update_args, strings, text, wait_seconds,
+    pull_respond_args, pull_review, pull_update_args, strings, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -134,6 +134,24 @@ impl Core {
                     "Comment on issue {} in this project's tracker",
                     text(args, "key")?
                 ),
+                "orbyn_pull_request_respond" => {
+                    let (_, body, resolved) = pull_respond_args(args)?;
+                    let what = if body.is_some() {
+                        match resolved {
+                            Some(true) => "Reply to and resolve a review thread",
+                            Some(false) => "Reply to and unresolve a review thread",
+                            None => "Reply to a review thread",
+                        }
+                    } else if resolved == Some(true) {
+                        "Resolve a review thread"
+                    } else {
+                        "Unresolve a review thread"
+                    };
+                    format!(
+                        "{what} on pull request #{} of this project",
+                        number(args, "number")?
+                    )
+                }
                 "orbyn_pull_request_update" => {
                     let named: Vec<&str> = ["title", "body", "draft"]
                         .into_iter()
@@ -207,6 +225,7 @@ impl Core {
                 base_branch: string("base_branch"),
                 effort: None,
                 options: std::collections::BTreeMap::new(),
+                branch_name_seed: None,
             })
             .await?;
         self.runs.enqueue(&thread.id, text(spec, "prompt")?, &[])?;
@@ -403,6 +422,25 @@ impl Core {
                 self.comment_pull(&own.project_id, number, &request, &actor)
                     .await?;
                 json!({ "commented": true, "number": number })
+            }
+            "orbyn_pull_request_respond" => {
+                let number = pull_number(args)?;
+                let (thread, body, resolved) = pull_respond_args(args)?;
+                self.respond_pull_thread(
+                    &own.project_id,
+                    number,
+                    thread,
+                    body.as_deref(),
+                    resolved,
+                    &actor,
+                )
+                .await?;
+                json!({
+                    "number": number,
+                    "thread": thread,
+                    "replied": body.is_some(),
+                    "resolved": resolved,
+                })
             }
             "orbyn_pull_request_update" => {
                 let number = pull_number(args)?;
