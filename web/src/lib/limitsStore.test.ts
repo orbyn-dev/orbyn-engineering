@@ -140,6 +140,32 @@ describe("limits store", () => {
     expect(limitsAge("codex")).toBe(0);
   });
 
+  it("chases a cancelled join once: a retry that is cancelled is not chased again", async () => {
+    const loads: { fail: (error: unknown) => void }[] = [];
+    const load = vi.fn(
+      (_force: boolean) => new Promise<unknown>((_done, fail) => {
+        loads.push({ fail });
+      }),
+    );
+    const abort = () => new DOMException("The request was aborted.", "AbortError");
+    // The owner starts the shared check; two other screens join it.
+    const owner = readLimits("codex", load);
+    const first = readLimits("codex", load);
+    const second = readLimits("codex", load);
+    const settled = [owner, first, second].map((read) => read.catch((error: unknown) => error));
+    expect(load).toHaveBeenCalledTimes(1);
+    // The owner's screen goes. The first join reads once more on its own, and the second join waits on
+    // that retry instead of starting another request.
+    loads[0]?.fail(abort());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(load).toHaveBeenCalledTimes(2);
+    // The retry's screen goes too. The shared retry is cancelled, and neither join chases it again.
+    loads[1]?.fail(abort());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(load).toHaveBeenCalledTimes(2);
+    for (const result of await Promise.all(settled)) expect(result).toMatchObject({ name: "AbortError" });
+  });
+
   it("shares a genuine failure with a check that joined it, and still backs off", async () => {
     const load = vi.fn().mockRejectedValueOnce(new Error("down")).mockResolvedValueOnce({ n: 2 });
     const owner = readLimits("codex", load);
