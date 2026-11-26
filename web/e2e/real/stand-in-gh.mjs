@@ -105,6 +105,44 @@ function apiCall() {
   }
   if (path === "graphql") {
     const query = field("query") ?? "";
+    // GitHub's own viewed state: the files connection reads each changed file's
+    // `viewerViewedState`, and the mark mutations set or clear one path. The fixture holds it as
+    // `viewed: string[]`, the paths the viewer marked viewed.
+    if (query.includes("ViewedFiles")) {
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const entry = pull(field("number"));
+      return out({
+        data: {
+          repository: {
+            pullRequest: {
+              id: `PR_${entry.number}`,
+              files: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: (entry.files ?? []).map((file) => ({
+                  path: file.filename,
+                  viewerViewedState: (entry.viewed ?? []).includes(file.filename) ? "VIEWED" : "UNVIEWED",
+                })),
+              },
+            },
+          },
+        },
+      });
+    }
+    if (query.includes("ViewedId")) {
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const entry = pull(field("number"));
+      return out({ data: { repository: { pullRequest: { id: `PR_${entry.number}` } } } });
+    }
+    if (query.includes("MarkFileAsViewed") || query.includes("UnmarkFileAsViewed")) {
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const entry = pull(String(field("id")).replace("PR_", ""));
+      const path = field("path");
+      const viewed = (entry.viewed ?? []).filter((name) => name !== path);
+      if (query.includes("MarkFileAsViewed")) viewed.push(path);
+      entry.viewed = viewed;
+      save();
+      return out({ data: { [query.includes("MarkFileAsViewed") ? "markFileAsViewed" : "unmarkFileAsViewed"]: { pullRequest: { id: `PR_${entry.number}` } } } });
+    }
     if (query.includes("reviewRequests")) {
       // The batched details query: one alias `p<number>` per pull request.
       if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
