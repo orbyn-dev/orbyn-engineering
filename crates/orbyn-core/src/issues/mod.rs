@@ -1627,6 +1627,7 @@ impl Core {
                 base_branch: None,
                 effort: None,
                 options: BTreeMap::new(),
+                branch_name_seed: None,
             })
             .await?;
         if let Err(error) = self.store.put_issue_link(

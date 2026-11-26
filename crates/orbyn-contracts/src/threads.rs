@@ -535,6 +535,11 @@ pub struct CreateThread {
     pub title: Option<String>,
     /// Purpose slug for an isolated worktree; `None` works in the project root.
     pub worktree: Option<String>,
+    /// A seed for the new worktree's branch name only, such as a first message's title
+    /// seed. It never becomes the thread title; `None` names the branch from the purpose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub branch_name_seed: Option<String>,
     pub skill_profile: Option<String>,
     /// Where a new worktree starts; absent follows the settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]

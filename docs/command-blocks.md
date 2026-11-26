@@ -99,9 +99,10 @@ scrollback or another terminal's blocks.
 The service cannot tell a rerun from typing, which is the point: the line is the person's to run.
 
 Not in this version (listed in the [parity row](parity.md)): Send to agent, Ask Crew to fix, Run again in a new tab, and the
-full-screen frame while the program runs. Clear all blocks is a Person write the web may call
+full-screen frame while the program runs. Clear all blocks is a Person write the tab menu calls
 (`DELETE /api/threads/{id}/terminals/{terminal}/blocks`, above): it drops that terminal's finished blocks and their kept output,
-never the terminal, its scrollback or another terminal's blocks, and a running block stays. The web button is a separate web change.
+never the terminal, its scrollback or another terminal's blocks, and a running block stays. The web entry, its confirmation and its
+after state are `block-clear-menu`, `block-clear-confirm` and `block-clear-empty` (built; see [Web side](#web-side)).
 
 ## Security
 
@@ -134,13 +135,16 @@ never the terminal, its scrollback or another terminal's blocks, and a running b
 
 `web/src/features/panels/terminal/blocks/`: `blocksContract.ts` (the client contract and default: `blocksApi()` answers the
 production client, and `setBlocksApi(null)` puts it back), `blocksTypes.ts` (the block, page and limit shapes), `blocksClient.ts` (the
-production client for both routes: every path segment and cursor encoded, the session header and no person key, `410` as
-`cursor_expired`, and a `404` list as an empty list),
+production client for the two reads: every path segment and cursor encoded, the session header and no person key, `410` as
+`cursor_expired`, and a `404` list as an empty list; and `clearTerminalBlocks`, the Person clear through the app's `request`),
 `readOutput.ts` (every output page, started again from the top once after `410`), `blockText.ts` (cleaning, caps, durations, the
 case-insensitive plain-text line filter and match finder), `CommandBlocks.tsx` and `BlockCard.tsx` (the drawer's blocks, the filter and
 find bars of `block-filter` and `block-find`, and their header controls), `CommandBlocksPreview.tsx` (the dev-only screen). Filter and
 Find run in the web over the text `readBlockOutput` already returned: they call no route, draw matches as text nodes and `<mark>`
-elements, and the preview mock exercises both. The real client draws
+elements, and the preview mock exercises both. The drawer's tab menu offers Clear all blocks… only where `canSendPersonKey()` is
+true, and asks in `ClearBlocksDialog.tsx` before it sends one `clearTerminalBlocks` for each terminal of the tab (a split tab holds
+more than one): `useClearAllBlocks.tsx` keeps the one confirmation, the toast of `block-clear-empty` and the count that makes each
+cleared terminal's list read again from the start. The real client draws
 nothing until it has blocks: an empty list, a `404` and any other list failure leave the terminal exactly as it was, with no empty state
 and no error. Only the preview mock (and tests that install a client) shows the loading, empty and error frames. The mock,
 `web/mock/commandBlocks.ts`, is never in a production bundle: `scripts/assert-no-previews.mjs` fails the build if its marker or the
