@@ -23,9 +23,9 @@ export interface FileChip extends ChipBase {
   line: number | null;
   /** The last line of a selected range, when the chip names more than one line. */
   endLine?: number;
-  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout and for its primary repository. */
   repoId?: string;
-  /** That repository's name, so the file says where it is; set only with `repoId`. */
+  /** That repository's name, so the file says where it is; set for a repository of a multi-repository thread, the primary's too. */
   repoName?: string;
   /** Selected in the Changes diff, so the chip can take the person back to it there. */
   fromDiff?: boolean;
@@ -53,9 +53,9 @@ export interface ReviewChip extends ChipBase {
   line: number | null;
   /** Optional for older one-line diff comments. */
   endLine?: number;
-  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout and for its primary repository. */
   repoId?: string;
-  /** That repository's name, so the comment says where the file is; set only with `repoId`. */
+  /** That repository's name, so the comment says where the file is; set for a repository of a multi-repository thread, the primary's too. */
   repoName?: string;
   /** File annotations belong to the displayed source snapshot, not a later read. */
   sourceRevision?: string;
