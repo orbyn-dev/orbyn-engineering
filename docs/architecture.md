@@ -3388,7 +3388,10 @@ covering session lock acquisition, selector validation, CDP reads and polling.
 A tab's zoom, appearance and phone layout are set with `/view`. Zoom keeps the frame the
 same size and lays the page out smaller, 0.25 to 3 times. New tabs start from the
 `preview_zoom` and `preview_appearance` settings. A tab with no named profile ends with its
-profile. A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
+profile: its folder is removed after the browser is stopped, a removal the system refuses
+because that browser has not released its files is retried within a one-second deadline,
+and one that outlasts it is logged with its path and OS error rather than left unmentioned.
+A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
 one tab at a time because a browser locks its profile folder. A profile can be renamed
 while a tab has it open: only the stored name changes, never the folder, so its cookies
 and history stay. A private tab only stays
