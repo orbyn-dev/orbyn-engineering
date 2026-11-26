@@ -9,6 +9,7 @@ use std::time::Duration;
 use orbyn_contracts::Thread;
 use orbyn_contracts::{PermissionMode, UpdateThread};
 
+use crate::agents::driver::EngineDriver;
 use crate::agents::engines::{EngineConfig, EngineManager};
 use crate::agents::usage::UsageCenter;
 use crate::browser::preview::PreviewManager;
@@ -26,13 +27,16 @@ use crate::project::projects::ClonePool;
 use crate::project::workspace::Workspace;
 use crate::source_control::branch_names::{Naming, NamingMode};
 use crate::source_control::git;
-use crate::store::{NewSetup, NewThread, Recovery, Store};
+use crate::store::{AuditRecord, NewSetup, NewThread, Recovery, Store};
 use crate::tools::mcp::McpService;
 use crate::tools::skills::SkillService;
 use crate::util::new_id;
 
 /// A wait of this length covers an unattended person without a run hanging forever.
 pub const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long a new worktree's custom branch name waits for the engine. Thread creation does
+/// not wait past it: the worktree's purpose is used as the complete name instead.
+const BRANCH_NAME_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Where the service keeps its data unless told otherwise, so the CLI finds it too.
 pub fn default_data_dir() -> Option<PathBuf> {
@@ -519,7 +523,7 @@ impl Core {
                 .store
                 .project(request.project_id.as_deref().unwrap_or_default())?,
         };
-        self.engines.driver(&request.engine)?;
+        let driver = self.engines.driver(&request.engine)?;
         self.check_engine_enabled(&request.engine, &project.id)?;
         if let Some(profile) = request.skill_profile.as_deref()
             && profile != crate::tools::skills::DEFAULT_PROFILE
@@ -537,7 +541,20 @@ impl Core {
                         "Worktrees need a Git repository.".into(),
                     ));
                 }
-                let options = self.worktree_options(&project.id, &request)?;
+                let mut options = self.worktree_options(&project.id, &request)?;
+                // A reused worktree keeps the branch it already has, so its name is not
+                // written. The purpose is checked first, so a purpose Git would refuse
+                // never spends an engine call.
+                let named = options.naming.mode == NamingMode::Custom
+                    && !git::reuses_worktree(Path::new(&project.path), purpose).await?;
+                if named {
+                    if !git::valid_purpose(purpose) {
+                        return Err(CoreError::Invalid(git::PURPOSE_RULE.into()));
+                    }
+                    options.naming.custom = self
+                        .custom_branch_name(&project.id, purpose, &request, driver.as_ref())
+                        .await?;
+                }
                 Some(git::create_worktree(Path::new(&project.path), purpose, &options).await?)
             }
             None => None,
@@ -650,13 +667,95 @@ impl Core {
             naming: Naming {
                 mode: NamingMode::parse(&text("branch_naming_mode")?),
                 prefix: text("branch_name_prefix")?,
+                custom: None,
             },
             base: request.base_branch.clone(),
             from_origin: self.preference("new_worktrees_start_from_origin", Some(project_id))?
                 == serde_json::json!(true),
             submodules: text("worktree_submodules")?,
-            seed: real_title(request.title.as_deref()),
+            seed: real_title(request.branch_name_seed.as_deref())
+                .or_else(|| real_title(request.title.as_deref())),
         })
+    }
+
+    /// The name an engine writes for custom branch naming, from the request's
+    /// `branch_name_seed` (or its title, then the worktree's purpose) and the project's
+    /// `branch_name_instructions`. `None` keeps the purpose as the complete name: no
+    /// instruction is set, the engine's one-shot path refuses or fails, its reply is not
+    /// one valid ref, or the wait runs out. A model that cannot answer never fails the
+    /// thread. The name is still checked against the project's branches when it is used.
+    async fn custom_branch_name(
+        &self,
+        project_id: &str,
+        purpose: &str,
+        request: &orbyn_contracts::CreateThread,
+        driver: &dyn EngineDriver,
+    ) -> Result<Option<String>> {
+        let engine = request.engine.as_str();
+        let instructions = self
+            .preference("branch_name_instructions", Some(project_id))?
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if instructions.is_empty() {
+            return Ok(None);
+        }
+        let message = real_title(request.branch_name_seed.as_deref())
+            .or_else(|| real_title(request.title.as_deref()))
+            .unwrap_or_else(|| purpose.to_owned());
+        let model = crate::agents::text_models::text_model_for(
+            &self.store,
+            &self.engines,
+            engine,
+            Some(project_id),
+            request.model.as_deref(),
+        )
+        .await
+        .ok()
+        .flatten()
+        .map(|choice| choice.model);
+        // The attempt is audited before it is tried, as the title call's is, so an engine
+        // that refuses the one-shot still leaves the row that says usage was asked for.
+        self.store.append_audit(&AuditRecord {
+            actor: "system:branch_name".into(),
+            action: "engine.one_shot".into(),
+            target: engine.to_owned(),
+            decision: None,
+            source: "system".into(),
+            thread_id: None,
+            run_id: None,
+            detail: serde_json::json!({
+                "purpose": "branch_name",
+                "model": model,
+                "project_id": project_id,
+            }),
+        })?;
+        let prompt =
+            crate::source_control::branch_names::generation_prompt(&instructions, &message);
+        let reply = match tokio::time::timeout(
+            BRANCH_NAME_TIMEOUT,
+            driver.one_shot(&prompt, model.as_deref()),
+        )
+        .await
+        {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "the engine could not write a branch name");
+                return Ok(None);
+            }
+            Err(_) => {
+                tracing::warn!("the engine did not answer the branch-name prompt in time");
+                return Ok(None);
+            }
+        };
+        match crate::source_control::branch_names::generated_name(&reply) {
+            Some(name) => Ok(Some(name)),
+            None => {
+                tracing::warn!("the engine's branch name was not one valid ref");
+                Ok(None)
+            }
+        }
     }
 
     pub async fn thread_diff(&self, thread_id: &str) -> Result<Vec<orbyn_contracts::FileDiff>> {
@@ -1161,6 +1260,24 @@ mod preference_consumer_tests {
         // A real title no slug can keep falls back to the purpose too.
         let thread = make_worktree_thread(&core, &project, "fix-parser", Some("!!! ???")).await;
         assert_eq!(thread.worktree.unwrap().branch, "feat/fix-parser");
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn semantic_naming_uses_the_branch_name_seed_and_the_title_stays_default() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        set_naming(&core, "semantic");
+        let request: orbyn_contracts::CreateThread = serde_json::from_value(json!({
+            "project_id": project,
+            "engine": "codex",
+            "branch_name_seed": "Add sign-up screen",
+            "worktree": "wire-login",
+        }))
+        .unwrap();
+        let thread = core.create_thread(request).await.unwrap();
+        assert_eq!(thread.title, "New thread");
+        assert_eq!(thread.worktree.unwrap().branch, "feat/add-sign-up-screen");
         core.shutdown().await;
     }
 
