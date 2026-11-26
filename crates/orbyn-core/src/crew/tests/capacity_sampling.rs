@@ -3,7 +3,6 @@
 //! Real `Core`, fake engines. No git is needed: the sampling step reads store rows only.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::json;
 
@@ -265,12 +264,11 @@ async fn the_merge_hook_samples_in_its_detached_task_and_logs_instead_of_failing
         // `/repo` is not a repository: provenance fails and is written to the ledger, and sampling still runs.
         w.core.capacity_after_merge(&merge, NOW);
     }
-    for _ in 0..100 {
-        if rows(&w) == 4 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    // The detached write is waited for on the harness clock, not a five-second wall-clock guess.
+    w.until("the detached sampling wrote its four rows", |w| {
+        rows(w) == 4
+    })
+    .await;
     assert_eq!(rows(&w), 4);
     assert_eq!(
         w.core
