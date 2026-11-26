@@ -4004,7 +4004,8 @@ every method, path and which routes need a credential.
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |
 | `GET, POST /api/threads/:id/pulls`, `POST .../pulls/refresh` | Linked pull requests; refresh also links the branch's own |
-| `GET /api/threads/:id/watches?repo_id=`, `POST, DELETE /api/threads/:id/pulls/:number/watch?repo_id=` | `PullWatch`; `400` on a settled, archived or subagent thread; `repo_id` names one repository of a multi-repository thread, absent is its primary |
+| `GET /api/threads/:id/watches?repo_id=`, `POST /api/threads/:id/pulls/:number/watch?repo_id=` | The read answers `PullWatch[]`; the start answers `201` and the stored `PullWatch` (`400` on a settled, archived or subagent thread); `repo_id` names one repository of a multi-repository thread, absent is its primary |
+| `DELETE /api/threads/:id/pulls/:number/watch?repo_id=` | `204` with no body; a watch that is not there is no error; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `POST /api/watches/check` | One watch pass now (`204`) |
 | `GET, DELETE /api/threads/:id/pulls/:number` | `PullRequestDetail`; unlink |
 | `POST /api/threads/:id/pulls/:number/review`, `/merge` | Review and merge through the forge CLI |
