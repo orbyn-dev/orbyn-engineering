@@ -25,6 +25,65 @@ pub(super) const RESOLVE_MUTATION: &str =
 pub(super) const UNRESOLVE_MUTATION: &str =
     "mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){thread{id}}}";
 
+/// The pull request's own node id, which every mark mutation names.
+pub(super) const PULL_ID_QUERY: &str = "query ViewedId($owner:String!,$repo:String!,$number:Int!){\
+repository(owner:$owner,name:$repo){pullRequest(number:$number){id}}}";
+
+/// One page of a pull request's own node id and its changed files' viewed state. `after` is
+/// passed only for a later page, so the first request carries no cursor.
+pub(super) const VIEWED_FILES_QUERY: &str = "query ViewedFiles($owner:String!,$repo:String!,$number:Int!,$after:String){\
+repository(owner:$owner,name:$repo){pullRequest(number:$number){id files(first:100,after:$after){\
+pageInfo{hasNextPage endCursor} nodes{path viewerViewedState}}}}}";
+
+/// The viewer's own viewed mark for one file, set or cleared through GitHub.
+pub(super) const MARK_VIEWED_MUTATION: &str = "mutation MarkFileAsViewed($id:ID!,$path:String!){\
+markFileAsViewed(input:{pullRequestId:$id,path:$path}){pullRequest{id}}}";
+
+pub(super) const UNMARK_VIEWED_MUTATION: &str = "mutation UnmarkFileAsViewed($id:ID!,$path:String!){\
+unmarkFileAsViewed(input:{pullRequestId:$id,path:$path}){pullRequest{id}}}";
+
+/// One page of GitHub's viewed state: the pull request's id, each file's path and whether the
+/// viewer marked it viewed, and the cursor of a later page when GitHub names one.
+pub(super) struct ViewedPage {
+    pub(super) pull_id: String,
+    pub(super) states: Vec<(String, bool)>,
+    pub(super) next: Option<String>,
+}
+
+/// A reply that names no pull request, or no files connection, is not read as "nothing is viewed".
+pub(super) fn parse_github_viewed_page(reply: &Value) -> Option<ViewedPage> {
+    let pull = reply.pointer("/data/repository/pullRequest")?;
+    let pull_id = optional(pull, "id")?;
+    let files = pull.get("files")?;
+    let nodes = files.get("nodes")?.as_array()?;
+    let states = nodes
+        .iter()
+        .filter_map(|node| {
+            let path = optional(node, "path")?;
+            Some((path, field(node, "viewerViewedState") == "VIEWED"))
+        })
+        .collect();
+    let more = files
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(Value::as_bool)?;
+    let next = if more {
+        // A page GitHub says continues but names no cursor is a broken answer, not the last page.
+        Some(
+            files
+                .pointer("/pageInfo/endCursor")
+                .and_then(Value::as_str)?
+                .to_owned(),
+        )
+    } else {
+        None
+    };
+    Some(ViewedPage {
+        pull_id,
+        states,
+        next,
+    })
+}
+
 /// `gh pr checks` exits non-zero while checks fail or wait, and still prints them.
 pub(super) async fn raw_github_checks(cwd: &Path, id: &str) -> Value {
     let args = [
@@ -126,6 +185,7 @@ pub(super) fn parse_github_file(file: &Value) -> PullFile {
         deletions: file.get("deletions").and_then(Value::as_u64).unwrap_or(0),
         patch: optional(file, "patch"),
         viewed: false,
+        viewed_synced: false,
     }
 }
 
