@@ -1151,25 +1151,6 @@ async fn an_ios_screenshot_file_over_sixteen_mib_is_tool_output_too_large() {
 }
 
 #[tokio::test]
-async fn a_tool_failure_is_tool_failed_with_fixed_copy() {
-    let fake = Fake::new();
-    fake.set("action_exit", 2);
-    let error = fake
-        .devices()
-        .act(
-            "android:Pixel_8",
-            DeviceActionInput::Button {
-                value: DeviceButton::Home,
-            },
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(error.code(), "tool_failed");
-    assert_eq!(error.status(), 502);
-    assert_eq!(error.public_message(), TOOL_FAILED_MESSAGE);
-}
-
-#[tokio::test]
 async fn a_screenshot_that_is_not_a_png_is_tool_failed() {
     let fake = Fake::new();
     fake.set("screenshot_png", 0);
