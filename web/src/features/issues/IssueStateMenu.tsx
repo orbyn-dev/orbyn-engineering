@@ -1,5 +1,5 @@
 import { ChevronDown } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiFailure } from "../../api/client";
 import { useUi } from "../../product/state/ui";
 import { Menu } from "../../ui/Menu";
@@ -33,6 +33,10 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
   now.current = issue.state;
   // Set at the click, not at the next render: two quick choices in one frame are still one write.
   const sending = useRef(false);
+  // The state the last write claimed: a click that lands after the write answered but before the issue re-renders
+  // is the same choice, not a second write. Cleared once the issue shows a state (any answer, not only the asked one).
+  const claimed = useRef<IssueState | null>(null);
+  useEffect(() => { claimed.current = null; }, [issue.state]);
   const choices = issue.states ?? [];
   if (issue.states === undefined || refused) {
     return (
@@ -44,11 +48,13 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
   }
   if (choices.length === 0) return <span className="iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span>;
   const choose = async (next: IssueState) => {
-    if (busy || sending.current || sameState(next, now.current)) return;
+    if (busy || sending.current || sameState(next, now.current) || (claimed.current !== null && sameState(next, claimed.current))) return;
     sending.current = true;
+    claimed.current = next;
     try {
       await write(() => issuesApi().setState(issue, next));
     } catch (failure) {
+      claimed.current = null;
       if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
         markNotOffered("state");
         pushToast("This service does not offer state changes yet. Nothing changed.");
