@@ -306,6 +306,10 @@ switch (route) {
     break;
   }
   case "pr list":
+    // A project whose repository cannot be read fails the call the way real gh does: its own message on stderr and a
+    // non-zero exit. The service reports that in the list's per-project `failed` rows instead of failing the whole
+    // read. Off by default; set and cleared through the service's `ghEdit(0, …)` helper, like `delayMs`.
+    if (state.pullListError) fail(state.pullListError);
     out(state.pulls.filter((entry) => (flag("--state") === "all" ? true : entry.state.toLowerCase() === flag("--state"))));
     break;
   case "pr view":
