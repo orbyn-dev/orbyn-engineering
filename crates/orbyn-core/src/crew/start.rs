@@ -640,7 +640,7 @@ impl Core {
         .leases()?
         {
             self.store
-                .add_crew_object(&task.id, &CrewObject::Lease(lease))
+                .add_crew_lease_grant(&task.id, &lease)
                 .map_err(internal)?;
         }
         drop(_lease_granting);

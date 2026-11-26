@@ -288,8 +288,8 @@ impl Core {
         // set in one mode, so the brief's own grant and a member's request for a narrower set
         // are separate grants: a request or a release never hides the brief's files, and the
         // check below still reads both.
-        let mut newest: HashMap<(String, String, bool, Vec<String>), (String, Lease)> =
-            HashMap::new();
+        type Lineage = (String, String, bool, Vec<String>);
+        let mut newest: HashMap<Lineage, (String, Lease)> = HashMap::new();
         for (task, lease) in all {
             let key = (
                 task.clone(),
@@ -327,11 +327,23 @@ impl Core {
                 now,
             };
             let ended = grant.ended(&lease, LeaseState::Expired, "The lease ran out.")?;
-            self.store
-                .add_crew_object(&task, &CrewObject::Lease(ended))
-                .map_err(internal)?;
+            if let Some(current) = self
+                .store
+                .end_crew_lease_snapshot(&task, &lease, &ended)
+                .map_err(internal)?
+                && current.state == LeaseState::Granted
+                && current.expires_at.as_str() > today.as_str()
+            {
+                live.push((task, current));
+            }
         }
-        live.sort_by(|a, b| a.1.created_at.cmp(&b.1.created_at));
+        live.sort_by_cached_key(|(_, lease)| {
+            OffsetDateTime::parse(
+                lease.created_at.as_str(),
+                &time::format_description::well_known::Rfc3339,
+            )
+            .ok()
+        });
         Ok(live)
     }
 
@@ -529,7 +541,7 @@ impl Core {
             };
             let ended = grant.ended(&lease, LeaseState::Released, "The run ended.")?;
             self.store
-                .add_crew_object(&owner, &CrewObject::Lease(ended))
+                .end_crew_lease_snapshot(&owner, &lease, &ended)
                 .map_err(internal)?;
         }
         Ok(())
@@ -658,12 +670,15 @@ impl Core {
         // leases after the task moved to its final state. The grant is stored only if that state
         // still stands when its own transaction reads it, so a waiting request cannot store a
         // grant the cleanup has already passed.
-        self.store
-            .add_crew_lease_grant(&task.id, &lease)
-            .map_err(|error| match error {
-                CoreError::RunClosed => CrewError::new(ErrorCode::RunEnded, "this run has ended"),
-                other => internal(other),
-            })?;
+        let lease =
+            self.store
+                .add_crew_lease_grant(&task.id, &lease)
+                .map_err(|error| match error {
+                    CoreError::RunClosed => {
+                        CrewError::new(ErrorCode::RunEnded, "this run has ended")
+                    }
+                    other => internal(other),
+                })?;
         Ok(json!({ "id": lease.id, "state": lease.state }))
     }
 
@@ -714,7 +729,7 @@ impl Core {
             };
             let ended = grant.ended(&lease, LeaseState::Released, "The member released it.")?;
             self.store
-                .add_crew_object(&owner, &CrewObject::Lease(ended))
+                .end_crew_lease_snapshot(&owner, &lease, &ended)
                 .map_err(internal)?;
         }
         Ok(json!({ "ok": true }))

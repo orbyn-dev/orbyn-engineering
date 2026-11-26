@@ -439,8 +439,7 @@ impl Core {
         .leases()
         .map_err(core_error)?
         {
-            self.store
-                .add_crew_object(&task.id, &CrewObject::Lease(lease))?;
+            self.store.add_crew_lease_grant(&task.id, &lease)?;
         }
         drop(_granting);
         let flags = crate::crew::index_flags::flagged(Path::new(&correction.checkout))
