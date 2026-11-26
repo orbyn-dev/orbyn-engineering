@@ -733,11 +733,94 @@ pub(crate) async fn diff(cwd: &Path, base: Option<&str>) -> Result<Vec<FileDiff>
     let base = base.unwrap_or("HEAD");
     let mut files = tracked_diff(cwd, &[base]).await?;
     let listing = git(cwd, &["ls-files", "--others", "--exclude-standard", "-z"]).await?;
-    for path in listing.split(|byte| *byte == 0).filter(|p| !p.is_empty()) {
-        files.push(untracked_diff(cwd, &String::from_utf8_lossy(path)).await?);
+    let paths: Vec<_> = listing
+        .split(|byte| *byte == 0)
+        .filter(|p| !p.is_empty())
+        .collect();
+    let attributes = untracked_diff_attributes(cwd, &listing, &paths).await?;
+    for (path, use_git) in paths.into_iter().zip(attributes) {
+        let path = String::from_utf8_lossy(path);
+        files.push(if use_git {
+            git_untracked_diff(cwd, &path).await?
+        } else {
+            untracked_diff(cwd, &path).await?
+        });
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(files)
+}
+
+/// Check every name in one process; custom drivers and -diff need Git's own classification.
+async fn untracked_diff_attributes(
+    cwd: &Path,
+    listing: &[u8],
+    paths: &[&[u8]],
+) -> Result<Vec<bool>> {
+    use tokio::io::AsyncWriteExt;
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    // check-attr prints the same words for boolean states and drivers literally named
+    // "set" or "unspecified". If either driver configures binary classification,
+    // conservatively let Git resolve the ambiguous value.
+    let drivers = git_raw(
+        cwd,
+        &[
+            "config",
+            "--name-only",
+            "--get-regexp",
+            r"^diff\.(set|unspecified)\.binary$",
+        ],
+    )
+    .await?;
+    if !drivers.status.success() && drivers.status.code() != Some(1) {
+        return Err(CoreError::Git(text(&drivers.stderr)));
+    }
+    let configured = String::from_utf8_lossy(&drivers.stdout);
+    let named_set = configured.lines().any(|name| name == "diff.set.binary");
+    let named_unspecified = configured
+        .lines()
+        .any(|name| name == "diff.unspecified.binary");
+    let mut cmd = command(cwd);
+    cmd.args(SAFE_CONFIG)
+        .args(["check-attr", "-z", "--stdin", "diff"])
+        .stdin(Stdio::piped());
+    let mut child = crate::host::process::ManagedChild::spawn(cmd)
+        .map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
+    let mut stdin = child
+        .child_mut()
+        .stdin
+        .take()
+        .ok_or_else(|| CoreError::Git("Could not open git stdin".into()))?;
+    let write = async move {
+        let result = stdin.write_all(listing).await;
+        drop(stdin);
+        result
+    };
+    let (written, output) = tokio::join!(write, child.output());
+    written.map_err(|error| CoreError::Git(format!("Could not write git input: {error}")))?;
+    let output = output.map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
+    if !output.status.success() {
+        return Err(CoreError::Git(text(&output.stderr)));
+    }
+    let fields: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
+    if fields.len() != paths.len() * 3 + 1 || fields.last() != Some(&&b""[..]) {
+        return Err(CoreError::Git("Invalid git check-attr output".into()));
+    }
+    paths
+        .iter()
+        .zip(fields.as_chunks::<3>().0)
+        .map(|(path, fields)| {
+            if fields[0] != *path || fields[1] != b"diff" {
+                return Err(CoreError::Git("Invalid git check-attr output".into()));
+            }
+            Ok(match fields[2] {
+                b"unspecified" => named_unspecified,
+                b"set" => named_set,
+                _ => true,
+            })
+        })
+        .collect()
 }
 
 async fn tracked_diff(cwd: &Path, range: &[&str]) -> Result<Vec<FileDiff>> {
@@ -1754,6 +1837,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn untracked_diff_respects_binary_diff_attributes() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "*.bin -diff\n*.custom diff=opaque\n*.namedset diff=set\n*.namedunspecified diff=unspecified\n",
+        )
+        .unwrap();
+        crate::testing::run_git(&repo, &["config", "diff.opaque.binary", "true"]);
+        crate::testing::run_git(&repo, &["config", "diff.set.binary", "true"]);
+        crate::testing::run_git(&repo, &["config", "diff.unspecified.binary", "true"]);
+        for path in [
+            "plain.bin",
+            "named.custom",
+            "x.namedset",
+            "x.namedunspecified",
+            "ordinary.txt",
+        ] {
+            std::fs::write(repo.join(path), "plain text without NUL\n").unwrap();
+        }
+        let files = diff(&repo, None).await.unwrap();
+        for path in [
+            "plain.bin",
+            "named.custom",
+            "x.namedset",
+            "x.namedunspecified",
+        ] {
+            let file = files.iter().find(|file| file.path == path).unwrap();
+            let expected = git_untracked_diff(&repo, path).await.unwrap();
+            assert!(expected.patch.contains("Binary files"), "{path}");
+            assert_eq!(file.patch, expected.patch, "{path}");
+            assert_eq!(file.additions, 0, "{path}");
+        }
+        assert!(
+            files
+                .iter()
+                .find(|file| file.path == "ordinary.txt")
+                .unwrap()
+                .patch
+                .contains("+plain text")
+        );
     }
 
     #[tokio::test]
