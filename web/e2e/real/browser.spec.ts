@@ -130,8 +130,12 @@ test("the device toolbar resizes the page from its edges", async ({ page }) => {
   // The service can finish the preset before the viewer reloads it. Measuring
   // the old box would aim the press outside the edge once the phone is drawn.
   await expect(page.getByRole("combobox", { name: "Device" })).toHaveValue("phone");
-  const dimensions = page.getByRole("toolbar", { name: "Device toolbar" }).locator("span");
-  await expect(dimensions).toHaveText("393 by 852");
+  // The toolbar shows the page's size as the two fields it is edited through (parity H36), not as one span.
+  const toolbar = page.getByRole("toolbar", { name: "Device toolbar" });
+  const width = toolbar.getByRole("spinbutton", { name: "Width", exact: true });
+  const height = toolbar.getByRole("spinbutton", { name: "Height", exact: true });
+  await expect(width).toHaveValue("393");
+  await expect(height).toHaveValue("852");
   const handle = page.getByRole("button", { name: /Resize the page from the right edge/ });
   await handle.hover();
   const box = await handle.boundingBox();
@@ -149,7 +153,7 @@ test("the device toolbar resizes the page from its edges", async ({ page }) => {
   await page.mouse.down();
   await expect(handle).toHaveAttribute("data-dragging", "true");
   await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2, { steps: 10 });
-  await expect(dimensions).not.toHaveText("393 by 852");
+  await expect(width).not.toHaveValue("393");
   await expect.poll(async () => (await tab())?.width, { timeout: 15_000 }).toBe(393);
   const resized = page.waitForResponse((response) =>
     response.request().method() === "POST" && response.url().includes(`/api/threads/${threadId}/previews/`) && response.url().endsWith("/resize"),
