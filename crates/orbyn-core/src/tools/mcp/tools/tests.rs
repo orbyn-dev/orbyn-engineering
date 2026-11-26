@@ -1042,11 +1042,11 @@ async fn an_issue_comment_refuses_a_blank_body_and_an_unknown_key() {
 }
 
 #[tokio::test]
-async fn the_state_tool_is_not_offered_because_the_service_has_no_state_route() {
+async fn the_state_tool_is_not_offered_yet_although_the_service_has_a_state_route() {
     let w = issue_world(true).await;
     assert!(
         !is_tool("orbyn_issue_set_state"),
-        "set_state needs the service's update/state route, which is a separate row"
+        "the service's GitHub-only state route exists (R15 PR3, #1593); the tool is still N24's to build"
     );
     let names = w.tool_names().await;
     assert!(!names.iter().any(|name| name == "orbyn_issue_set_state"));
