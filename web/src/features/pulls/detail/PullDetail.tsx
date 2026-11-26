@@ -28,6 +28,7 @@ import { PullsBanner } from "../list/PullStates";
 import { RequestChangesCard, RequestedChangesEntry } from "./RequestChanges";
 import { MergeDialog } from "./MergeDialog";
 import { rememberDeleteBranch, useMergeOptions } from "../model/mergeOptions";
+import { startMergeMethod, useMergeMethodSetting } from "../model/mergeMethod";
 import { ChangeBreakdownCard, LinkedThreadsCard } from "./PullLinkedCards";
 import { ChecksCard, FilesCard, MergeRow, OfflineLine, PullStateBanner, Row } from "./PullDetailBlocks";
 import { approvalWords, baseChangeAllowed, bodyOpensWith, changesNeedYou, conflictWords, mergeGate, ownPull, pageState, requestedByMeHint, reviewAskedOf, reviewWords } from "../model/pullModel";
@@ -86,13 +87,16 @@ export function PullDetail({
     if (tab === "run" && runTask === null) setTab("summary");
   }, [tab, runTask]);
   const [merging, setMerging] = useState(false);
-  // The dialog is built from this detail, so it opens on a read that has finished: a kept
-  // copy drawn while the read runs could be of a pull request that has moved on.
-  const openMerge = () => {
-    if (!detail.refreshing) setMerging(true);
-    else void detail.reload().then(() => setMerging(true));
+  // The project's merge method is the default; a choice in the merge menu wins for this visit.
+  const mergeSetting = useMergeMethodSetting(projectId);
+  const [mergeMethod, setMergeMethod] = useState<string | null>(null);
+  const method = mergeMethod ?? startMergeMethod(mergeSetting.data);
+  // Opens on a fresh read of the detail and of the project's method while nobody chose one: the page hides its method select.
+  const openMerge = async () => {
+    if (mergeMethod === null) await mergeSetting.reload();
+    if (detail.refreshing) await detail.reload();
+    setMerging(true);
   };
-  const [mergeMethod, setMergeMethod] = useState("squash");
   const [editing, setEditing] = useState<string | null>(null);
   const [changingBase, setChangingBase] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -272,7 +276,7 @@ export function PullDetail({
       {merging ? (
         <MergeDialog
           projectId={projectId}
-          initialMethod={mergeMethod}
+          initialMethod={method}
           onStale={() => {
             void detail.reload();
             void extras.reloadNow();
@@ -546,7 +550,7 @@ export function PullDetail({
         <LinkedThreadsCard projectId={projectId} number={number} />
         <ChecksCard pull={pull} checks={checkList.data} collapsed={reviewing} />
         <MergeRow
-          method={mergeMethod}
+          method={method}
           onMethod={setMergeMethod}
           auto={auto}
           onAuto={setAuto}
