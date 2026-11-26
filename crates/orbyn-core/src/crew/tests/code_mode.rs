@@ -672,6 +672,7 @@ async fn a_replay_rechecks_the_allow_list_before_answering_from_the_record() {
             base_branch: None,
             effort: None,
             options: Default::default(),
+            branch_name_seed: None,
         })
         .await
         .unwrap();
