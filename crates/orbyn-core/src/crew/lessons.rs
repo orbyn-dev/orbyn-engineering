@@ -14,9 +14,11 @@
 //! transaction and hides over-cap lessons instead of deleting them. Slice 2 adds the brief: a start carries the
 //! repository's lessons then the device's global ones, newest first, capped and wrapped as data, and counts each
 //! one's use in the transaction that stores the brief. Slice 3 adds the person's views and writes
-//! (`lessons_person.rs` and `lessons_view.rs`); the routes come with part 2.
+//! (`lessons_person.rs` and `lessons_view.rs`) and the routes with part 2; slice 4 records one EvalHistory sample per
+//! task in the store, and this module reads one task's samples back (`Core::crew_task_samples`), ids and enums only. A
+//! sample is measurement, never a rule: nothing here feeds `EvalHistory` or `score`, and no read changes a task.
 
-use orbyn_contracts::{AnswerKey, EscapeSource, EscapeState};
+use orbyn_contracts::{AnswerKey, CrewEvalSample, CrewEvalSamples, EscapeSource, EscapeState};
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -319,6 +321,45 @@ impl Core {
             self.learn_skill_proposals(project);
         }
         Ok(written)
+    }
+
+    /// One task's recorded EvalHistory samples (KC5 slice 4 read): the one sample its start wrote, with the outcome the
+    /// task's first final state wrote once. Ids, enums and counts only, never lesson or brief text, and the read writes
+    /// nothing. An unknown task is not found; a task stored before samples existed answers no samples. Nothing here
+    /// routes, scores or verifies: `EvalHistory` and `score` keep their exact shape, and every router caller still passes
+    /// `EvalHistory::default()`.
+    pub fn crew_task_samples(&self, task_id: &str) -> Result<CrewEvalSamples> {
+        self.crew_preview_only()?;
+        if self.store.crew_task(task_id)?.is_none() {
+            return Err(CoreError::NotFound("task".into()));
+        }
+        let samples = self
+            .store
+            .crew_eval_sample(task_id)?
+            .map(sample_view)
+            .into_iter()
+            .collect();
+        Ok(CrewEvalSamples {
+            task_id: task_id.to_owned(),
+            samples,
+        })
+    }
+}
+
+/// The wire copy of one stored sample: ids, enums and counts only, never text.
+fn sample_view(sample: crate::store::CrewEvalSample) -> CrewEvalSample {
+    CrewEvalSample {
+        task_id: sample.task_id,
+        project_id: sample.project_id,
+        kind: sample.kind,
+        had_lessons: sample.had_lessons,
+        lesson_ids: sample.lesson_ids,
+        left_out_ids: sample.left_out_ids,
+        outcome: sample.outcome,
+        stop_reason: sample.stop_reason,
+        engine: sample.engine,
+        created_at: sample.created_at,
+        finished_at: sample.finished_at,
     }
 }
 
