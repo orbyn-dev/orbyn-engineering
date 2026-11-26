@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { projectSettingsUrl, startProject, type Service } from "./service";
 
 /**
@@ -90,6 +90,12 @@ function makeRepo(parent: string, name: string): string {
 
 const branchOf = (cwd: string) => execFileSync("git", ["symbolic-ref", "--short", "HEAD"], { cwd }).toString().trim();
 
+/**
+ * The local bare remote as an ssh source. The service refuses a backslash in a source (a Windows path would read as a
+ * local path), so the folder is written with forward slashes, which name the same place on both platforms.
+ */
+const sshSource = (host: string) => `git@${host}:${remoteBare.replace(/\\/g, "/")}`;
+
 /** Registers and trusts one folder of the project through the real routes. */
 async function registerFolder(path: string): Promise<RepoRow> {
   const view = await service.api<ReposView>("GET", `/api/projects/${projectId}/repos`);
@@ -132,7 +138,9 @@ test.beforeAll(async () => {
   execFileSync("git", ["clone", "-q", "--bare", cloneSource, remoteBare], { stdio: "ignore" });
   const home = dirname(service.dataDir);
   writeFileSync(join(home, "fake-ssh"), FAKE_SSH, { mode: 0o755 });
-  writeFileSync(join(home, ".gitconfig"), `[core]\n\tsshCommand = ${join(home, "fake-ssh")}\n`);
+  // Git reads a backslash in a config value as the start of an escape, which makes a Windows path a syntax error;
+  // forward slashes name the same file on both platforms.
+  writeFileSync(join(home, ".gitconfig"), `[core]\n\tsshCommand = ${join(home, "fake-ssh").replace(/\\/g, "/")}\n`);
 });
 
 test.afterAll(() => service.stop());
@@ -161,7 +169,7 @@ test("Create a new folder makes it under the clone directory and Remove from pro
   // The service's own row: a managed Git folder under the reported clone directory, trusted, not the primary, branch main.
   expect(view.clone_directory).not.toBeNull();
   expect(dirname(made.path)).toBe(view.clone_directory);
-  expect(made.path.endsWith("/field-notes")).toBe(true);
+  expect(basename(made.path)).toBe("field-notes");
   expect([made.is_git, made.trusted, made.primary, made.branch, made.has_remote, made.clone]).toEqual([true, true, false, "main", false, null]);
   await expect(created).toContainText(made.path);
   await expect(created.locator(".repos-branch")).toHaveText("main");
@@ -333,7 +341,7 @@ test("the Repos chip opens one row per repository as a phone sheet", async ({ pa
 });
 
 test("Clone a repository clones a real local remote over the ssh the service runs", async ({ page }) => {
-  const source = `git@clone.test:${remoteBare}`;
+  const source = sshSource("clone.test");
   await page.goto(await projectSettingsUrl(service, projectId));
   const section = repositories(page);
   await expect(section).toBeVisible();
@@ -363,7 +371,7 @@ test("Clone a repository clones a real local remote over the ssh the service run
 });
 
 test("Cancel stops a running clone: it stays listed as failed and its partial folder is gone", async ({ page }) => {
-  const source = `git@stalled.test:${remoteBare}`;
+  const source = sshSource("stalled.test");
   await page.goto(await projectSettingsUrl(service, projectId));
   const section = repositories(page);
   await expect(section).toBeVisible();
