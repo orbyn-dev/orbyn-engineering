@@ -267,4 +267,137 @@ mod tests {
         let relative = probe_binary("cargo").await;
         assert!(!relative.exists && relative.problem.is_some());
     }
+
+    /// Writes the shell script a capture test runs, on the platforms a shell is there.
+    #[cfg(unix)]
+    fn status_script(dir: &Path, name: &str, body: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    /// Runs a status script through the capture the login probe uses.
+    #[cfg(unix)]
+    async fn capture_status(script: &str) -> Option<Captured> {
+        let command = resolve(script).expect("the status script resolves");
+        capture(&command, &[], Duration::from_secs(10)).await
+    }
+
+    /// I56's size bound, through the capture the login probe uses: below the 256 KiB the
+    /// architecture names every byte arrives with the exit status, at it the whole answer
+    /// arrives, past it exactly the first 256 KiB per stream is kept and the rest is refused
+    /// unread, and a program that keeps writing is ended rather than waited for. The login
+    /// probe's mapping from a truncated capture is `the_login_probe_keeps_answering_past_the_capture_cap`.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_status_capture_stops_at_256_kib_and_ends_a_program_that_keeps_writing() {
+        assert_eq!(MAX_CAPTURE, 256 * 1024, "the row's 256 KiB cap");
+        let cap = MAX_CAPTURE as usize;
+        let status_json = r#"{"loggedIn":true,"email":"probe@example.test"}"#;
+        let dir = crate::testing::TempDir::new();
+
+        // Under the cap: every byte arrives, and so does the exit status.
+        let under = status_script(
+            dir.path(),
+            "under",
+            "printf 'a short status answer'; printf 'a short login note' >&2",
+        );
+        let output = capture_status(&under)
+            .await
+            .expect("the status command under the cap answers");
+        assert_eq!(output.status, 0, "the exit status is kept under the cap");
+        assert_eq!(output.stdout, "a short status answer");
+        assert_eq!(output.stderr, "a short login note");
+
+        // Exactly at the cap: the whole answer arrives.
+        let at = status_script(dir.path(), "at", "perl -e 'print \"a\" x 262144'");
+        let output = capture_status(&at)
+            .await
+            .expect("the status command at the cap answers");
+        assert_eq!(output.stdout.len(), cap, "the last byte at the cap is kept");
+        assert!(
+            output.stdout.bytes().all(|byte| byte == b'a'),
+            "no byte of the answer is replaced"
+        );
+
+        // stdout past the cap: exactly the first 256 KiB is kept, and the tail is refused.
+        let over = status_script(
+            dir.path(),
+            "over",
+            concat!(
+                r#"printf '%s' '{"loggedIn":true,"email":"probe@example.test"}'"#,
+                "\n",
+                r#"perl -e 'print " " x 300000'"#,
+                "\n",
+                r#"printf 'REFUSED-TAIL'"#,
+            ),
+        );
+        let output = capture_status(&over)
+            .await
+            .expect("the status command past the cap answers");
+        assert_eq!(output.stdout.len(), cap, "only the cap is kept");
+        assert!(
+            output.stdout.starts_with(status_json),
+            "the kept text starts with the answer"
+        );
+        assert!(
+            output.stdout[status_json.len()..]
+                .bytes()
+                .all(|byte| byte == b' '),
+            "the kept text is the first cap bytes"
+        );
+        assert!(
+            !output.stdout.contains("REFUSED-TAIL"),
+            "the tail past the cap is refused"
+        );
+
+        // stderr past the cap: the same bound, separately, while stdout stays empty.
+        let stderr_over = status_script(
+            dir.path(),
+            "stderr-over",
+            concat!(
+                r#"printf '%s' '{"loggedIn":true,"email":"probe@example.test"}' >&2"#,
+                "\n",
+                r#"perl -e 'print " " x 300000; print "REFUSED-TAIL"' >&2"#,
+            ),
+        );
+        let output = capture_status(&stderr_over)
+            .await
+            .expect("the status command past the cap on stderr answers");
+        assert!(output.stdout.is_empty());
+        assert_eq!(output.stderr.len(), cap, "only the cap is kept from stderr");
+        assert!(output.stderr.starts_with(status_json));
+        assert!(
+            !output.stderr.contains("REFUSED-TAIL"),
+            "the tail past the cap on stderr is refused"
+        );
+
+        // A program that keeps writing past the cap is ended, not waited for: if it were
+        // waited for it would sleep 60 s and then leave this marker. Its stderr is closed so
+        // the capture's other read reaches EOF and the cap alone decides to end it.
+        let marker = dir.path().join("kept-writing");
+        let endless = status_script(
+            dir.path(),
+            "endless",
+            &format!(
+                "exec 2>/dev/null\nperl -e 'print \"b\" x 262145'\nsleep 60\nprintf survived > '{}'",
+                marker.display()
+            ),
+        );
+        let started = std::time::Instant::now();
+        let output = capture_status(&endless)
+            .await
+            .expect("a program past the cap is ended, not waited for");
+        assert_eq!(output.stdout.len(), cap, "only the cap is kept");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the cap ended the program at once"
+        );
+        assert!(
+            !marker.exists(),
+            "the program never reached its line after the write"
+        );
+    }
 }

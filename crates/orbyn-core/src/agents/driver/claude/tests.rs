@@ -1570,6 +1570,130 @@ async fn the_login_probe_gives_up_on_a_hanging_status_command() {
     );
 }
 
+/// The cap's login side (I56): a status command past the 256 KiB capture is read to the cap
+/// and ended, and the state and account still map from the kept text. The `REFUSED-TAIL` past
+/// the cap would make the JSON invalid if it were read, so the mapped answer proves it was
+/// refused.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_keeps_answering_past_the_capture_cap() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let script = dir.path().join("claude-past-cap");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nprintf '%s' '{\"loggedIn\":true,\"email\":\"probe@example.test\"}' >&2\nperl -e 'print \" \" x 300000; print \"REFUSED-TAIL\"' >&2\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let program = script.to_string_lossy().into_owned();
+    let started = std::time::Instant::now();
+    let answer = crate::agents::engines::probe::read_login(
+        &program,
+        &["auth", "status"],
+        parse_auth_status,
+        parse_auth_account,
+    )
+    .await;
+    assert_eq!(
+        answer,
+        (
+            orbyn_contracts::AuthState::LoggedIn,
+            Some("probe@example.test".into())
+        ),
+        "the kept text still maps, and the refused tail cannot make it invalid"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the cap ends the status command rather than waiting for the rest"
+    );
+}
+
+/// The wipe (I56): the status text is read only where the parsers map it, so the probe's
+/// answer holds the mapped state, account, version and sign-in command and none of the text,
+/// its token included. The signed-in, signed-out, unexpected-output and failing commands all
+/// go through the same wipe.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_wipes_the_status_text_and_keeps_the_mapped_answer() {
+    use crate::agents::driver::EngineDriver;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let canary = format!("orbyn-probe-canary-{}", crate::util::new_id());
+    let script = |name: &str, answer: &str| -> String {
+        let path = dir.path().join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\ncase \"$*\" in\n  --version) printf '%s\\n' '2.1.318 (Claude Code)' ;;\n  \"auth status\") {answer} ;;\nesac\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let cases = [
+        (
+            "signed-in",
+            format!(
+                "printf '%s\\n' '{{\"loggedIn\":true,\"email\":\"probe@example.test\",\"token\":\"sk-ant-{canary}\"}}' >&2"
+            ),
+            orbyn_contracts::AuthState::LoggedIn,
+            Some("probe@example.test"),
+        ),
+        (
+            "signed-out",
+            format!(
+                "printf '%s\\n' '{{\"loggedIn\":false,\"authMethod\":\"none\",\"token\":\"sk-ant-{canary}\"}}' >&2; exit 1"
+            ),
+            orbyn_contracts::AuthState::LoggedOut,
+            None,
+        ),
+        (
+            "unexpected",
+            format!("printf '%s\\n' 'not json, {canary}' >&2"),
+            orbyn_contracts::AuthState::Unknown,
+            None,
+        ),
+        (
+            "failing",
+            format!("printf '%s\\n' '{canary}' >&2; exit 7"),
+            orbyn_contracts::AuthState::LoggedOut,
+            None,
+        ),
+    ];
+    for (name, answer, auth, account) in cases {
+        let program = script(name, &answer);
+        let probe = ClaudeDriver::new(program, Duration::from_secs(1800))
+            .probe()
+            .await;
+        // What is kept: the mapped answer, and the fields that describe the engine.
+        assert_eq!(
+            probe.version.as_deref(),
+            Some("2.1.318"),
+            "{name}: the version is kept"
+        );
+        assert_eq!(probe.auth, Some(auth), "{name}: the state is mapped");
+        assert_eq!(
+            probe.account.as_deref(),
+            account,
+            "{name}: the account is mapped"
+        );
+        assert!(probe.path.is_some(), "{name}: the program path is kept");
+        assert_eq!(
+            probe.sign_in_command.as_deref(),
+            Some("claude auth login"),
+            "{name}: the sign-in command is kept"
+        );
+        // What is removed: the text the answer came from.
+        let answer = format!("{probe:?}");
+        assert!(
+            !answer.contains(&canary),
+            "{name}: the status text reached the answer: {answer}"
+        );
+    }
+}
+
 /// The task-tool flag is a person's opt-in: off sets nothing, a confined run gets
 /// nothing, and a value the person already set is left alone, `0` included.
 #[test]
