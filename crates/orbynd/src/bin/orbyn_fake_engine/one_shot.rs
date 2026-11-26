@@ -47,6 +47,16 @@ pub(crate) fn one_shot() {
         }
     }
 
+    if prompt.contains("You generate concise git branch names.") {
+        println!(
+            "{}",
+            std::env::var("ORBYN_FAKE_BRANCH_NAME")
+                .unwrap_or_else(|_| "release/rewrite-login".into())
+        );
+
+        return;
+    }
+
     if scm {
         if let Ok(path) = std::env::var("ORBYN_FAKE_SCM_BARRIER") {
             let ready = std::path::Path::new(&path).with_extension("ready");
