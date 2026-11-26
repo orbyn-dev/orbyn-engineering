@@ -35,7 +35,7 @@ function useOwnWorktreeLocked(threadId: string): boolean {
  * tab: the read, the write and every failure stay the thread's own (the service's absent `repo_id` is the primary), and
  * the chip, the copy path and the line comments say which repository the file is in.
  */
-function ThreadFile({ threadId, tabId, path, locked, repoName, primaryRepo }: { threadId: string; tabId: string; path: string; locked?: boolean; repoName?: string; primaryRepo?: boolean }) {
+function ThreadFile({ threadId, tabId, path, locked, repoName, primaryRepo, previewRepoId }: { threadId: string; tabId: string; path: string; locked?: boolean; repoName?: string; primaryRepo?: boolean; previewRepoId?: string }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd);
   const own = useOwnWorktreeLocked(threadId);
   const reveal = useUi((state) => state.fileReveal);
@@ -51,7 +51,7 @@ function ThreadFile({ threadId, tabId, path, locked, repoName, primaryRepo }: { 
   const resolved = useResolvedThreadPath(threadId, cwd ? { threadId, cwd, path, basis: "thread", nonce: 0 } : null);
   const full = fullPathOf(path);
   if (resolved.value?.checkout_path) {
-    return <Viewer threadId={threadId} tabId={tabId} path={resolved.value.checkout_path} line={line} locked={locked ?? own} {...(repoName === undefined ? {} : { repoName })} {...(primaryRepo === true ? { primaryRepo: true } : {})} />;
+    return <Viewer threadId={threadId} tabId={tabId} path={resolved.value.checkout_path} line={line} locked={locked ?? own} {...(repoName === undefined ? {} : { repoName })} {...(primaryRepo === true ? { primaryRepo: true } : {})} {...(previewRepoId === undefined ? {} : { previewRepoId })} />;
   }
   if (resolved.value && isFullPath(full)) return <OutsideFileViewer threadId={threadId} path={full} />;
   if (resolved.value || resolved.error) return <Empty title={resolved.error?.message ?? "That path is outside this checkout."} />;
@@ -195,7 +195,7 @@ export function FileTab({ id, threadId, repoName }: { id: FileTabId; threadId: s
     if (target.repoId !== undefined && target.primary !== true) {
       return <RepoFile threadId={threadId} tabId={id} path={target.path} repoId={target.repoId} {...(repoName === undefined ? {} : { repoName })} />;
     }
-    return <ThreadFile threadId={threadId} tabId={id} path={target.path} {...(repoName === undefined ? {} : { repoName })} {...(target.primary === true ? { primaryRepo: true } : {})} />;
+    return <ThreadFile threadId={threadId} tabId={id} path={target.path} {...(repoName === undefined ? {} : { repoName })} {...(target.primary === true ? { primaryRepo: true, previewRepoId: target.repoId } : {})} />;
   }
   return <ExplorerFile threadId={threadId} tabId={id} target={target} />;
 }
