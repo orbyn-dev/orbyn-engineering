@@ -34,9 +34,25 @@ async function selectWord(page: Page, line: Locator) {
   await page.mouse.dblclick(place.x + 6, place.y + place.height / 2);
 }
 
+/**
+ * The command whose marks the shell prints around one command: its line, output start and exit.
+ * The terminal runs the platform's own shell (host/terminal.rs `windows_shell`): on Windows that is
+ * pwsh, or Windows PowerShell when pwsh is not installed, and both write ESC and BEL as `[char]27`
+ * and `[char]7`. A POSIX shell keeps the printf form.
+ */
+function markedCommand(): string {
+  if (process.platform === "win32") {
+    return '$e=[char]27; $b=[char]7; [Console]::Write("$e]633;E;echo MARKED_OUTPUT$b$e]133;C$b"); echo MARKED_OUTPUT; [Console]::Write("$e]133;D;3$b")\n';
+  }
+  return "printf '\\033]633;E;echo MARKED_OUTPUT\\a\\033]133;C\\a'; echo MARKED_OUTPUT; printf '\\033]133;D;3\\a'\n";
+}
+
 test("a selection in marked command output carries the command and exit code into the prompt", async ({ page }) => {
   test.setTimeout(90_000);
   await page.goto(`${service.page}#/new/${projectId}`);
+  // A cold dev server draws the box before its first reads settle, and Enter is a no-op while Send is dimmed.
+  await page.getByRole("textbox", { name: /^Message/ }).fill("[scene:usage] command chips");
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeEnabled();
   await send(page, "[scene:usage] command chips");
   await expect(page).toHaveURL(/#\/threads\//);
   const id = threadIdOf(page);
@@ -45,11 +61,7 @@ test("a selection in marked command output carries the command and exit code int
   await expect(page.locator(".terminal-drawer-body .xterm-helper-textarea").first()).toBeVisible();
 
   // The marks an integrated shell prints around one command: its line, output start, and exit.
-  const marked = await run(
-    page,
-    "printf '\\033]633;E;echo MARKED_OUTPUT\\a\\033]133;C\\a'; echo MARKED_OUTPUT; printf '\\033]133;D;3\\a'\n",
-    /^MARKED_OUTPUT\s*$/,
-  );
+  const marked = await run(page, markedCommand(), /^MARKED_OUTPUT\s*$/);
   const plain = await run(page, "echo PLAIN_OUTPUT\n", /^PLAIN_OUTPUT\s*$/);
   const chips = page.getByRole("list", { name: "Context chips", exact: true });
   const add = page.getByRole("button", { name: "Add selection", exact: true });
