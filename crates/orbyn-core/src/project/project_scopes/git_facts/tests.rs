@@ -544,6 +544,46 @@ async fn a_linked_worktree_whose_common_directory_lost_a_signature_is_observed_a
     );
 }
 
+/// Git checks only that it can access a signature, which an executable regular file satisfies, so a
+/// file named `objects` still leaves the repository one Git names. This watch cannot tell such a
+/// file from one whose execute permission was dropped, so a repository whose signature is not a
+/// directory is answered once and never kept.
+#[tokio::test]
+async fn a_repository_whose_signature_is_not_a_directory_is_not_kept() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let folder = dir.path().join("repo");
+    repository(&folder);
+    configure(&folder, "origin", "git@host:Owner/Repo.git");
+    core.add_project(folder.to_str().unwrap()).await.unwrap();
+    let objects = folder.join(".git").join("objects");
+    std::fs::rename(&objects, folder.join(".git").join("objects-away")).unwrap();
+    std::fs::write(&objects, "not a directory\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let watched = std::slice::from_ref(&folder);
+    let before = spawns(watched);
+    let first = read(&core).await;
+    assert!(
+        since(&before, watched)[0] > 0,
+        "the folder is observed with the file as its signature"
+    );
+    assert_eq!(
+        only_member(&first).repository_label.as_deref(),
+        Some("Owner/Repo"),
+        "Git accepts the file as the signature and still names the repository"
+    );
+    let before = spawns(watched);
+    let _ = read(&core).await;
+    assert!(
+        since(&before, watched)[0] > 0,
+        "an observation this watch cannot stand behind is observed again, not kept"
+    );
+}
+
 /// Git accepts a signature only while it can search it: `is_git_directory` checks both `objects`
 /// and `refs` with `access(X_OK)`, so a directory whose search permission was dropped is one Git
 /// no longer finds, however unchanged its contents are. Root searches regardless of the mode, as
@@ -585,36 +625,38 @@ async fn a_signature_that_lost_its_search_permission_is_observed_again() {
 }
 
 /// Git drops only a trailing newline and carriage return from `commondir`, so a common directory
-/// whose name ends in a space is another directory: the watch has to cover what Git resolved, or
-/// a remote changed there is never noticed. An ordinary Windows path cannot open a name ending in
-/// a space, so this pins the path watched rather than a read of it.
+/// whose name ends in a space is another directory: the watch has to cover the directory Git
+/// resolved, or a remote changed there is never noticed. An ordinary Windows path cannot open a
+/// name ending in a space, so this pins the resolution itself rather than a read of it.
 #[test]
-fn a_common_directory_ending_in_a_space_is_watched_where_git_names_it() {
+fn a_common_directory_ending_in_a_space_keeps_it() {
     let dir = TempDir::new();
-    let folder = dir.path().join("worktree");
-    let git_dir = folder.join(".git");
+    let git_dir = dir.path().join("worktree").join(".git");
     std::fs::create_dir_all(&git_dir).unwrap();
     let shared = dir.path().join("shared ");
-    let trimmed = dir.path().join("shared");
-    let real = crate::util::canonicalize(&folder).unwrap();
-    for ending in ["\n", "\r\n"] {
+    for ending in ["\n", "\r\n", "\r"] {
         std::fs::write(
             git_dir.join("commondir"),
             format!("{}{ending}", shared.display()),
         )
         .unwrap();
-        let watch = super::Watch::work_tree(&real, &real, &real.join(".git")).unwrap();
-        let watched: Vec<PathBuf> = watch.files.iter().map(|file| file.path.clone()).collect();
-        for name in ["objects", "refs", "config", "config.worktree"] {
-            assert!(
-                watched.contains(&shared.join(name)),
-                "the {name} Git resolved in the common directory ending in a space is watched, \
-                 with a {ending:?} after it"
-            );
-            assert!(
-                !watched.contains(&trimmed.join(name)),
-                "the {name} of the directory the trailing space was trimmed to is not watched"
-            );
-        }
+        assert_eq!(
+            super::common_directory(&git_dir),
+            Some(shared.clone()),
+            "the common directory Git names is the one watched, trailing space and all, \
+             after a {ending:?}"
+        );
     }
+    // Only the newline and carriage return are dropped: a space is part of the name.
+    std::fs::write(git_dir.join("commondir"), " \n").unwrap();
+    assert_eq!(
+        super::common_directory(&git_dir),
+        Some(git_dir.join(" ")),
+        "a common directory named a space is not trimmed away"
+    );
+    // Git names the Git directory itself when `commondir` names nothing.
+    std::fs::write(git_dir.join("commondir"), "\n").unwrap();
+    assert_eq!(super::common_directory(&git_dir), Some(git_dir.clone()));
+    std::fs::remove_file(git_dir.join("commondir")).unwrap();
+    assert_eq!(super::common_directory(&git_dir), Some(git_dir.clone()));
 }

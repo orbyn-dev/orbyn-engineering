@@ -15,7 +15,8 @@
 //! answer never contains it, so a commit or a branch switch is observed rather than
 //! ignored, and `objects` and `refs` are watched for what Git finds at them rather than
 //! for their contents, so renaming either, or a directory Git can no longer search, is a
-//! repository Git no longer finds. The
+//! repository Git no longer finds, and one whose signature is not a directory at all is
+//! answered once rather than kept. The
 //! work tree's `.git` is kept by the location it resolved to, because Git names the
 //! directory it resolved: a link retargeted at another repository leaves those files
 //! as they were. What the answer rests on is watched before the configuration is read
@@ -174,7 +175,15 @@ impl Watch {
         // repository Git no longer finds, however unchanged everything above is.
         let common = common_directory(git_dir)?;
         for name in REPOSITORY_SIGNATURES {
-            files.push(Snapshot::read(common.join(name)));
+            // Git asks only that it can access the signature, which an executable regular file
+            // satisfies too. What this watch holds at a file is its bytes, which cannot tell such a
+            // file from one whose execute permission was dropped, so a signature that is not a
+            // directory leaves the observation unkept rather than vouched for twice.
+            let signature = common.join(name);
+            if !std::fs::metadata(&signature).is_ok_and(|meta| meta.is_dir()) {
+                return None;
+            }
+            files.push(Snapshot::read(signature));
         }
         // A linked worktree keeps the shared configuration beside its `commondir`.
         if common.as_path() != git_dir {
