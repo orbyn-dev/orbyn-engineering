@@ -329,6 +329,40 @@ impl Core {
         }
     }
 
+    /// The error a restore that stopped part-way returns: it names the folder that could not be written and the ones
+    /// that already moved, so a client showing only the error cannot read it as "nothing changed" (docs/multi-repo.md).
+    /// A failure before any folder moved keeps its own words, so the two cases stay apart.
+    fn restore_stopped(
+        &self,
+        thread_id: &str,
+        moved: &[Restoring],
+        failed: &Restoring,
+        error: &CoreError,
+        rewound: bool,
+    ) -> CoreError {
+        let mut sentence = if moved.is_empty() {
+            "Your files were not changed.".to_owned()
+        } else {
+            "Your files may have changed.".to_owned()
+        };
+        if rewound {
+            sentence.push_str(" The thread was not rewound.");
+        }
+        sentence.push_str(&format!(
+            " {} could not be restored",
+            self.restore_root_name(thread_id, failed.repo_id.as_deref())
+        ));
+        if !moved.is_empty() {
+            let names: Vec<String> = moved
+                .iter()
+                .map(|one| self.restore_root_name(thread_id, one.repo_id.as_deref()))
+                .collect();
+            sentence.push_str(&format!(", and {} already moved back", names.join(", ")));
+        }
+        sentence.push_str(&format!(" ({error})."));
+        CoreError::Git(sentence)
+    }
+
     /// Records a restore that stopped part-way. The success row keeps its shape; this one lists the folders that did
     /// move and names the one that could not, so a partial restore is never read as a whole one (docs/multi-repo.md).
     fn audit_partial_restore(
@@ -364,6 +398,10 @@ impl Core {
         request: &RestoreWorkspace,
         actor: &str,
     ) -> Result<()> {
+        // A run admitted while the restore waited for its turn could change a file after that folder's safety
+        // snapshot, so the thread is held against runs for the whole restore. The hold is taken under the admission
+        // lock, as a rewind's is, so no run starts between the idle check and the snapshots.
+        let _held_against_runs = self.runs.hold_for_rewind(thread_id)?;
         let thread = self.idle_thread(thread_id)?;
         // A second restore could otherwise snapshot the folders this one has already moved and not the rest,
         // recording half a restore as the point to come back to.
@@ -399,15 +437,12 @@ impl Core {
             Ok(()) => Ok(()),
             Err((position, error)) => {
                 tracing::warn!(%error, thread = %thread_id, "restore could not move a folder back");
-                if let Err(audit) = self.audit_partial_restore(
-                    actor,
-                    thread_id,
-                    &restores[..position],
-                    &restores[position],
-                ) {
+                let (moved, failed) = restores.split_at(position);
+                let failed = &failed[0];
+                if let Err(audit) = self.audit_partial_restore(actor, thread_id, moved, failed) {
                     tracing::warn!(%audit, thread = %thread_id, "could not record a partial restore");
                 }
-                Err(error)
+                Err(self.restore_stopped(thread_id, moved, failed, &error, false))
             }
         }
     }
@@ -529,10 +564,7 @@ impl Core {
                 if let Err(audit) = self.audit_partial_restore(actor, &thread.id, moved, failed) {
                     tracing::warn!(%audit, thread = %thread.id, "could not record a partial rewind restore");
                 }
-                Err(CoreError::Git(format!(
-                    "Your files may have changed. The thread was not rewound: {} could not be restored ({error}).",
-                    self.restore_root_name(&thread.id, failed.repo_id.as_deref())
-                )))
+                Err(self.restore_stopped(&thread.id, moved, failed, &error, true))
             }
         }
     }
@@ -1258,6 +1290,61 @@ mod tests {
             std::fs::read_to_string(repo.join("base.txt")).unwrap(),
             "base\n",
             "the folder holds the checkpoint's files again"
+        );
+    }
+
+    /// A restore that stopped part-way names the folder it could not write and the ones that already moved, so the
+    /// error alone cannot be read as "nothing changed". A failure before anything moved says so instead.
+    #[tokio::test]
+    async fn a_failed_restore_names_the_repository_and_what_already_moved() {
+        let f = two_repositories().await;
+        let missing = "0123456789012345678901234567890123456789";
+        let moved = [Restoring {
+            repo_id: Some(f.primary.clone()),
+            worktree: f.primary_worktree.clone(),
+            target: missing.to_owned(),
+            safety: missing.to_owned(),
+        }];
+        let failed = Restoring {
+            repo_id: Some(f.other.clone()),
+            worktree: f.other_worktree.clone(),
+            target: missing.to_owned(),
+            safety: missing.to_owned(),
+        };
+        let error = CoreError::Git("fatal: bad object".into());
+
+        let partial = f
+            .core
+            .restore_stopped(&f.thread.id, &moved, &failed, &error, false)
+            .to_string();
+        assert!(
+            partial.contains("Your files may have changed"),
+            "a moved folder is not reported as untouched: {partial}"
+        );
+        assert!(
+            partial.contains("the repository \"second\" could not be restored"),
+            "the folder that failed is named: {partial}"
+        );
+        assert!(
+            partial.contains("the repository \"first\" already moved back"),
+            "the folders that moved are named: {partial}"
+        );
+        assert!(
+            partial.contains("fatal: bad object"),
+            "Git's own error is kept: {partial}"
+        );
+
+        let nothing = f
+            .core
+            .restore_stopped(&f.thread.id, &[], &failed, &error, false)
+            .to_string();
+        assert!(
+            nothing.contains("Your files were not changed"),
+            "a restore that moved nothing says so: {nothing}"
+        );
+        assert!(
+            !nothing.contains("already moved back"),
+            "no folder is named as moved when none was: {nothing}"
         );
     }
 

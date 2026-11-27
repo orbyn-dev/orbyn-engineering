@@ -604,7 +604,9 @@ Restoring takes a safety snapshot first, then makes the files match, leaving HEA
 the index and ignored files alone. A multi-repository thread restores each trusted
 worktree to its own checkpoint, in that repository's Git objects; an ordinary
 thread restores the engine's own folder as before. It refuses while another live
-thread shares its own folder or any folder it would move. One restore runs at a time,
+thread shares its own folder or any folder it would move. The thread is held against new
+runs for the whole restore, as a rewind holds it, so a run cannot change a file after that
+folder's safety snapshot; and one restore runs at a time,
 so a safety snapshot never records half of another's work, and a folder whose files
 changed after its own safety snapshot is left as it is rather than overwritten. A rewind
 that moves one repository and then fails on another writes the folders that did move and
