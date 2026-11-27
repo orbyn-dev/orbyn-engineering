@@ -102,8 +102,9 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   `400 invalid_input` instead and fails the whole listing.
 - **Cache.** A listing is up to 100 issues per tracker and scope, and each page is kept 30 seconds. A write through
   this service in that tracker and scope (create, comment, an edit, a state change) drops every cached page of it as
-  soon as the tracker answers, so the next listing shows the write without waiting out the window. It is that whole
-  scope and no more: the tracker applies the filters, so which cached pages the changed issue belongs to cannot be
+  soon as the tracker answers, so the next listing shows the write without waiting out the window; a listing that was
+  still asking the tracker when the write landed is not cached, so it cannot put the page it read back. It is that
+  whole scope and no more: the tracker applies the filters, so which cached pages the changed issue belongs to cannot be
   known here, while nothing outside the tracker and scope of the write can have changed. A write whose tracker never
   answered may have been applied, so it drops the same pages; a reaction changes no field a page carries and no order
   it sorts by, so it drops none.

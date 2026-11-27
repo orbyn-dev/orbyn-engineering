@@ -2562,13 +2562,21 @@ mod listing_cache {
     async fn a_write_is_in_the_very_next_listing_and_only_its_own_scope_is_read_again() {
         let (w, gitlab, forgejo) = connected_pair().await;
         let open = IssueQuery::default();
+        let closed = IssueQuery {
+            state: StateFilter::Closed,
+            ..IssueQuery::default()
+        };
         let first = w.core.list_issues(&open).await.unwrap();
         assert_eq!(keys(&first), ["1"]);
         assert_eq!(first.counts, Some(IssueCounts { open: 1, closed: 0 }));
+        // Both pages of the scope are cached before the writes, so a write that drops one of them and not the other
+        // leaves an old page cached and this test sees it.
+        let none_closed = w.core.list_issues(&closed).await.unwrap();
+        assert!(keys(&none_closed).is_empty(), "the closed page is empty");
         assert_eq!(
             (gitlab.readings(), forgejo.readings()),
-            (1, 1),
-            "each connection's scope is read once"
+            (2, 2),
+            "each connection's open and closed pages are read once"
         );
 
         // A create is listed at once, first because it is the newest update.
@@ -2597,7 +2605,7 @@ mod listing_cache {
         assert_eq!(created.counts, Some(IssueCounts { open: 2, closed: 0 }));
         assert_eq!(
             (gitlab.readings(), forgejo.readings()),
-            (2, 1),
+            (3, 2),
             "only the written connection was read again"
         );
 
@@ -2621,7 +2629,7 @@ mod listing_cache {
             commented.issues.first().map(|issue| issue.comment_count),
             Some(1)
         );
-        assert_eq!(gitlab.readings(), 3);
+        assert_eq!(gitlab.readings(), 4);
 
         // An edit changes a field a page carries.
         w.core
@@ -2642,7 +2650,7 @@ mod listing_cache {
             edited.issues.first().map(|issue| issue.title.as_str()),
             Some("Crash on start, again")
         );
-        assert_eq!(gitlab.readings(), 4);
+        assert_eq!(gitlab.readings(), 5);
 
         // A state change moves the issue to the closed page, and the counts follow.
         w.core
@@ -2658,20 +2666,17 @@ mod listing_cache {
         let open = w.core.list_issues(&open).await.unwrap();
         assert_eq!(keys(&open), ["1"], "a closed issue leaves the open page");
         assert_eq!(open.counts, Some(IssueCounts { open: 1, closed: 1 }));
-        let closed = w
-            .core
-            .list_issues(&IssueQuery {
-                state: StateFilter::Closed,
-                ..IssueQuery::default()
-            })
-            .await
-            .unwrap();
-        assert_eq!(keys(&closed), ["2"], "the closed page holds it at once");
+        let closed_page = w.core.list_issues(&closed).await.unwrap();
+        assert_eq!(
+            keys(&closed_page),
+            ["2"],
+            "the closed page holds it at once, not the page cached before the write"
+        );
         assert_eq!(
             (gitlab.readings(), forgejo.readings()),
-            (6, 2),
-            "the other connection's open page was never read again: its second read is the closed page, \
-             kept under a key of its own"
+            (7, 2),
+            "both pages of the written connection's scope are read again, whatever their state filter; the other \
+             connection's pages were cached before the write and stay"
         );
     }
 }

@@ -262,7 +262,7 @@ pub(crate) trait IssueSource: Send + Sync {
 pub(crate) struct IssueDesk {
     credentials: Mutex<Credentials>,
     sources: Mutex<HashMap<TrackerKind, Arc<dyn IssueSource>>>,
-    cache: Mutex<HashMap<String, (Instant, ScopeList)>>,
+    cache: Mutex<Listings>,
     /// Linear's teams fallback, which every no-scope read would otherwise ask for again.
     scope_cache: Mutex<HashMap<String, (Instant, Vec<String>)>>,
     /// Tests send the reader GitLab builds to a local fake server instead of the stored host.
@@ -279,12 +279,52 @@ pub(crate) struct IssueDesk {
     linear_test_base: Mutex<Option<String>>,
 }
 
+/// The 30-second listing cache, and how many times the cache has been dropped.
+///
+/// A listing asks the tracker without holding the lock, so a write can land while it is out. The count is bumped under
+/// the same lock that drops the entries: a listing whose count changed while it was out leaves its answer out of the
+/// cache, so a write is never undone by a request it overlapped.
+#[derive(Default)]
+struct Listings {
+    /// How many times the cache has been dropped. A listing compares the value it started with to the value it finds.
+    dropped: u64,
+    entries: HashMap<String, (Instant, ScopeList)>,
+}
+
+impl Listings {
+    /// One listing, as it was cached, while it is younger than [`CACHE_FOR`].
+    fn get(&self, key: &str) -> Option<ScopeList> {
+        let (at, list) = self.entries.get(key)?;
+        (at.elapsed() < CACHE_FOR).then(|| list.clone())
+    }
+
+    /// Caches one listing, unless the cache was dropped while that listing was out. A request that overlapped a write
+    /// may be answered from the tracker as it was before that write, so its answer must not become the next page.
+    fn put_since(&mut self, dropped: u64, key: String, list: ScopeList) {
+        if self.dropped == dropped {
+            self.entries.insert(key, (Instant::now(), list));
+        }
+    }
+
+    /// Drops every entry and bumps [`Self::dropped`], so a listing already out cannot cache its answer.
+    fn drop_all(&mut self) {
+        self.entries.clear();
+        self.dropped += 1;
+    }
+
+    /// Drops every entry whose key starts with `prefix`, bumping [`Self::dropped`] like [`Self::drop_all`].
+    fn drop_prefixed(&mut self, prefix: &str) {
+        self.entries.retain(|key, _| !key.starts_with(prefix));
+        self.dropped += 1;
+    }
+}
+
 impl IssueDesk {
     pub(crate) fn new(credentials: Credentials) -> Self {
         Self {
             credentials: Mutex::new(credentials),
             sources: Mutex::new(HashMap::new()),
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(Listings::default()),
             scope_cache: Mutex::new(HashMap::new()),
             #[cfg(test)]
             gitlab_test_base: Mutex::new(None),
@@ -434,7 +474,17 @@ impl IssueDesk {
         self.cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .retain(|key, _| !key.starts_with(prefix.as_str()));
+            .drop_prefixed(prefix.as_str());
+    }
+
+    /// Drops every cached listing, because the connection one was cached from is gone: a connect and a disconnect both
+    /// change which tracker the next listing asks. A test whose fake tracker changed its answer inside the cache window
+    /// without a write has no scope to drop, so it drops all of it too.
+    fn drop_listings(&self) {
+        self.cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drop_all();
     }
 
     /// Drops the whole 30-second listing cache. Tests call it between passes when a fake tracker changes its answer
@@ -442,10 +492,7 @@ impl IssueDesk {
     /// connect or disconnect drops everything, because the connection it was cached from is gone.
     #[cfg(test)]
     pub(crate) fn clear_cache(&self) {
-        self.cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.drop_listings();
     }
 }
 
@@ -916,11 +963,7 @@ impl Core {
             scopes: scope.map(str::to_owned).into_iter().collect(),
         };
         self.store.put_tracker(&connection, &crate::util::now())?;
-        self.issues
-            .cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.issues.drop_listings();
         self.issues.clear_scopes();
         Ok(self
             .issue_trackers()
@@ -939,11 +982,7 @@ impl Core {
                 .map_err(credential_error)?;
         }
         self.store.delete_tracker(kind)?;
-        self.issues
-            .cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.issues.drop_listings();
         self.issues.clear_scopes();
         Ok(self
             .issue_trackers()
@@ -960,22 +999,26 @@ impl Core {
         query: &IssueQuery,
     ) -> Result<ScopeList> {
         let id = IssueDesk::list_key(kind, scope, query);
-        if let Some((at, hit)) = self
-            .issues
-            .cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&id)
-            && at.elapsed() < CACHE_FOR
-        {
-            return Ok(hit.clone());
-        }
+        // The answer is asked for without the lock, so a write can drop this scope while the request is out. The count
+        // read here says whether that happened: if it did, the answer is the tracker as it was before the write and it
+        // stays out of the cache, so the next listing reads the tracker again instead of serving a page a write undid.
+        let dropped = {
+            let cache = self
+                .issues
+                .cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match cache.get(&id) {
+                Some(hit) => return Ok(hit),
+                None => cache.dropped,
+            }
+        };
         let fresh = self.issue_source(kind)?.list(scope, query).await?;
         self.issues
             .cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(id, (Instant::now(), fresh.clone()));
+            .put_since(dropped, id, fresh.clone());
         Ok(fresh)
     }
 
