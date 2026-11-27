@@ -18,17 +18,22 @@ function bodies(css: string, selector: string): string[] {
     .map(([, , body = ""]) => body);
 }
 
+/** The design classes the crew screens use for a link drawn as text: the headers' links and the escape pages' names. */
+const INLINE_LINK_CLASSES = [".cx-t10r", ".cx-linkname"] as const;
+
 describe("the crew inline links' target size", () => {
-  it("gives the shared design class a 24 px box and keeps it inline", () => {
-    const rules = bodies(design, ".cx-t10r");
-    expect(rules.length).toBeGreaterThan(0);
-    const body = rules.join(";");
-    // Inline, so the link stays in the heading or the sentence it belongs to, with its label centred in the taller box.
-    expect(body).toMatch(/(?:^|;)\s*display:\s*inline-flex/);
-    expect(body).toMatch(/(?:^|;)\s*align-items:\s*center/);
-    const minHeight = /(?:^|;)\s*min-height:\s*(\d+(?:\.\d+)?)px/.exec(body)?.[1];
-    expect(Number(minHeight), "min-height must clear the WCAG minimum").toBeGreaterThanOrEqual(WCAG_MINIMUM_PX);
-    // The audit is about the hit area only: the design's type size stays as drawn.
-    expect(body).not.toMatch(/(?:^|;)\s*font-size:/);
-  });
+  for (const selector of INLINE_LINK_CLASSES) {
+    it(`gives ${selector} a 24 px box and keeps it inline`, () => {
+      const rules = bodies(design, selector);
+      expect(rules.length).toBeGreaterThan(0);
+      const body = rules.join(";");
+      // Inline, so the link stays in the heading or the sentence it belongs to, with its label centred in the taller box.
+      expect(body).toMatch(/(?:^|;)\s*display:\s*inline-flex/);
+      expect(body).toMatch(/(?:^|;)\s*align-items:\s*center/);
+      const minHeight = /(?:^|;)\s*min-height:\s*(\d+(?:\.\d+)?)px/.exec(body)?.[1];
+      expect(Number(minHeight), "min-height must clear the WCAG minimum").toBeGreaterThanOrEqual(WCAG_MINIMUM_PX);
+      // The audit is about the hit area only: the design's type size stays as drawn.
+      expect(body).not.toMatch(/(?:^|;)\s*font-size:/);
+    });
+  }
 });
