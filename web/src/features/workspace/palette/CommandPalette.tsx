@@ -8,7 +8,7 @@ import { useUi, type PaletteStart } from "../../../product/state/ui";
 import { useVisibleProjects, useWorkspace } from "../../../product/state/workspace";
 import { ProjectBadge } from "../../../product/ui/badges";
 import { useAccountAvailable } from "../../account";
-import { usePickedRepo, useThreadRepos } from "../../repos";
+import { usePickedRepo, useThreadRepos, TrustOffer } from "../../repos";
 import { Button } from "../../../ui/controls";
 import { AddProjectPalette } from "./AddProjectPalette";
 import { loadFrecency, rankEntries, recordUse, saveFrecency } from "./paletteRanking";
@@ -46,20 +46,45 @@ function useCheckoutSearch(start: PaletteStart, query: string) {
   const route = parseRoute(window.location.hash);
   const threadId = route.name === "thread" ? route.id : null;
   const content = start === "search";
+  const searching = threadId !== null && searchTitle[start] !== undefined;
   // A multi-repository thread searches the repository its chip names, the primary until the person picks
   // another: the read carries that `repo_id`, and absent (an ordinary thread, or the primary) is unchanged.
-  const { repos } = useThreadRepos(threadId ?? "", 0, threadId !== null && searchTitle[start] !== undefined);
+  const { repos, settled } = useThreadRepos(threadId ?? "", 0, searching);
   const repoId = usePickedRepo(threadId ?? "", repos).repoId;
-  const key = `palette:${start}:${threadId ?? ""}:${repoId ?? ""}:${query}`;
+  // The thread's repository list is read before the search: until it answers the chosen repository is unknown, so a search
+  // now would be the primary's even while the explorer's chip names another, and its files would open in the wrong repository.
+  // A settled, ordinary or failed read searches the primary as before.
+  const ready = !searching || settled;
+  const key = `palette:${start}:${threadId ?? ""}:${ready ? repoId ?? "primary" : "pending"}:${query}`;
   const hits = useAsync(key, async (signal) => {
-    if (!threadId || !query.trim() || !searchTitle[start]) return [];
+    if (!ready || !threadId || !query.trim() || !searchTitle[start]) return [];
     return api.searchFiles(threadId, query.trim(), content, signal, repoId);
   });
-  return { hits: hits.data ?? [], repoId };
+  // The service refuses a read in a repository that is not trusted (`409 repo_untrusted`): the palette says so and offers the
+  // trust prompt instead of drawing an empty list. Every other outcome keeps the rows it already has.
+  const untrusted = hits.status === "error" && hits.error.status === 409 && hits.error.code === "repo_untrusted" ? hits.error : null;
+  return { hits: hits.data ?? [], repoId, threadId, untrusted, retry: hits.reload };
 }
 
 const MESSAGE_SEARCH_MIN = 2;
 const MESSAGE_SEARCH_DELAY_MS = 150;
+
+/**
+ * What "Go to file" and "Search in project" say when the service refuses the read because the repository is not trusted
+ * (`409 repo_untrusted`): its own message as text, in the palette's own note line, and the shared trust offer a refused file read
+ * shows (`TrustOffer`), so the repository can be trusted from here and the search read again. Trusting does not repeat the read;
+ * the person's next keystroke, or the offer's own done, reads again.
+ */
+function FilesNote({ message, threadId, repoId, onRetry }: { message: string; threadId: string | null; repoId: string | undefined; onRetry(): void }) {
+  return (
+    <div className="palette-note" role="status">
+      <TriangleAlert className="palette-note-icon" size={14} aria-hidden />
+      {threadId && repoId
+        ? <TrustOffer threadId={threadId} repoId={repoId} message={message} onDone={onRetry} />
+        : <span>{message}</span>}
+    </div>
+  );
+}
 
 /** Whole messages across threads. The service decides when a query is long enough. */
 function useMessageSearch(query: string, enabled: boolean) {
@@ -136,7 +161,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
     };
   }, []);
 
-  const { hits, repoId: searchedRepoId } = useCheckoutSearch(start, query);
+  const { hits, repoId: searchedRepoId, threadId: searchedThreadId, untrusted, retry: retrySearch } = useCheckoutSearch(start, query);
   const messages = useMessageSearch(query, !searchTitle[start] && !newIn);
   const accountOn = useAccountAvailable();
   const { pulls, status: pullStatus, retry: retryPulls } = usePullSearch(query, !searchTitle[start] && !newIn);
@@ -332,7 +357,8 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         />
       </div>
       <div id="palette-list" className="palette-list">
-        {entries.length === 0 && pullStatus === "idle" ? <p className="sidebar-empty">No results</p> : null}
+        {untrusted ? <FilesNote message={untrusted.message} threadId={searchedThreadId} repoId={searchedRepoId} onRetry={retrySearch} /> : null}
+        {entries.length === 0 && pullStatus === "idle" && !untrusted ? <p className="sidebar-empty">No results</p> : null}
         {entries.map((entry, at) => {
           // The pull request line sits after the ranked groups, ahead of the messages.
           // The note keeps the heading only when the rows above it did not draw the group's own.

@@ -70,3 +70,45 @@ it("leaves the read and the tab with no repo_id for the primary repository, as b
   await user.click(row);
   expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "plans/plan.md" }));
 });
+
+it("searches nothing until the repository list settles, so a pending list never searches the primary", async () => {
+  // The list is held open while the person types: until it answers, the repository the chip names is unknown.
+  const asked: string[] = [];
+  let release = () => {};
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    const url = String(input);
+    asked.push(url);
+    if (url.includes("/files/search")) return new Response(JSON.stringify([{ path: "plans/plan.md", line: 0, text: "" }]));
+    if (url.includes("/api/threads/t/repos")) {
+      await new Promise<void>((done) => { release = done; });
+      return new Response(JSON.stringify(repos));
+    }
+    return new Response("[]");
+  }));
+  chooseRepo("t", OTHER);
+  await goToFile("plan");
+  await waitFor(() => expect(asked.some((url) => url.includes("/api/threads/t/repos"))).toBe(true));
+  // Pending: not one search has been sent, so none of them was the primary's.
+  expect(searchAsks(asked).length).toBe(0);
+  release();
+  // Settled: the read names the chosen repository, and the row it finds opens as that repository's tab.
+  await waitFor(() => expect(repoIdAsked(asked)).toContain(OTHER));
+  expect(repoIdAsked(asked).some((repoId) => repoId === null)).toBe(false);
+  expect(await screen.findByRole("button", { name: "plans/plan.md" })).toBeTruthy();
+});
+
+it("says the service's refusal and offers trust instead of an empty list when the repository is not trusted", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: string) => {
+    const url = String(input);
+    if (url.includes("/files/search")) return new Response(JSON.stringify({ code: "repo_untrusted", message: "orbyn-planner is not trusted." }), { status: 409 });
+    if (url.includes("/api/threads/t/repos")) return new Response(JSON.stringify(repos));
+    return new Response("[]");
+  }));
+  chooseRepo("t", OTHER);
+  await goToFile("plan");
+  expect(await screen.findByText("orbyn-planner is not trusted.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Trust repository…" })).toBeTruthy();
+  // The refusal is not drawn as an empty result list.
+  expect(screen.queryByText("No results")).toBeNull();
+});
+
