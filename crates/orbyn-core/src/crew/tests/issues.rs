@@ -2399,6 +2399,7 @@ mod listing_cache {
                 summary,
                 body: String::new(),
                 comments: vec![],
+                activity: vec![],
                 linked_pull_requests: vec![],
                 linked_threads: vec![],
                 reactions: None,
