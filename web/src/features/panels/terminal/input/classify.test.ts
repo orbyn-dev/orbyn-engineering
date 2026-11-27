@@ -32,12 +32,24 @@ describe("looksSecret", () => {
     "API_TOKEN=\"${TOKEN:-$PREFIX-hunter2}\"",
     "API_TOKEN=${TOKEN:-${OTHER:-$PREFIX-hunter2}}",
     // bash: `API_TOKEN="${TOKEN:-$(echo })}hunter2"` prints `}hunter2` — the `}` stays inside the command substitution.
-    "API_TOKEN=${TOKEN:-$(echo })}hunter2"])("flags %j", (text) => expect(looksSecret(text)).toBe(true));
+    "API_TOKEN=${TOKEN:-$(echo })}hunter2",
+    // bash: `API_TOKEN=${TOKEN:-hunter{2}` prints `hunter{2` — only a `${` opens another expansion, a bare `{` is text.
+    "API_TOKEN=${TOKEN:-hunter{2}",
+    // bash: each of these prints text someone typed: `hunter2"`, `hunter2`, `hunter2` and the user name plus `hunter2`.
+    "API_TOKEN=${TOKEN:-\"hunter2$(printf '\"')\"}",
+    "API_TOKEN=${TOKEN:-${OTHER:-''hunter2}}",
+    "API_TOKEN=${TOKEN:-${OTHER:-$''hunter2}}",
+    "API_TOKEN=${TOKEN:-${OTHER:-$(whoami)hunter2}}",
+    "API_TOKEN=${TOKEN:-${OTHER:-`whoami`hunter2}}"])("flags %j", (text) => expect(looksSecret(text)).toBe(true));
   it.each(["ls -la", "why is the build failing?", "git log --oneline", "export PATH=$PATH:/x", "echo $API_KEY", "how do I set an api key", "TOKEN=$(gh auth token)", "TOKEN=${VAR}", "TOKEN=${VAR:-$OTHER}", "TOKEN=${VAR:-}", "API_TOKEN=${TOKEN:-$(gh auth token)}", "PATH=${PATH:-/usr/local/bin}", "BYPASS=${BYPASS:-1}", "API_TOKEN=${TOKEN:-`gh auth token`}", "API_TOKEN=\"${TOKEN:-`gh auth token`}\"", "TOKEN=\"${VAR}\"", "TOKEN=\"$VAR\"", "TOKEN=\"$(gh auth token)\"", "API_TOKEN=${TOKEN:-${OTHER}}", "API_TOKEN=${TOKEN:-$OTHER}", "API_TOKEN=${TOKEN:- }", "TOKEN=\"\"", "TOKEN=\"`gh auth token`\"", "API_TOKEN=${TOKEN:-${OTHER:-$ANOTHER}}", "API_TOKEN=${TOKEN:-${OTHER:-${THIRD}}}", "API_TOKEN=${TOKEN:-${OTHER:- }}", "PASSPHRASE=$(op read op://vault/item)", "PASSPHRASE=${PASSPHRASE:-$OTHER}", "API_TOKEN=\"${TOKEN:-$OTHER}\"",
     // bash: `API_TOKEN="${TOKEN:-$(echo })}"` prints `}` — the `}` belongs to the command substitution, so the expansion
     // closes at the last `}` and the value is that command's output, never text someone typed.
     "API_TOKEN=\"${TOKEN:-$(echo })}\"",
     "API_TOKEN=${TOKEN:-$(echo })}",
     "API_TOKEN=\"${TOKEN:-$(echo $(echo x))}\"",
-    "API_TOKEN=${TOKEN:-`echo }`}"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
+    "API_TOKEN=${TOKEN:-`echo }`}",
+    // bash: `OTHER=x; TOKEN=$OTHER;true` leaves `x` in `TOKEN` — `;`, `&` and `|` end the assignment word.
+    "TOKEN=$OTHER;true",
+    "TOKEN=$OTHER&&true",
+    "TOKEN=$OTHER|cat"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
 });

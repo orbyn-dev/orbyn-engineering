@@ -98,7 +98,8 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 /**
  * The index just past the quoted span that starts at `at`, or `null` when it does not close. `'...'` holds its text as
  * written, so a backslash there escapes nothing; `"..."`, `$'...'` and `$"..."` take a backslash escape. A `"..."` and a
- * `$"..."` also nest a `${...}` expansion, so the quote inside `"${TOKEN:-"hunter2"}"` does not end the span.
+ * `$"..."` also nest a `${...}` or a command substitution, so the quote inside `"${TOKEN:-"hunter2"}"` and inside
+ * `"hunter2$(printf '"')"` does not end the span.
  */
 function quotedEnd(text: string, at: number): number | null {
   const ansi = text[at] === "$";
@@ -116,6 +117,12 @@ function quotedEnd(text: string, at: number): number | null {
       const braced = bracesIn(text, cursor + 1);
       if (braced === null) return null;
       cursor = braced.end;
+      continue;
+    }
+    if (quote === '"' && ((char === "$" && text[cursor + 1] === "(") || char === "`")) {
+      const command = commandEnd(text, cursor);
+      if (command === null) return null;
+      cursor = command;
       continue;
     }
     cursor += 1;
@@ -174,14 +181,15 @@ function commandEnd(text: string, at: number): number | null {
 }
 
 /**
- * The inside of the `${...}` whose `{` is at `open`, and the index just past its `}`. The braces nest, since a default can
- * hold another reference (`API_TOKEN=${TOKEN:-${OTHER:-hunter2}}`), but one inside a quoted span, a command substitution or
- * behind a backslash is text, so `API_TOKEN=${TOKEN:-$'hunter{2'}` ends at the first `}` and keeps its `{`, and
+ * The inside of the `${...}` whose `{` is at `open`, and the index just past its `}`. Only another `${` nests, since a
+ * default can hold one (`API_TOKEN=${TOKEN:-${OTHER:-hunter2}}`), while a bare `{` is text: `API_TOKEN=${TOKEN:-hunter{2}`
+ * runs `$TOKEN` to `hunter{2` and ends at the one `}`. A brace inside a quoted span, a command substitution or behind a
+ * backslash is text too, so `API_TOKEN=${TOKEN:-$'hunter{2'}` ends at the first `}` and keeps its `{`, and
  * `API_TOKEN=${TOKEN:-$(echo })}` ends at the last one; nothing is returned when the expansion does not close.
  */
 function bracesIn(text: string, open: number): { body: string; end: number } | null {
-  let depth = 0;
-  for (let at = open; at < text.length; at += 1) {
+  let depth = 1;
+  for (let at = open + 1; at < text.length; at += 1) {
     const char = text[at];
     if (char === "\\") {
       at += 1;
@@ -199,8 +207,12 @@ function bracesIn(text: string, open: number): { body: string; end: number } | n
       at = close - 1;
       continue;
     }
-    if (char === "{") depth += 1;
-    else if (char === "}") {
+    if (char === "$" && text[at + 1] === "{") {
+      depth += 1;
+      at += 1;
+      continue;
+    }
+    if (char === "}") {
       depth -= 1;
       if (depth === 0) return { body: text.slice(open + 1, at), end: at + 1 };
     }
@@ -210,15 +222,15 @@ function bracesIn(text: string, open: number): { body: string; end: number } | n
 
 /**
  * The value written after an assignment's `=`, as one shell word. The shell glues a word together from quoted strings,
- * `${...}` expansions, command substitutions and plain text until a space or a line break, so
- * `${TOKEN:-$(echo })}hunter2` is one value; a `}` that closes nothing and a line break end it too, so the next line is
- * never read as this value.
+ * `${...}` expansions, command substitutions and plain text until a space, a line break or an unquoted `;`, `&`, `|`, `<`
+ * or `>` ends it, so `${TOKEN:-$(echo })}hunter2` is one value while `TOKEN=$OTHER;true` is only `$OTHER`; a `}` that
+ * closes nothing and a line break end it too, so the next line is never read as this value.
  */
 function valueAt(line: string, from: number): string {
   let end = from;
   while (end < line.length) {
     const rest = line.slice(end);
-    if (/^[ \t\r\n}]/.test(rest)) break;
+    if (/^[ \t\r\n};&|<>]/.test(rest)) break;
     if (rest[0] === "\\") {
       end += 2;
       continue;
@@ -262,18 +274,25 @@ function referenceEnd(text: string, at: number): number {
  * `${NAME:-default}` or `${NAME:=default}` is what the shell substitutes when that variable is unset, so it is read the same
  * way again. A single-quoted or ANSI-C literal is taken exactly as written, so a `$` inside it (`$'$ecret42'`) is text and
  * not a reference, while `"..."` and `$"..."` expand their contents and are read again. More of the value can follow a
- * reference and is read too, since the shell keeps it: `$PREFIX-hunter2` copies `PREFIX` and glues typed `-hunter2` to it.
- * Anything left is text someone typed, which is the secret.
+ * span and is read too, since the shell keeps it: `$PREFIX-hunter2` copies `PREFIX` and glues typed `-hunter2` to it, and
+ * `''hunter2` adds an empty literal to typed `hunter2`. Anything left is text someone typed, which is the secret.
  */
 function typedValue(raw: string): boolean {
   const text = raw.replace(/^[ \t]+/, "");
   if (text === "") return false;
   if (text[0] === "'" || text.startsWith("$'")) {
     const literal = text.slice(text[0] === "'" ? 1 : 2);
-    return (literal.split("'")[0] ?? "").trim() !== "";
+    const close = literal.indexOf("'");
+    if (close < 0) return literal.trim() !== "";
+    if (literal.slice(0, close).trim() !== "") return true;
+    // An empty literal holds nothing of its own, and the rest of the word can still be typed.
+    return typedValue(literal.slice(close + 1));
   }
   if (text[0] === '"' || text.startsWith('$"')) return typedValue(text.slice(text[0] === "$" ? 2 : 1));
-  if (text[0] === "`" || text.startsWith("$(")) return false;
+  if (text[0] === "`" || text.startsWith("$(")) {
+    const end = commandEnd(text, 0);
+    return end !== null && typedValue(text.slice(end));
+  }
   if (text.startsWith("${")) {
     const braced = bracesIn(text, 1);
     if (braced === null) return false;
