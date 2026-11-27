@@ -29,7 +29,7 @@ interface Entry {
     | "new-in"
     | "toggle-theme"
     | "restart-session"
-    | { file: string; line: number | null; repoId?: string }
+    | { file: string; line: number | null; threadId: string; repoId?: string }
     | { message: string; thread: string };
 }
 
@@ -40,6 +40,27 @@ const searchTitle: Partial<Record<PaletteStart, string>> = {
   files: "Go to file",
   search: "Search in project",
 };
+
+/** The thread and repository one file read named, carried with its rows so a row opens where it was found. */
+interface FileScope {
+  threadId: string;
+  repoId: string | undefined;
+}
+
+/**
+ * One answer to the file palette: the rows the read found, and the scope that read named. The two travel together, so a row
+ * always opens in the repository it was found in. The rows and the chip's repository otherwise change in different renders:
+ * the chip reads state that moves at once, while `useAsync` drops its old data in an effect, so one committed render shows
+ * rows found in the previous repository against the new one, and a selection landing there would open the wrong file (#1777).
+ */
+interface FileFound {
+  hits: Awaited<ReturnType<typeof api.searchFiles>>;
+  scope: FileScope;
+  /** Set when the service refused the read because the repository is not trusted (`409 repo_untrusted`). */
+  refused: ReturnType<typeof toFailure> | null;
+}
+
+const NOTHING_FOUND: FileFound = { hits: [], scope: { threadId: "", repoId: undefined }, refused: null };
 
 /** Files or text in the open thread's checkout, read in the repository the explorer's chip names. */
 function useCheckoutSearch(start: PaletteStart, query: string) {
@@ -56,14 +77,22 @@ function useCheckoutSearch(start: PaletteStart, query: string) {
   // A settled, ordinary or failed read searches the primary as before.
   const ready = !searching || settled;
   const key = `palette:${start}:${threadId ?? ""}:${ready ? repoId ?? "primary" : "pending"}:${query}`;
-  const hits = useAsync(key, async (signal) => {
-    if (!ready || !threadId || !query.trim() || !searchTitle[start]) return [];
-    return api.searchFiles(threadId, query.trim(), content, signal, repoId);
+  const found = useAsync<FileFound>(key, async (signal) => {
+    // The scope is captured with the answer, not read again when a row is picked: it is the repository this read named.
+    const scope = { threadId: threadId ?? "", repoId };
+    if (!ready || !threadId || !query.trim() || !searchTitle[start]) return { hits: [], scope, refused: null };
+    try {
+      return { hits: await api.searchFiles(threadId, query.trim(), content, signal, repoId), scope, refused: null };
+    } catch (error) {
+      // The service refuses a read in a repository that is not trusted (`409 repo_untrusted`): the palette says so and offers
+      // the trust prompt instead of drawing an empty list. The refusal belongs to the repository it was asked about, so it
+      // carries that scope too. Every other outcome is the read's own error.
+      const failure = toFailure(error);
+      if (failure.status === 409 && failure.code === "repo_untrusted") return { hits: [], scope, refused: failure };
+      throw error;
+    }
   });
-  // The service refuses a read in a repository that is not trusted (`409 repo_untrusted`): the palette says so and offers the
-  // trust prompt instead of drawing an empty list. Every other outcome keeps the rows it already has.
-  const untrusted = hits.status === "error" && hits.error.status === 409 && hits.error.code === "repo_untrusted" ? hits.error : null;
-  return { hits: hits.data ?? [], repoId, threadId, untrusted, retry: hits.reload };
+  return { found: found.data ?? NOTHING_FOUND, retry: found.reload };
 }
 
 const MESSAGE_SEARCH_MIN = 2;
@@ -161,20 +190,28 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
     };
   }, []);
 
-  const { hits, repoId: searchedRepoId, threadId: searchedThreadId, untrusted, retry: retrySearch } = useCheckoutSearch(start, query);
+  const { found: fileFound, retry: retrySearch } = useCheckoutSearch(start, query);
   const messages = useMessageSearch(query, !searchTitle[start] && !newIn);
   const accountOn = useAccountAvailable();
   const { pulls, status: pullStatus, retry: retryPulls } = usePullSearch(query, !searchTitle[start] && !newIn);
   const [book, setBook] = useState(() => loadFrecency());
   const entries = useMemo<Entry[]>(() => {
     if (searchTitle[start]) {
+      // Every row carries the repository and thread its read named, so picking one opens it there whatever the chip or the
+      // route say by then.
+      const { hits, scope } = fileFound;
       return hits.map((hit) => ({
-        key: `${hit.path}:${hit.line}`,
+        key: `${scope.threadId}:${scope.repoId ?? ""}:${hit.path}:${hit.line}`,
         group: searchTitle[start] ?? "",
         label: hit.text && start === "search" ? hit.text.trim() : hit.path,
         meta: start === "search" ? `${hit.path}:${hit.line}` : undefined,
         icon: <File size={16} aria-hidden />,
-        route: { file: hit.path, line: hit.line || null, ...(searchedRepoId === undefined ? {} : { repoId: searchedRepoId }) },
+        route: {
+          file: hit.path,
+          line: hit.line || null,
+          threadId: scope.threadId,
+          ...(scope.repoId === undefined ? {} : { repoId: scope.repoId }),
+        },
       }));
     }
     const actions: Entry[] = [
@@ -247,7 +284,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         }));
     const matching = needle ? [...all, ...inPulls].filter(found) : all;
     return [...rankEntries(matching, query, book, Date.now()).slice(0, 50), ...inMessages];
-  }, [threads, query, newIn, projects, allProjects, hits, searchedRepoId, start, messages, accountOn, pulls, book]);
+  }, [threads, query, newIn, projects, allProjects, fileFound, start, messages, accountOn, pulls, book]);
 
   const choose = (entry: Entry | undefined) => {
     if (!entry) return;
@@ -279,8 +316,9 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
       return;
     }
     if (typeof entry.route === "object" && "file" in entry.route) {
-      const route = parseRoute(window.location.hash);
-      const thread = route.name === "thread" ? useWorkspace.getState().threads[route.id] : null;
+      // The row's own thread and repository, not the ones on screen now: the chip or the route can move before the list
+      // drops the rows of the read that found it.
+      const thread = useWorkspace.getState().threads[entry.route.threadId];
       if (thread) useUi.getState().revealFile(entry.route.file, entry.route.line, { threadId: thread.id, cwd: thread.cwd }, entry.route.repoId);
       onClose();
       return;
@@ -357,8 +395,8 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         />
       </div>
       <div id="palette-list" className="palette-list">
-        {untrusted ? <FilesNote message={untrusted.message} threadId={searchedThreadId} repoId={searchedRepoId} onRetry={retrySearch} /> : null}
-        {entries.length === 0 && pullStatus === "idle" && !untrusted ? <p className="sidebar-empty">No results</p> : null}
+        {fileFound.refused ? <FilesNote message={fileFound.refused.message} threadId={fileFound.scope.threadId} repoId={fileFound.scope.repoId} onRetry={retrySearch} /> : null}
+        {entries.length === 0 && pullStatus === "idle" && !fileFound.refused ? <p className="sidebar-empty">No results</p> : null}
         {entries.map((entry, at) => {
           // The pull request line sits after the ranked groups, ahead of the messages.
           // The note keeps the heading only when the rows above it did not draw the group's own.

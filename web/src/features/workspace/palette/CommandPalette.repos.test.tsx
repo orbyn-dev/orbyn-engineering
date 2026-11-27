@@ -1,5 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { flushSync } from "react-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { fileTabId, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
@@ -95,6 +96,26 @@ it("searches nothing until the repository list settles, so a pending list never 
   await waitFor(() => expect(repoIdAsked(asked)).toContain(OTHER));
   expect(repoIdAsked(asked).some((repoId) => repoId === null)).toBe(false);
   expect(await screen.findByRole("button", { name: "plans/plan.md" })).toBeTruthy();
+});
+
+it("opens a row in the repository it was found in when the chip moves on before the list redraws", async () => {
+  // #1777 review: the rows on screen are the answer to the read the palette sent, and the chip's repository is read
+  // from state that changes in the same commit. The old list is dropped by an effect, so one committed render shows the
+  // rows found in `planner` while the chip already names the primary. flushSync commits that render without running the
+  // effect, which is the window a selection lands in; the row must still open where it was found.
+  const { asked } = serve();
+  chooseRepo("t", OTHER);
+  await goToFile("plan");
+  const row = await screen.findByRole("button", { name: "plans/plan.md" });
+  await waitFor(() => expect(repoIdAsked(asked)).toContain(OTHER));
+  act(() => {
+    flushSync(() => chooseRepo("t", null));
+    // The row found in `planner` is still drawn against the primary scope, and this is the selection that lands in it.
+    expect(row.isConnected).toBe(true);
+    row.click();
+  });
+  expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "plans/plan.md", repoId: OTHER }));
+  expect(useUi.getState().fileReveal?.repoId).toBe(OTHER);
 });
 
 it("says the service's refusal and offers trust instead of an empty list when the repository is not trusted", async () => {
