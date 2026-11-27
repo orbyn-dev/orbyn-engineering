@@ -32,6 +32,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/pulls", get(all))
         .route("/api/pulls/details", post(details))
         .route("/api/projects/{id}/pulls", get(list))
+        .route("/api/projects/{id}/branches/detail", get(branch_detail))
         .route("/api/projects/{id}/pulls/close", post(close_many))
         .route(
             "/api/projects/{id}/pulls/reviewers",
@@ -157,6 +158,30 @@ pub async fn list(
         state
             .core
             .project_pulls(&id, &filter_of(query), refresh)
+            .await?,
+    ))
+}
+
+/// One branch of a project's repository: whether its `origin` remote already holds it, and the
+/// pull request that already comes from it or none. This is the read a pull request page makes
+/// before a pull request exists (issue 506, frame `pr-detail-none`). A branch name holds `/`, so
+/// it travels as the query `branch`, and `repo_id` names a repository of a multi-repository project.
+#[derive(serde::Deserialize)]
+struct BranchQuery {
+    branch: String,
+    #[serde(default)]
+    repo_id: Option<String>,
+}
+
+async fn branch_detail(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<BranchQuery>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .branch_detail(&id, query.repo_id.as_deref(), &query.branch)
             .await?,
     ))
 }
