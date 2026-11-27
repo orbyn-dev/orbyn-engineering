@@ -20,7 +20,8 @@ finding, and **does not replace CodeQL**.
   - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")`, in either
     quote style, whose character class matches no backslash of its own — not negated, and without a `\W`, `\S` or `\D`
     shorthand, a `\x5c` or `\u005c` escape, an octal `\134`, or a range that spans a backslash (`[A-z]`, `[[-^]`); a
-    range with an escaped endpoint cannot be classified, so it is skipped rather than guessed
+    range with an escaped endpoint cannot be classified, so it is skipped rather than guessed, and only an unescaped
+    hyphen with an endpoint on both sides separates a range, so an escaped `\-` and a leading `-` are literals
     (`web/src/styles/tokens.test.ts:165` was the known case; it is fixed). A `\p{…}` property escape is outside the rule.
 - `tests/`: a matching case and a safe look-alike for every rule. A rule is unproven without both. The workflow runs
   them first.
@@ -49,7 +50,8 @@ What the rule does not read, so this record does not claim it: a replacement bui
 capture group, `replaceAll`); a regex flag other than `g`, so `/[…]/gi` and a flagless `/[…]/` are not matched; a negated
 class, which is skipped even where it really does exclude a backslash (`/[^\\]/` is not reported); a class range with an
 escaped endpoint, skipped rather than classified, which can hide a real finding; and a class that matches a backslash of
-its own, including through a range such as `[A-z]`, which needs no fix.
+its own, including through a range such as `[A-z]` or `[[-^]`, which needs no backslash-specific fix, though other
+regex metacharacters in that class may still need their own escaping.
 
 The other four gaps are **open** and need the owner's decision. None is accepted here, and the advisory workflow stays
 non-required. The parser set below is the 2026-11-23 re-check; this change did not re-run the full scan.
