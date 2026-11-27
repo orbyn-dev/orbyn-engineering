@@ -458,6 +458,25 @@ async fn a_getter_on_the_thrown_error_still_ends_at_the_cpu_limit() {
 }
 
 #[tokio::test]
+async fn a_message_getter_that_answers_once_still_reports_the_script_error() {
+    // The class and the words come from one read of the exception: a getter that answers something else the second
+    // time cannot make a heap refusal's retained `heap_hit` replace the message the script threw.
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let code = "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+                let reads = 0;\n\
+                const error = new Error('recovered');\n\
+                Object.defineProperty(error, 'message', { get() { return ++reads === 1 ? 'recovered' : ''; } });\n\
+                Object.defineProperty(error, 'stack', { value: '' });\n\
+                throw error;";
+    let (kind, text) = failure(code, limits).await;
+    assert_eq!(kind, ErrorKind::Runtime, "{text}");
+    assert!(text.contains("recovered"), "{text}");
+}
+
+#[tokio::test]
 async fn a_thrown_error_keeps_its_message_when_its_name_cannot_be_read() {
     // A heap refusal is already recorded, but the script's own error explains itself: a `name` the
     // engine cannot read must not turn that message into the heap's diagnostic.

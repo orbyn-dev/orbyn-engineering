@@ -417,26 +417,33 @@ fn first_line(stack: &str) -> Option<u32> {
     })
 }
 
+/// The thrown exception's class and message, as read once. Both properties are the script's own getters, so a second
+/// read can answer something else: what is shown and what is classified have to come from the same read.
+struct Thrown {
+    name: Option<String>,
+    message: Option<String>,
+}
+
 /// The engine's own error class and message, when the run ended with a JavaScript `Error`.
-fn engine_error(caught: &rquickjs::CaughtError<'_>) -> Option<(String, String)> {
+fn thrown(caught: &rquickjs::CaughtError<'_>) -> Option<Thrown> {
     let rquickjs::CaughtError::Exception(exception) = caught else {
         return None;
     };
-    Some((
-        exception.get::<_, Option<String>>("name").ok().flatten()?,
-        exception.message()?,
-    ))
+    Some(Thrown {
+        name: exception.get::<_, Option<String>>("name").ok().flatten(),
+        message: exception.message(),
+    })
 }
 
-/// Whether what ended the run says nothing about why: `null`, `undefined`, a blank string, an
-/// `Error` with an empty message, or an allocation the Rust side could not make. Anything else,
-/// including a thrown number or object, is what the script threw and is reported as it is.
-fn carries_no_reason(caught: &rquickjs::CaughtError<'_>) -> bool {
+/// Whether what ended the run says nothing about why: `null`, `undefined`, a blank string, an `Error` with an empty
+/// message, or an allocation the Rust side could not make. Anything else, including a thrown number or object, is
+/// what the script threw and is reported as it is.
+fn carries_no_reason(caught: &rquickjs::CaughtError<'_>, thrown: Option<&Thrown>) -> bool {
     match caught {
-        // The message alone decides: a `name` that is absent or cannot be read does not make a
-        // thrown `Error` reasonless, and replacing its message with a limit's would be a lie.
-        rquickjs::CaughtError::Exception(exception) => exception
-            .message()
+        // The message alone decides: a `name` that is absent or cannot be read does not make a thrown `Error`
+        // reasonless, and replacing its message with a limit's would be a lie.
+        rquickjs::CaughtError::Exception(_) => thrown
+            .and_then(|thrown| thrown.message.as_ref())
             .is_none_or(|text| text.trim().is_empty()),
         rquickjs::CaughtError::Value(value) => {
             if value.is_null() || value.is_undefined() {
@@ -451,29 +458,44 @@ fn carries_no_reason(caught: &rquickjs::CaughtError<'_>) -> bool {
 }
 
 fn classify(caught: &rquickjs::CaughtError<'_>, shared: &Shared) -> RunError {
-    let message = caught.to_string();
+    let thrown = thrown(caught);
+    // The words a person reads are built from that one read as well, so a getter that answers something else the
+    // second time cannot make the message disagree with the class it was given.
+    let message = match &thrown {
+        Some(Thrown {
+            name: Some(name),
+            message: Some(message),
+        }) => format!("{name}: {message}"),
+        Some(Thrown {
+            message: Some(message),
+            ..
+        }) => message.clone(),
+        _ => caught.to_string(),
+    };
     // The engine records why it stopped the script, so a limit is read from that record and never
     // from the words in the error: `cpu_hit` from the interrupt hook, `heap_hit` from the heap.
     if shared.cpu_hit.load(Ordering::SeqCst) {
         return limit_error("The script used more than its CPU time.".into());
     }
-    let engine = engine_error(caught);
     // `InternalError` is the class the engine uses for its own resources, and is the only thing
     // that says "out of memory"; a script throwing an `Error` with those words stays a runtime
     // error. A heap that refuses an allocation and explains nothing is the heap limit as well.
-    let engine_says = |class: &str, text: &str| match &engine {
-        Some((name, message)) => name.as_str() == class && message.as_str() == text,
-        None => false,
+    let engine_says = |class: &str, text: &str| match &thrown {
+        Some(Thrown {
+            name: Some(name),
+            message: Some(message),
+        }) => name.as_str() == class && message.as_str() == text,
+        _ => false,
     };
     if engine_says("InternalError", "out of memory")
-        || (shared.heap_hit.load(Ordering::SeqCst) && carries_no_reason(caught))
+        || (shared.heap_hit.load(Ordering::SeqCst) && carries_no_reason(caught, thrown.as_ref()))
     {
         return limit_error("The script used more than its memory limit (heap).".into());
     }
     if engine_says("RangeError", "Maximum call stack size exceeded") {
         return limit_error("The script used more than its stack limit.".into());
     }
-    let syntax = engine.is_some_and(|(name, _)| name == "SyntaxError");
+    let syntax = thrown.as_ref().and_then(|thrown| thrown.name.as_deref()) == Some("SyntaxError");
     RunError {
         kind: if syntax {
             ErrorKind::Syntax
