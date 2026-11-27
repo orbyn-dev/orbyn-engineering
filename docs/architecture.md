@@ -3024,7 +3024,9 @@ Unchanged ignored caches do not require broader scope or data removal; ignored n
 remain an accepted blind spot, pending isolated-checkout work (#436).
 Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
 checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
-other Git reads keep their settings. Those checks need Git 2.40 or later, which
+other Git reads keep the checkout's own conversion, because they compare a working tree against its index and
+forcing the conversion off would publish a clean `core.autocrlf=true` checkout as changed
+(`hardened_reads_keep_the_checkouts_line_ending_conversion`). Those checks need Git 2.40 or later, which
 honours `GIT_ATTR_SOURCE`, so a checkout's own `.gitattributes` stays out of the
 read; older Git errors them rather than pass bytes it did not compare.
 Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
