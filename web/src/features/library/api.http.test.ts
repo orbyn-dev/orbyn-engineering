@@ -5,7 +5,7 @@ import { libraryApi, setLibraryApi } from "./api";
 
 afterEach(() => { setLibraryApi(null); });
 const answer = (status: number, body: unknown) => vi.fn(async (_url: string, _init?: RequestInit) => new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } }));
-const sent = (fetching: ReturnType<typeof answer>) => { const [url, init] = fetching.mock.calls[0]!; return { url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined, raw: String(init?.body ?? "") }; };
+const sent = (fetching: ReturnType<typeof answer>) => { const [url, init] = fetching.mock.calls[0]!; return { url: String(url), method: init?.method, headers: init?.headers as Record<string, string> | undefined, body: init?.body ? JSON.parse(String(init.body)) : undefined, raw: String(init?.body ?? "") }; };
 
 it("answers a 404 or a foreign body from the summary as no feature, with no error", async () => {
   vi.stubGlobal("fetch", answer(404, { code: "not_found", message: "No such route." }));
@@ -114,6 +114,32 @@ it("imports a document with dry_run beside it, and reads the report", async () =
   await expect(libraryApi().importLibrary({ format: "orbyn-library", version: 1, workflows: [{ name: "W" }] }, true)).resolves.toEqual(report);
   expect(sent(fetching)).toMatchObject({ method: "POST", body: { format: "orbyn-library", dry_run: true } });
   expect(sent(fetching).url).toContain("/api/library/import");
+});
+
+it("exports the document by GET, every kind or the ones named, with no person key", async () => {
+  const document = { format: "orbyn-library", version: 1, exported_at: "2026-11-22T00:00:00Z", profiles: [], workflows: [{ name: "W" }], prompts: [], env_sets: [] };
+  let fetching = answer(200, document);
+  vi.stubGlobal("fetch", fetching);
+  await expect(libraryApi().exportLibrary()).resolves.toEqual(document);
+  const first = sent(fetching);
+  expect(first.method).toBe("GET");
+  expect(first.url).toContain("/api/library/export");
+  expect(new URL(first.url, "http://orbyn.local").searchParams.get("kinds")).toBe("profiles,workflows,prompts,env_sets");
+  expect(first.headers?.["x-orbyn-person"]).toBeUndefined();
+  fetching = answer(200, document);
+  vi.stubGlobal("fetch", fetching);
+  await libraryApi().exportLibrary(["prompts", "env_sets"]);
+  expect(new URL(sent(fetching).url, "http://orbyn.local").searchParams.get("kinds")).toBe("prompts,env_sets");
+});
+
+it("reports a 404 export as the older service it is, and refuses a body that is not a document", async () => {
+  vi.stubGlobal("fetch", answer(404, { code: "not_found", message: "No such route." }));
+  await expect(libraryApi().exportLibrary()).rejects.toMatchObject({ code: "not_found", status: 404 });
+  vi.stubGlobal("fetch", answer(200, { hello: "world" }));
+  await expect(libraryApi().exportLibrary()).rejects.toMatchObject({ code: "bad_answer", status: 502 });
+  // A 200 that is not a library document is refused even when it carries a `format`: the panel must not save it.
+  vi.stubGlobal("fetch", answer(200, { format: "error", message: "Export failed" }));
+  await expect(libraryApi().exportLibrary()).rejects.toMatchObject({ code: "bad_answer", status: 502 });
 });
 
 it("answers the 503 keychain_unavailable of a key write with its code and the service's message", async () => {
