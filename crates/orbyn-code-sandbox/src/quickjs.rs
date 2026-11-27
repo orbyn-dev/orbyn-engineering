@@ -460,17 +460,16 @@ fn carries_no_reason(caught: &rquickjs::CaughtError<'_>, thrown: Option<&Thrown>
 fn classify(caught: &rquickjs::CaughtError<'_>, shared: &Shared) -> RunError {
     let thrown = thrown(caught);
     // The words a person reads are built from that one read as well, so a getter that answers something else the
-    // second time cannot make the message disagree with the class it was given.
+    // second time cannot make the message disagree with the class it was given. Only a value that is not a
+    // JavaScript `Error` reaches the engine's formatting, which is the one path with no getter to read.
     let message = match &thrown {
-        Some(Thrown {
-            name: Some(name),
-            message: Some(message),
-        }) => format!("{name}: {message}"),
-        Some(Thrown {
-            message: Some(message),
-            ..
-        }) => message.clone(),
-        _ => caught.to_string(),
+        Some(Thrown { name, message }) => match (name, message) {
+            (Some(name), Some(message)) => format!("{name}: {message}"),
+            (Some(name), None) => name.clone(),
+            (None, Some(message)) => message.clone(),
+            (None, None) => String::new(),
+        },
+        None => caught.to_string(),
     };
     // The engine records why it stopped the script, so a limit is read from that record and never
     // from the words in the error: `cpu_hit` from the interrupt hook, `heap_hit` from the heap.

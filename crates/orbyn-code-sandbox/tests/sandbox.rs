@@ -477,6 +477,29 @@ async fn a_message_getter_that_answers_once_still_reports_the_script_error() {
 }
 
 #[tokio::test]
+async fn a_message_getter_that_answers_late_cannot_change_the_class() {
+    // The first read of the message is the only one: an exception whose message reads empty is reasonless for the
+    // heap that refused, and the words shown must not come from a later read that answered something else.
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let code = "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+                let reads = 0;\n\
+                const error = new Error();\n\
+                Object.defineProperty(error, 'message', { get() { return ++reads === 1 ? '' : 'late'; } });\n\
+                Object.defineProperty(error, 'stack', { value: '' });\n\
+                throw error;";
+    let (kind, text) = failure(code, limits).await;
+    assert_eq!(kind, ErrorKind::Limit, "{text}");
+    assert!(text.to_lowercase().contains("heap"), "{text}");
+    assert!(
+        !text.contains("late"),
+        "no second read decided this: {text}"
+    );
+}
+
+#[tokio::test]
 async fn a_thrown_error_keeps_its_message_when_its_name_cannot_be_read() {
     // A heap refusal is already recorded, but the script's own error explains itself: a `name` the
     // engine cannot read must not turn that message into the heap's diagnostic.
