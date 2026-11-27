@@ -65,36 +65,43 @@ export function useRouteFocus(
   const previous = useRef({ key: routeKey, name: routeName });
   // What had focus, and which page was showing, when settings opened.
   const opener = useRef<{ element: Element | null; key: string } | null>(null);
+  // The route of the last commit, ready or not: `previous` follows settled pages only, so a Settings
+  // session that never became ready leaves no trace there.
+  const last = useRef(routeName);
   useEffect(() => {
     const before = previous.current;
+    const entering = routeName === "settings" && last.current !== "settings";
+    last.current = routeName;
     // What opened Settings is recorded the moment the route enters it, never when its screen arrives:
     // the wait for a first chunk is exactly when tabbing moves the keyboard, and closing Settings must
-    // return to the control that opened it rather than to whatever the tab reached meanwhile.
-    if (routeName === "settings" && before.name !== "settings" && opener.current === null) {
+    // return to the control that opened it rather than to whatever the tab reached meanwhile. A new
+    // session records its own opener, replacing one a session that never came back left waiting.
+    if (entering) {
       const active = document.activeElement;
       // The page it covers is the one drawn behind it, which the shell already knows, not the last page
       // focus completed on: a screen whose chunk is still arriving has replaced that page already, and
       // closing Settings restores the opener only while it names the page that is showing.
       opener.current = { element: active && active !== document.body ? active : null, key: coveredKey };
     }
-    // Settings was left on this commit, so the session it recorded is read once here: the page it covered
-    // takes the opener back if it is the page showing again, and any other ending drops it, so the next
-    // session records its own instead of keeping an opener nobody can return to.
+    // The opener belongs to the page Settings covers, so it is read whenever that page is the route again:
+    // the session that recorded it is ending, or ended before either screen was ready and is still owed a
+    // hand-back when the page behind arrives.
     const back = routeName === "settings" ? null : opener.current;
     if (!ready) {
-      // Nothing on the page can take the focus yet, so nothing is handed back. A session whose screen was
-      // on the page waits for the page behind to arrive; one whose screen never arrived left with its
-      // route, and its opener is dropped rather than outliving it.
-      if (back !== null && before.name !== "settings") opener.current = null;
+      // Nothing on the page can take the focus yet, so nothing is handed back. The opener is kept while
+      // the page it covered is the page still arriving, because that page is where it has to be handed
+      // back; it is dropped once the route is some other page, since nothing can bring focus back there.
+      if (back !== null && back.key !== routeKey) opener.current = null;
       return;
     }
-    // The session is over, so its opener is settled on this commit either way.
+    // The page behind is the page showing again, so its opener is settled on this commit either way.
     if (back !== null) opener.current = null;
     const root = main.current;
     if (back !== null && back.element instanceof HTMLElement && back.key === routeKey && back.element.isConnected && !back.element.closest("[hidden]")) {
       // Closing settings returns to what opened it, if it is still there and the page behind is showing.
-      // That holds whether or not the screen arrived: Escape while its chunk is still coming closes it from
-      // the page that never left, so the wait must not cost the person the control they opened it from.
+      // That holds whether or not Settings' screen arrived, and whether or not the page behind had: Escape
+      // while a chunk is still coming closes it from the page that never left, so the wait must not cost
+      // the person the control they opened it from.
       previous.current = { key: routeKey, name: routeName };
       back.element.focus({ preventScroll: true });
       return;

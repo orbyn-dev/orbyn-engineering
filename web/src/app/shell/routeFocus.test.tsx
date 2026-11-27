@@ -114,6 +114,64 @@ it("records the page Settings covers, not the last page focus completed on", () 
   expect(document.activeElement).toBe(opener);
 });
 
+it("keeps the Settings opener when the close lands before either screen is ready", () => {
+  const main = screen("Screen title");
+  const ref = { current: main };
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/usage", name: "usage", ready: true, covered: "#/usage" } },
+  );
+  // The control that opened Settings, on the page Settings covers.
+  const opener = control("Open settings");
+  const tabbedTo = control("Another control");
+  act(() => opener.focus());
+
+  // Skills is chosen and its chunk is still arriving; Settings opens over it while its own chunk is
+  // arriving too, so neither screen is on the page.
+  view.rerender({ key: "#/skills", name: "skills", ready: false, covered: "#/skills" });
+  view.rerender({ key: "#/settings", name: "settings", ready: false, covered: "#/skills" });
+  // Tabbing during that wait moves the keyboard to a control the shell keeps on every page.
+  act(() => tabbedTo.focus());
+  expect(document.activeElement).toBe(tabbedTo);
+
+  // Escape closes Settings before either screen arrived. The page it covered is still arriving, so the
+  // focus cannot go back yet, but the opener it was opened from has to survive the wait.
+  view.rerender({ key: "#/skills", name: "skills", ready: false, covered: "#/skills" });
+  expect(document.activeElement).toBe(tabbedTo);
+
+  // Skills arrives: the focus returns to what opened Settings on that page, not to the tab the wait
+  // reached and not to the page title.
+  view.rerender({ key: "#/skills", name: "skills", ready: true, covered: "#/skills" });
+  expect(document.activeElement).toBe(opener);
+});
+
+it("drops the kept opener when the covered page is left before it arrives", () => {
+  const main = screen("Screen title");
+  const ref = { current: main };
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/usage", name: "usage", ready: true, covered: "#/usage" } },
+  );
+  const opener = control("Open settings");
+  const tabbedTo = control("Another control");
+  act(() => opener.focus());
+
+  // Settings opens over Skills while neither screen is ready, and closes back onto Skills the same way.
+  view.rerender({ key: "#/skills", name: "skills", ready: false, covered: "#/skills" });
+  view.rerender({ key: "#/settings", name: "settings", ready: false, covered: "#/skills" });
+  act(() => tabbedTo.focus());
+  view.rerender({ key: "#/skills", name: "skills", ready: false, covered: "#/skills" });
+
+  // Another page is chosen before Skills arrived: the opener belonged to Skills, so nothing may restore
+  // it, and the page that does arrive takes the focus itself.
+  view.rerender({ key: "#/pulls", name: "pulls", ready: false, covered: "#/pulls" });
+  view.rerender({ key: "#/pulls", name: "pulls", ready: true, covered: "#/pulls" });
+  expect(document.activeElement).not.toBe(opener);
+  expect(document.activeElement?.textContent).toBe("Screen title");
+});
+
 it("records a second opener after a session that ended before its screen arrived", () => {
   const main = screen("Screen title");
   const ref = { current: main };
