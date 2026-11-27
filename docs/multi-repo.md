@@ -371,7 +371,12 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
 - **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`,
   `PUT .../files/content`, `POST .../previews/file`, `POST .../files/open` and `POST .../paths/resolve` (`GitAction`,
   `CreateBranch`, `SwitchBranch`, `WriteFile`, `OpenPreviewFile`, `OpenInEditor`, `ResolveThreadPath`). Query: `GET .../commits`,
-  `GET .../diff`, `GET .../branches` and `GET .../files/content`. Absent is the primary repository (position 0).
+  `GET .../diff`, `GET .../branches`, `GET .../files/content` and `GET .../files/search`. Absent is the primary
+  repository (position 0). The file search is what the command palette's Go to file and Search in project read, so
+  both answer the repository the explorer's chip names, and a hit opens as that repository's tab. The palette reads the
+  thread's repository list before it searches, so a list still on its way cannot answer the primary while the chip names
+  another; a settled, ordinary or failed read searches the primary as before. The service's `409 repo_untrusted` is shown
+  in the palette with the shared trust prompt instead of an empty list.
 - **One resolver.** Every thread Git and file call reads the thread through one function that, for a multi-repository thread,
   returns it with its `cwd` set to the chosen repository's worktree. So the repository is the only thing that changes: the path of a
   file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
