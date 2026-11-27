@@ -1058,9 +1058,9 @@ mod writes {
     //! send, the issue they answer, and the award lookup an idempotent reaction needs.
 
     use super::*;
-    use crate::issues::NewIssue;
     use crate::issues::fake_http::Seen;
-    use orbyn_contracts::{IssueReaction, IssueReactionCount};
+    use crate::issues::{IssueEdit, NewIssue};
+    use orbyn_contracts::{IssueCloseReason, IssueReaction, IssueReactionCount};
     use std::sync::{Arc, Mutex};
 
     /// The method and address of every write the server saw, without the HTTP version.
@@ -1135,6 +1135,10 @@ mod writes {
         assert_eq!(detail.body, "It breaks.");
         assert!(detail.comments.is_empty(), "a new issue has no comments");
         assert_eq!(detail.reactions, None);
+        assert!(
+            detail.states.is_some(),
+            "a new issue's answer offers the states a detail read does"
+        );
     }
 
     #[tokio::test]
@@ -1470,6 +1474,759 @@ mod writes {
             matches!(&error, CoreError::TrackerUnavailable(m) if m.contains("possibly created") && !m.contains("secret")),
             "{error:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_detail_offers_both_states_and_a_closed_issue_names_the_one_it_is_in() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut one = issue(&base, 5);
+            one["state"] = json!("closed");
+            one["closed_at"] = json!("2026-11-06T00:00:00Z");
+            Reply::json(&one)
+        })
+        .await;
+        let gitlab = reader(&server);
+        assert!(gitlab.can_edit(), "GitLab edits in this build");
+        let detail = gitlab.get("grp/proj", "5").await.unwrap();
+        let states = detail.states.expect("a GitLab detail offers its states");
+        assert_eq!(
+            states.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            ["Open", "Closed"],
+            "GitLab has one closed state and stores no reason, so it offers two names"
+        );
+        assert_eq!(states[0].category, IssueStateCategory::Open);
+        assert_eq!(states[1].category, IssueStateCategory::Closed);
+        assert_eq!(
+            states[1].close_reason, None,
+            "GitLab keeps no close reason, so it offers none"
+        );
+        // A closed issue reports the closed state the detail offers, so a menu marks the row it is in.
+        assert_eq!(detail.summary.state.name, states[1].name);
+        assert_eq!(detail.summary.state.category, states[1].category);
+    }
+
+    #[tokio::test]
+    async fn an_edit_writes_only_the_fields_present_and_answers_the_issue_read_back() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                assert_eq!(req.path(), "/api/v4/projects/grp%2Fproj/issues/21");
+                assert_eq!(req.header("private-token"), Some(TOKEN));
+                assert_eq!(
+                    req.json(),
+                    Some(json!({ "title": "Crash on start", "description": "It breaks." })),
+                    "only the fields present travel, and the body is GitLab's description"
+                );
+                let mut row = issue(&base, 21);
+                row["title"] = json!("Crash on start");
+                row["description"] = json!("It breaks.");
+                return Reply::json(&row);
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            row["title"] = json!("Crash on start");
+            row["description"] = json!("It breaks.");
+            Reply::json(&row)
+        })
+        .await;
+        let detail = reader(&server)
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: Some("Crash on start"),
+                    body: Some("It breaks."),
+                    labels: None,
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(detail.summary.title, "Crash on start");
+        assert_eq!(detail.body, "It breaks.");
+        assert!(detail.comments.is_empty());
+        assert!(
+            detail.states.is_some(),
+            "the answer is the issue read back, with the states a detail read has"
+        );
+        assert_eq!(
+            server
+                .seen()
+                .into_iter()
+                .filter(|r| r.line.starts_with("PUT"))
+                .count(),
+            1,
+            "one write, nothing repeated"
+        );
+    }
+
+    /// A description the read cut short reads as complete, so writing it back would drop what GitLab holds past the
+    /// cut. A body at the cap is refused before the write, and one byte under it still travels.
+    #[tokio::test]
+    async fn a_description_at_the_read_cut_is_refused_instead_of_shortening_the_stored_one() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let at_cut = "b".repeat(crate::issues::MAX_BODY_BYTES);
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: Some(&at_cut),
+                    labels: None,
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, CoreError::Invalid(_)),
+            "a body at the read cut is refused: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was sent"
+        );
+        let under = "b".repeat(crate::issues::MAX_BODY_BYTES - 8);
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: Some(&under),
+                    labels: None,
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            server
+                .seen()
+                .into_iter()
+                .filter(|r| r.line.starts_with("PUT"))
+                .count(),
+            1,
+            "a body the read could not have cut still travels"
+        );
+    }
+
+    /// A stored description longer than one read returns is only ever seen cut, so an edit made against that read,
+    /// anywhere in the visible text and not only at its end, would replace the whole description with the cut form and
+    /// drop what lies past the cut. The stored text is read before the write, so the guard covers a clipped
+    /// description edited below the cap instead of only one still at it.
+    #[tokio::test]
+    async fn a_clipped_description_edited_shorter_is_refused_before_the_write() {
+        let stored = format!("{}UNSEEN", "d".repeat(crate::issues::MAX_BODY_BYTES + 32));
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            row["description"] = json!(stored.clone());
+            Reply::json(&row)
+        })
+        .await;
+        let gitlab = reader(&server);
+        // What the page holds is the read's cut form, so it never sees the suffix GitLab stores.
+        let read = gitlab.get("grp/proj", "21").await.unwrap();
+        assert_eq!(read.body.len(), crate::issues::MAX_BODY_BYTES);
+        assert!(
+            !read.body.contains("UNSEEN"),
+            "the read never sees the suffix"
+        );
+        // An edit anywhere in the visible text must still be refused, here one that makes the body shorter.
+        let edited = format!("{} edited", &read.body[..read.body.len() - 64]);
+        assert!(edited.len() + 4 < crate::issues::MAX_BODY_BYTES);
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: Some(&edited),
+                    labels: None,
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::Invalid(message) if message.contains("64 KiB")),
+            "a body the read cut is refused whatever its length: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was written, so the suffix the read never saw survives"
+        );
+    }
+
+    /// The read cuts a longer label name to 200 characters and the picker seeds itself from those names, so a name at
+    /// that length may be the cut form of the label GitLab really holds.
+    #[tokio::test]
+    async fn a_label_at_the_read_cut_is_refused_instead_of_replacing_the_stored_one() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let at_cut = vec!["c".repeat(MAX_LABEL)];
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&at_cut),
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, CoreError::Invalid(_)),
+            "a label at the read cut is refused: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was sent"
+        );
+        let shorter = vec!["c".repeat(MAX_LABEL - 1)];
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&shorter),
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            server
+                .seen()
+                .into_iter()
+                .filter(|r| r.line.starts_with("PUT"))
+                .count(),
+            1,
+            "a name the read could not have cut still travels"
+        );
+    }
+
+    /// The read keeps the first 50 assignees of an issue, so a picker seeded from it never sees the rest: replacing the
+    /// set with what the read showed, however many entries were removed, would drop the assignees past the cut. The
+    /// stored issue is read before the write, so the set is only replaced when the read returned it whole.
+    #[tokio::test]
+    async fn a_clipped_assignee_read_is_refused_instead_of_replacing_the_stored_set() {
+        let stored = |count: usize| {
+            (1..=count)
+                .map(|id| json!({ "id": id, "username": format!("person{id}") }))
+                .collect::<Vec<_>>()
+        };
+        let clipped = stored(super::MAX_ASSIGNEES + 1);
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            row["assignees"] = json!(clipped.clone());
+            Reply::json(&row)
+        })
+        .await;
+        let gitlab = reader(&server);
+        // The picker shows the read's first 50, so the person removes 26 of them and sends the 24 that are left.
+        let sent: Vec<String> = (1..=24).map(|id| id.to_string()).collect();
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: None,
+                    assignees: Some(&sent),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::Invalid(message) if message.contains("assignees than one read")),
+            "a set the read cut is refused: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was written, so the assignee the read never saw survives"
+        );
+    }
+
+    /// A stored issue with more labels than one read keeps them all; a replacement built from the read's first 100
+    /// would drop the rest, so it is refused before anything is written.
+    #[tokio::test]
+    async fn a_clipped_label_read_is_refused_instead_of_replacing_the_stored_set() {
+        let clipped = (1..=super::MAX_LABELS + 1)
+            .map(|n| json!(format!("label-{n}")))
+            .collect::<Vec<_>>();
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            row["labels"] = json!(clipped.clone());
+            Reply::json(&row)
+        })
+        .await;
+        let gitlab = reader(&server);
+        let sent = vec!["label-1".to_owned()];
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&sent),
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::Invalid(message) if message.contains("labels than one read")),
+            "a set the read cut is refused: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was written, so the labels the read never saw survive"
+        );
+    }
+
+    /// An edit replaces the whole set, so both writes must reach GitLab: the one carrying the new labels and people,
+    /// and the one carrying nothing that clears them. A test that only inspects a `PUT` when one arrives would pass if
+    /// `update` answered the read alone and wrote nothing, so the writes are counted and their bodies checked in order.
+    #[tokio::test]
+    async fn an_edit_writes_labels_and_assignees_as_the_whole_new_set() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let labels = vec!["bug".to_owned(), "ui".to_owned()];
+        let assignees = vec!["12".to_owned(), "13".to_owned()];
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&labels),
+                    assignees: Some(&assignees),
+                },
+            )
+            .await
+            .unwrap();
+        let cleared: Vec<String> = Vec::new();
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&cleared),
+                    assignees: Some(&cleared),
+                },
+            )
+            .await
+            .unwrap();
+        let writes: Vec<Value> = server
+            .seen()
+            .into_iter()
+            .filter(|req| req.line.starts_with("PUT"))
+            .map(|req| req.json().expect("a write carries its body as JSON"))
+            .collect();
+        assert_eq!(
+            writes,
+            [
+                json!({ "labels": "bug,ui", "assignee_ids": [12, 13] }),
+                json!({ "labels": "", "assignee_ids": [] }),
+            ],
+            "two writes, in order: the whole new set first, then the empty set that clears it, labels by name and people by id"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_edit_refuses_a_comma_in_a_label_and_an_assignee_that_is_not_a_number() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let gitlab = reader(&server);
+        let comma = vec!["bug, ui".to_owned()];
+        let not_a_number = vec!["bo".to_owned()];
+        for (what, edit) in [
+            (
+                "a label with a comma",
+                IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&comma),
+                    assignees: None,
+                },
+            ),
+            (
+                "an assignee that is not a numeric id",
+                IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: None,
+                    assignees: Some(&not_a_number),
+                },
+            ),
+        ] {
+            let error = gitlab
+                .update("grp/proj", "21", &edit)
+                .await
+                .map(|_| ())
+                .unwrap_err();
+            assert_eq!(
+                (error.status(), error.code()),
+                (400, "invalid_input"),
+                "{what}: {error:?}"
+            );
+        }
+        assert!(
+            server.seen().is_empty(),
+            "a refused edit sends nothing: {:?}",
+            server.seen()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_state_write_closes_and_reopens_and_answers_the_issue_read_back() {
+        let closed = Arc::new(Mutex::new(false));
+        let state = closed.clone();
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                assert_eq!(req.path(), "/api/v4/projects/grp%2Fproj/issues/21");
+                let event = req
+                    .json()
+                    .and_then(|body| body.get("state_event").cloned())
+                    .unwrap_or_default();
+                assert!(
+                    event == json!("close") || event == json!("reopen"),
+                    "GitLab takes state_event, got {event}"
+                );
+                *state.lock().unwrap_or_else(|error| error.into_inner()) = event == json!("close");
+                return Reply::json(&json!({}));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            if *state.lock().unwrap_or_else(|error| error.into_inner()) {
+                row["state"] = json!("closed");
+                row["closed_at"] = json!("2026-11-06T00:00:00Z");
+            }
+            Reply::json(&row)
+        })
+        .await;
+        let gitlab = reader(&server);
+        let shut = gitlab
+            .set_state(
+                "grp/proj",
+                "21",
+                "Closed",
+                Some(IssueCloseReason::Completed),
+            )
+            .await
+            .unwrap();
+        assert_eq!(shut.summary.state.category, IssueStateCategory::Closed);
+        assert_eq!(
+            shut.summary.state.close_reason, None,
+            "GitLab stores no close reason, and the answer says what it stored"
+        );
+        let open = gitlab
+            .set_state("grp/proj", "21", "Open", None)
+            .await
+            .unwrap();
+        assert_eq!(open.summary.state.name, "Open");
+        assert_eq!(open.summary.state.category, IssueStateCategory::Open);
+    }
+
+    #[tokio::test]
+    async fn a_state_name_gitlab_does_not_offer_is_refused_before_a_request() {
+        let server = Server::start(|_| Reply::json(&json!({}))).await;
+        let error = reader(&server)
+            .set_state(
+                "grp/proj",
+                "21",
+                "Closed as not planned",
+                Some(IssueCloseReason::NotPlanned),
+            )
+            .await
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!((error.status(), error.code()), (400, "invalid_input"));
+        assert!(
+            server.seen().is_empty(),
+            "a state GitLab does not offer sends nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn candidates_are_the_projects_labels_and_members_with_the_ids_a_write_takes() {
+        let server = Server::start(|req| match req.path() {
+            "/api/v4/projects/grp%2Fproj/labels" => {
+                assert_eq!(req.param("per_page").as_deref(), Some("100"));
+                Reply::json(&json!([
+                    { "id": 1, "name": "bug", "color": "#d9534f" },
+                    { "id": 2, "name": "ui", "color": "#5bc0de" },
+                ]))
+            }
+            "/api/v4/projects/grp%2Fproj/members/all" => {
+                assert_eq!(req.param("per_page").as_deref(), Some("100"));
+                Reply::json(&json!([
+                    { "id": 12, "username": "bo", "name": "Bo D" },
+                    { "id": 13, "username": "cy" },
+                ]))
+            }
+            other => panic!("a candidates read asked for {other}"),
+        })
+        .await;
+        let candidates = reader(&server).candidates("grp/proj").await.unwrap();
+        assert_eq!(
+            candidates
+                .labels
+                .iter()
+                .map(|label| label.name.as_str())
+                .collect::<Vec<_>>(),
+            ["bug", "ui"]
+        );
+        assert_eq!(candidates.labels[0].color.as_deref(), Some("#d9534f"));
+        assert_eq!(candidates.assignees[0].login, "bo");
+        assert_eq!(candidates.assignees[0].name.as_deref(), Some("Bo D"));
+        assert_eq!(
+            candidates.assignees[0].id, "12",
+            "a write takes the member id, not the login"
+        );
+        assert_eq!(
+            candidates.assignees[1].name, None,
+            "a name it lacks is absent"
+        );
+        assert!(!candidates.truncated, "two of each is the whole answer");
+    }
+
+    /// GitLab allows label names longer than the 200 characters a write may carry, and the read cuts at that same
+    /// 200. Offering either form would let an edit create a different label or refuse a name the picker offered, so a
+    /// name of 200 characters or more is left out, and the answer says it is partial.
+    #[tokio::test]
+    async fn a_label_a_write_cannot_name_in_full_is_left_out_rather_than_cut() {
+        let at_cap = "c".repeat(MAX_LABEL);
+        let too_long = "l".repeat(MAX_LABEL + 1);
+        let server = Server::start(move |req| match req.path() {
+            "/api/v4/projects/grp%2Fproj/labels" => Reply::json(&json!([
+                { "id": 1, "name": "bug", "color": "#d9534f" },
+                { "id": 2, "name": &at_cap },
+                { "id": 3, "name": &too_long },
+            ])),
+            "/api/v4/projects/grp%2Fproj/members/all" => Reply::json(&json!([])),
+            other => panic!("a candidates read asked for {other}"),
+        })
+        .await;
+        let candidates = reader(&server).candidates("grp/proj").await.unwrap();
+        assert_eq!(
+            candidates
+                .labels
+                .iter()
+                .map(|label| label.name.as_str())
+                .collect::<Vec<_>>(),
+            ["bug"],
+            "a name at the read's cut, or past it, is not offered: update refuses a name at that length"
+        );
+        assert!(
+            candidates.truncated,
+            "a label left out makes the answer partial"
+        );
+    }
+
+    /// A label travels by name, so the name the picker shows is the name a write must send. A name longer than the 80
+    /// characters a login is kept to is offered whole and written whole: a cut prefix is a different label, and GitLab
+    /// would create or assign that one instead. The picker keeps label names to `LABEL_NAME_MAX`
+    /// (`web/src/features/issues/edit.ts`), the same 200 this reader's `MAX_LABEL` is, so neither side cuts below what
+    /// the other offers.
+    #[tokio::test]
+    async fn a_long_label_name_is_offered_and_written_whole() {
+        // Longer than the 80 the app keeps a login to, and the longest name this reader offers whole.
+        let long = "n".repeat(100);
+        let longest = "m".repeat(MAX_LABEL - 1);
+        let listed = json!([
+            { "id": 1, "name": "bug", "color": "#d9534f" },
+            { "id": 2, "name": &long },
+            { "id": 3, "name": &longest },
+        ]);
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.path() == "/api/v4/projects/grp%2Fproj/labels" {
+                return Reply::json(&listed);
+            }
+            if req.path() == "/api/v4/projects/grp%2Fproj/members/all" {
+                return Reply::json(&json!([]));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let candidates = gitlab.candidates("grp/proj").await.unwrap();
+        assert_eq!(
+            candidates
+                .labels
+                .iter()
+                .map(|label| label.name.clone())
+                .collect::<Vec<_>>(),
+            ["bug".to_owned(), long.clone(), longest.clone()],
+            "a name the picker can show in full is offered in full, however long it is"
+        );
+        let picked = vec![long.clone()];
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&picked),
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap();
+        let write = server
+            .seen()
+            .into_iter()
+            .find(|req| req.line.starts_with("PUT"))
+            .expect("the edit wrote");
+        assert_eq!(
+            write.json().and_then(|body| body.get("labels").cloned()),
+            Some(json!(&long)),
+            "the write names the whole label, not the 80-character prefix that would be a different label"
+        );
+    }
+
+    /// GitLab allows logins longer than the 80 characters a read keeps, so two members can reach the picker as one login,
+    /// and the picker sends the id it looks up by that login: offering both would make Apply reassign the issue to
+    /// whichever id was kept last. Neither is offered, and the answer says it is partial.
+    #[tokio::test]
+    async fn assignee_candidates_whose_kept_logins_match_are_left_out_rather_than_merged() {
+        let prefix = "u".repeat(MAX_LOGIN);
+        let first = format!("{prefix}alpha");
+        let second = format!("{prefix}beta");
+        let server = Server::start(move |req| match req.path() {
+            "/api/v4/projects/grp%2Fproj/labels" => Reply::json(&json!([])),
+            "/api/v4/projects/grp%2Fproj/members/all" => Reply::json(&json!([
+                { "id": 12, "username": &first, "name": "A" },
+                { "id": 13, "username": &second, "name": "B" },
+                { "id": 14, "username": "cy" },
+            ])),
+            other => panic!("a candidates read asked for {other}"),
+        })
+        .await;
+        let candidates = reader(&server).candidates("grp/proj").await.unwrap();
+        assert_eq!(
+            candidates
+                .assignees
+                .iter()
+                .map(|who| who.login.as_str())
+                .collect::<Vec<_>>(),
+            ["cy"],
+            "the two members the read cannot tell apart are not offered, and the other one is"
+        );
+        assert!(
+            candidates.truncated,
+            "a member left out makes the answer partial"
+        );
+    }
+
+    #[tokio::test]
+    async fn more_than_two_hundred_candidates_are_cut_and_said_to_be_truncated() {
+        let server = Server::start(|req| {
+            let page = req
+                .param("page")
+                .and_then(|page| page.parse::<u32>().ok())
+                .unwrap_or(1);
+            let labels = req.path().ends_with("/labels");
+            let rows: Vec<Value> = (0..100u32)
+                .map(|n| {
+                    if labels {
+                        json!({ "name": format!("label-{page}-{n}") })
+                    } else {
+                        json!({ "id": n + 1, "username": format!("user-{page}-{n}") })
+                    }
+                })
+                .collect();
+            Reply::json(&Value::Array(rows))
+        })
+        .await;
+        let candidates = reader(&server).candidates("grp/proj").await.unwrap();
+        assert_eq!(candidates.labels.len(), 200);
+        assert_eq!(candidates.assignees.len(), 200);
+        assert!(
+            candidates.truncated,
+            "a full second page may have more behind it"
+        );
+        let pages: Vec<String> = server
+            .seen()
+            .into_iter()
+            .filter(|r| r.path().ends_with("/labels"))
+            .filter_map(|r| r.param("page"))
+            .collect();
+        assert_eq!(pages, ["1", "2"], "two pages, then the 200 cap");
     }
 }
 

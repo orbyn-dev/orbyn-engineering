@@ -1,8 +1,8 @@
 //! Issue trackers beside the code (docs/issues.md): the list a tracker reports, the connections that read it,
 //! a thread's links to issues, a thread started from one, and the person's own issue writes (create, comment and
-//! react) through the tracker's own credential, GitHub only so far. Everything a tracker returns is untrusted
-//! text and is never fed to an engine except in the framed first message; issue text going in travels as a field
-//! value, never as an argument.
+//! react) through the tracker's own credential, with the edits and state moves built for GitHub and GitLab.
+//! Everything a tracker returns is untrusted text and is never fed to an engine except in the framed first message;
+//! issue text going in travels as a field value, never as an argument.
 
 mod azure;
 #[cfg(test)]
@@ -56,6 +56,8 @@ const MAX_TITLE_CHARS: usize = 256;
 /// The most an issue body or a comment may hold, in bytes.
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_LABELS: usize = 50;
+/// The most a label name may hold, in characters. A label travels by name, so this is also the ceiling the picker keeps
+/// a label name to (`web/src/features/issues/edit.ts`, `LABEL_NAME_MAX`): cutting below it would send a different label.
 const MAX_LABEL_CHARS: usize = 200;
 const MAX_ASSIGNEES: usize = 25;
 /// The most a candidate id or a comment id may hold, in characters (a reader's own id cap).
