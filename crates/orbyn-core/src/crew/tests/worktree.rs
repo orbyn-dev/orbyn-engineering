@@ -26,6 +26,24 @@ fn git_out(cwd: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
+/// Commits everything `cwd` has, as the person's own checkout does.
+fn commit(cwd: &Path, message: &str) {
+    git_out(cwd, &["add", "."]);
+    git_out(
+        cwd,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.test",
+            "commit",
+            "-q",
+            "-m",
+            message,
+        ],
+    );
+}
+
 /// `<repo>-wt`, the sibling root Orbyn makes every worktree under.
 fn worktree_root(repo: &Path) -> PathBuf {
     repo.with_file_name(format!(
@@ -316,4 +334,144 @@ async fn a_crashed_attempts_folder_is_cleared_instead_of_blocking_every_retry() 
         "the crashed attempt's files are gone, not inherited"
     );
     assert!(path.join("src/base.txt").is_file());
+}
+
+#[tokio::test]
+async fn a_reused_checkout_records_the_base_the_start_admitted() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let repo = Path::new(&world.repo);
+    let made = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .unwrap()
+        .expect("a brief that writes gets a worktree");
+    // The lead's checkout moves on after the member's folder was made, so the member's branch and
+    // this clone's HEAD no longer share their latest commit.
+    std::fs::write(repo.join("src/next.txt"), "next\n").unwrap();
+    commit(repo, "next");
+    let admitted = git_out(repo, &["rev-parse", "HEAD"]);
+    let forked = git_out(repo, &["rev-parse", "HEAD~1"]);
+    let reused = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), Some(&admitted))
+        .await
+        .unwrap()
+        .expect("a brief that writes gets a worktree");
+    assert_eq!(
+        at(&reused),
+        at(&made),
+        "the member's own checkout is reused"
+    );
+    assert!(!reused.created, "this start did not make it");
+    // The run records the commit the task was admitted at, which is the commit the start reads the
+    // repository's own checks at. Recording the branch's fork point instead hands the verifier a
+    // commit that can declare no checks, so `repo_required` degrades to nothing.
+    assert_eq!(
+        reused.worktree.base, admitted,
+        "the admitted base is the recorded base, not the fork point {forked}"
+    );
+}
+
+#[tokio::test]
+async fn a_folder_deleted_by_hand_is_made_again_instead_of_refused() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let repo = Path::new(&world.repo);
+    let made = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .unwrap()
+        .expect("a brief that writes gets a worktree");
+    let path = at(&made);
+    // A person removes the folder itself instead of `git worktree remove`: the registration, and with
+    // it the branch's checkout, stays behind.
+    std::fs::remove_dir_all(&path).unwrap();
+    assert_eq!(
+        listed(repo).len(),
+        2,
+        "git still lists the deleted checkout: {:?}",
+        listed(repo)
+    );
+    let again = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .expect("a deleted folder's registration is cleared, never a refusal");
+    let again = again.expect("a brief that writes gets a worktree");
+    assert_eq!(at(&again), path, "the member's own folder is made again");
+    assert!(again.created, "the folder was gone, so this start made it");
+    assert!(path.is_dir(), "{} is a checkout again", path.display());
+    assert_eq!(git_out(&path, &["status", "--porcelain"]), "");
+    assert_eq!(
+        listed(repo).len(),
+        2,
+        "one registration for it, not two: {:?}",
+        listed(repo)
+    );
+}
+
+#[tokio::test]
+async fn a_branch_another_checkout_holds_is_reused_and_kept() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let repo = Path::new(&world.repo);
+    let root = worktree_root(repo);
+    // A person's own `git worktree add` for the member's branch: the branch is checked out at a path
+    // Orbyn did not choose, and git keeps one checkout for each branch.
+    let elsewhere = root.join("manual/crew-worker-a");
+    std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+    git_out(
+        repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "crew-worker-a",
+            elsewhere.to_str().unwrap(),
+        ],
+    );
+    let notes = elsewhere.join("notes.txt");
+    std::fs::write(&notes, "in progress\n").unwrap();
+    let made = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .expect("a branch an existing checkout holds is reused, never refused");
+    let made = made.expect("a brief that writes gets a worktree");
+    assert_eq!(
+        canonical(&at(&made)),
+        canonical(&elsewhere),
+        "the checkout that already holds the branch is the worker's"
+    );
+    assert!(
+        !made.created,
+        "this start did not make it, so a failed start leaves it alone"
+    );
+    assert!(notes.is_file(), "what the checkout held is kept");
+    assert_eq!(
+        listed(repo).len(),
+        2,
+        "the clone and that one checkout: {:?}",
+        listed(repo)
+    );
+    // The same folder deleted by hand leaves the branch checked out there in git's records, which
+    // refuses every retry: that registration goes and the member's own folder is made instead.
+    std::fs::remove_dir_all(&elsewhere).unwrap();
+    let recovered = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .expect("a deleted checkout's registration is cleared, never a refusal");
+    let recovered = recovered.expect("a brief that writes gets a worktree");
+    assert_eq!(
+        at(&recovered),
+        root.join("crew-worker-a"),
+        "the member's own folder is where the branch is taken back"
+    );
+    assert!(recovered.created, "this start made that folder");
+    assert_eq!(branch(&at(&recovered)), "crew-worker-a");
 }

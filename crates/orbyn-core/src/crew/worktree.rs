@@ -9,7 +9,10 @@
 //! It is one folder per crew member, `<repo>-wt/crew-<member>`, on branch `crew-<member>`: a member
 //! that works a second task reuses its own checkout (git's own rule for a registered worktree at the
 //! path), so the folders cannot pile up one per task. A folder git no longer lists, left by a crash,
-//! is cleared by the next start for that member instead of blocking every retry forever.
+//! is cleared by the next start for that member instead of blocking every retry forever, and so is the
+//! registration a hand-deleted folder leaves behind: git refuses an add at a path a missing worktree
+//! still holds. A branch that another checkout already holds is reused there, because git keeps one
+//! checkout for each branch.
 
 use std::path::{Path, PathBuf};
 
@@ -55,6 +58,11 @@ impl Core {
         let purpose = purpose(member);
         let primary = git::primary_checkout(&repo).await.map_err(internal)?;
         let target = git::worktree_path(&primary, &purpose).map_err(internal)?;
+        // A folder a person deleted by hand keeps its registration, and git then refuses any add at
+        // that path ("missing but already registered worktree"), so every retry would fail the same
+        // way. Only this member's stale registration goes; a folder that still exists, and a locked
+        // registration, are left as they are.
+        git::clear_missing_worktree(&repo, &target).await;
         // A crashed attempt can leave a folder git no longer lists under Orbyn's own `<repo>-wt`
         // root, and `create_worktree` refuses a path that exists. The folder carries Orbyn's own
         // name in Orbyn's own root, so it is cleared instead of blocking every retry.
@@ -81,12 +89,6 @@ impl Core {
         // refused, and nothing is deleted: the member's branch is reused, as a registered
         // worktree at the path is.
         if !target.exists() && branch_exists(&repo, &purpose).await.map_err(internal)? {
-            let path = target.to_string_lossy().into_owned();
-            git::git(&repo, &["worktree", "add", &path, &purpose])
-                .await
-                .map_err(internal)?;
-            // A recovered checkout is populated like a new one, so a worker in it sees the same files.
-            git::populate_submodules(&target, &options.submodules).await;
             // The commit the task was admitted at is where its work starts, and the commit the start read the
             // repository's own checks at, so the run records that one; with none named, where the reused branch
             // forked, which is the commit the worker began at.
@@ -98,6 +100,29 @@ impl Core {
                         .map_err(internal)?,
                 ),
             };
+            // Git keeps one checkout for each branch, so a member's branch another checkout already
+            // holds is that member's checkout: it is reused where it is and keeps what it holds, and a
+            // start that fails leaves it alone. Only a registration whose folder is gone is in the way
+            // rather than in use, so it is cleared and the branch is taken back below.
+            if let Some(checkout) = checkout_of(&repo, &purpose).await.map_err(internal)? {
+                if checkout.path.exists() {
+                    return Ok(Some(WriterWorktree {
+                        worktree: Worktree {
+                            path: checkout.path.to_string_lossy().into_owned(),
+                            branch: purpose,
+                            base: start,
+                        },
+                        created: false,
+                    }));
+                }
+                git::clear_missing_worktree(&repo, &checkout.path).await;
+            }
+            let path = target.to_string_lossy().into_owned();
+            git::git(&repo, &["worktree", "add", &path, &purpose])
+                .await
+                .map_err(internal)?;
+            // A recovered checkout is populated like a new one, so a worker in it sees the same files.
+            git::populate_submodules(&target, &options.submodules).await;
             return Ok(Some(WriterWorktree {
                 worktree: Worktree {
                     path,
@@ -183,6 +208,15 @@ async fn branch_exists(repo: &Path, name: &str) -> Result<bool> {
             String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         )),
     }
+}
+
+/// The registered checkout `branch` is on, if there is one: git keeps one checkout for each branch,
+/// so a branch another checkout holds is that checkout's to keep.
+async fn checkout_of(repo: &Path, branch: &str) -> Result<Option<git::RegisteredWorktree>> {
+    Ok(git::linked_worktrees(repo)
+        .await?
+        .into_iter()
+        .find(|worktree| worktree.branch.as_deref() == Some(branch)))
 }
 
 /// Whether git still lists `path` as a worktree of `repo`. Git spells a path differently on Windows,

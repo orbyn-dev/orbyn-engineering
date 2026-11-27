@@ -423,9 +423,50 @@ impl Default for WorktreeOptions {
     }
 }
 
+/// Clears the registration git keeps for a checkout whose folder is gone. A folder a person deleted
+/// by hand leaves its registration behind, and git then refuses every `worktree add` at that path
+/// ("missing but already registered worktree"), so each retry fails the same way. Only that one
+/// registration is cleared, and only once git calls it prunable: a folder that still exists is never
+/// touched, and neither is a locked registration, which its person owns. Best effort — the add that
+/// follows reports whatever is still in the way.
+pub(crate) async fn clear_missing_worktree(repo: &Path, path: &Path) {
+    let Ok(records) = worktree_records(repo).await else {
+        return;
+    };
+    if !records
+        .iter()
+        .any(|record| record.prunable && same_checkout_path(&record.path, path))
+    {
+        return;
+    }
+    let path_text = path.to_string_lossy().into_owned();
+    if let Err(error) = git(repo, &["worktree", "remove", "--force", &path_text]).await {
+        tracing::warn!(%error, "could not clear a deleted worktree's registration");
+    }
+}
+
+/// Whether two spellings name the same checkout folder. `path` may be gone, so the folders that hold
+/// them are what the filesystem resolves: git's Windows spelling differs from ours.
+fn same_checkout_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    let (Some(left_holder), Some(right_holder)) = (
+        left.parent()
+            .and_then(|parent| crate::util::canonicalize(parent).ok()),
+        right
+            .parent()
+            .and_then(|parent| crate::util::canonicalize(parent).ok()),
+    ) else {
+        return false;
+    };
+    left.file_name() == right.file_name() && left_holder == right_holder
+}
+
 /// Finds or creates the purpose's worktree at `<repo>-wt/<purpose>`. A registered
-/// worktree already at that path is reused; its base is where it left the
-/// primary clone's HEAD.
+/// worktree already at that path is reused; its base is the base this call admits,
+/// as a new one records, and where it left the primary clone's HEAD when it admits
+/// none.
 pub(crate) async fn create_worktree(
     repo: &Path,
     purpose: &str,
@@ -442,7 +483,13 @@ pub(crate) async fn create_worktree(
         if registered.path.exists()
             && registered.path.file_name() == Some(std::ffi::OsStr::new(purpose))
         {
-            let base = text(&git(repo, &["merge-base", "HEAD", &registered.revision]).await?);
+            // The base this call admits, exactly as a new worktree records it: the run's repository
+            // checks are read at that commit, so the verifier must read that same one. With none
+            // named, the reused branch's fork point is where its work began.
+            let base = match worktree_start(repo, options).await {
+                Some(start) => start,
+                None => text(&git(repo, &["merge-base", "HEAD", &registered.revision]).await?),
+            };
             // Git's spelling of a path differs on Windows, so keep ours when it is the same place.
             let same = crate::util::canonicalize(&registered.path).ok().as_ref()
                 == crate::util::canonicalize(&path).ok().as_ref();
@@ -485,6 +532,9 @@ pub(crate) async fn create_worktree(
         return Err(CoreError::Invalid("That branch name is not valid.".into()));
     }
     let start = worktree_start(repo, options).await.unwrap_or(head);
+    // A folder deleted by hand still holds this path in git's records, and the add below would be
+    // refused for it: that registration goes first.
+    clear_missing_worktree(repo, &path).await;
     git(
         repo,
         &["worktree", "add", "-b", &branch, &path_text, &start],
