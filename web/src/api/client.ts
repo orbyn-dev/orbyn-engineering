@@ -326,8 +326,9 @@ export const api = {
     request<EngineTools>("GET", `/api/engines/${q(engine)}/tools${refresh ? "?refresh=1" : ""}`, undefined, signal),
   threadLimits: (threadId: string, signal?: AbortSignal, force = false) =>
     request<EngineLimits>("GET", `/api/threads/${q(threadId)}/limits${force ? "?force=true" : ""}`, undefined, signal),
-  searchFiles: (threadId: string, query: string, content: boolean, signal?: AbortSignal) =>
-    request<SearchHit[]>("GET", `/api/threads/${q(threadId)}/files/search?q=${q(query)}&content=${content}`, undefined, signal),
+  /** `repoId` names one repository of a multi-repository thread (docs/multi-repo.md); left out, the primary repository's files. */
+  searchFiles: (threadId: string, query: string, content: boolean, signal?: AbortSignal, repoId?: string) =>
+    request<SearchHit[]>("GET", `/api/threads/${q(threadId)}/files/search?q=${q(query)}&content=${content}${repoId === undefined ? "" : `&repo_id=${q(repoId)}`}`, undefined, signal),
   /** `repoId` names one repository of a multi-repository thread (docs/multi-repo.md); left out, the primary repository's commits. */
   commits: (threadId: string, signal?: AbortSignal, repoId?: string) =>
     request<CommitInfo[]>("GET", `/api/threads/${q(threadId)}/commits${repoId === undefined ? "" : `?repo_id=${q(repoId)}`}`, undefined, signal),
