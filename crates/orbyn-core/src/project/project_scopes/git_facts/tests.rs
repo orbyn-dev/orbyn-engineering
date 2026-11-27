@@ -182,6 +182,58 @@ async fn a_folder_that_becomes_its_own_repository_is_observed_again() {
     );
 }
 
+/// A folder that becomes a bare repository holds no `.git` either, and Git stops there
+/// instead of passing to the repository above it, so the answer it gave while it was an
+/// ordinary folder of that repository is not reused.
+#[tokio::test]
+async fn a_folder_that_becomes_a_bare_repository_is_observed_again() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let root = dir.path().join("repo");
+    repository(&root);
+    configure(&root, "origin", "git@host:Owner/Repo.git");
+    let nested = root.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    core.add_project(nested.to_str().unwrap()).await.unwrap();
+    let first = read(&core).await;
+    assert_eq!(
+        only_member(&first).repository_relative_path.as_deref(),
+        Some("nested"),
+        "the folder is read as part of the repository above it"
+    );
+    run_git(&nested, &["init", "-q", "--bare"]);
+    let watched = std::slice::from_ref(&nested);
+    let before = spawns(watched);
+    let second = read(&core).await;
+    assert_eq!(
+        since(&before, watched),
+        [1],
+        "the bare repository that appeared in the folder is observed: Git stops there, \
+         which is one read and no configuration"
+    );
+    let member = only_member(&second);
+    assert_eq!(
+        member.repository_key, None,
+        "a bare repository in the folder is not the repository above it"
+    );
+    assert_eq!(member.repository_relative_path, None);
+    assert!(
+        !member.metadata_complete,
+        "Git names no work tree for it, and it was registered as a repository, so the \
+         checkout is left unobserved instead of described by the repository above it"
+    );
+    // Nothing is kept for an observation Git could not answer, so the folder is read again
+    // rather than answered from the repository above it.
+    let watched = std::slice::from_ref(&nested);
+    let before = spawns(watched);
+    let _ = read(&core).await;
+    assert_eq!(
+        since(&before, watched),
+        [1],
+        "the unobserved folder is read again"
+    );
+}
+
 #[tokio::test]
 async fn a_missing_folder_is_unavailable_and_starts_nothing() {
     let dir = TempDir::new();

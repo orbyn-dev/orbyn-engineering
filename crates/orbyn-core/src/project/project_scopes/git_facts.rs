@@ -16,13 +16,14 @@
 //! directory it resolved: a link retargeted at another repository leaves those files
 //! as they were. What the answer rests on is watched before the configuration is read
 //! and confirmed after it, so facts are never kept against a later state than the one
-//! they were read from. Any file that differs, any folder that now holds a `.git`
-//! where discovery found none, and any resolution that changed makes the next read
-//! observe the folder again: a folder that was deleted, moved, made a repository, or
-//! given another remote is never answered from what it used to be. An observation that
-//! cannot be watched (a file too large to read twice or not a regular file, a `.git` link
-//! that resolved elsewhere, a Git too old to name its directory) is answered once and not
-//! kept.
+//! they were read from. Any file that differs, any folder discovery passed that now
+//! holds a `.git` or reads as a repository of its own (a bare repository has no `.git`,
+//! and Git stops at it instead of passing to the parent), and any resolution that
+//! changed makes the next read observe the folder again: a folder that was deleted,
+//! moved, made a repository, made a bare repository, or given another remote is never
+//! answered from what it used to be. An observation that cannot be watched (a file too
+//! large to read twice or not a regular file, a `.git` link that resolved elsewhere, a
+//! Git too old to name its directory) is answered once and not kept.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -103,10 +104,36 @@ impl GitFacts {
 /// What an answer rests on: the folders Git passed and the files it read.
 #[derive(Clone)]
 pub(super) struct Watch {
-    /// Folders discovery looked in and found no `.git`, which must still hold none.
-    passed: Vec<PathBuf>,
+    /// Folders discovery looked in and passed, which must still be passed.
+    passed: Vec<Passed>,
     /// The files whose bytes decided what Git reported.
     files: Vec<Snapshot>,
+}
+
+/// The names Git reads in a folder to decide that the folder itself is a repository, which
+/// it does before it passes to the parent: a bare repository has no `.git` at all.
+const REPOSITORY_NAMES: [&str; 3] = ["HEAD", "objects", "refs"];
+
+/// One folder discovery looked in and passed: it held no `.git`, and nothing at it read as a
+/// repository of its own.
+#[derive(Clone)]
+struct Passed {
+    folder: PathBuf,
+    /// What Git reads at the folder itself to stop there, which must read the same.
+    repository: [Snapshot; REPOSITORY_NAMES.len()],
+}
+
+impl Passed {
+    fn read(folder: PathBuf) -> Self {
+        let repository = REPOSITORY_NAMES.map(|name| Snapshot::read(folder.join(name)));
+        Self { folder, repository }
+    }
+
+    /// Whether discovery still passes the folder: no `.git` appeared, and nothing the folder
+    /// could now hold as a repository changed.
+    fn holds(&self) -> bool {
+        no_git(&self.folder) && self.repository.iter().all(Snapshot::holds)
+    }
 }
 
 impl Watch {
@@ -115,7 +142,10 @@ impl Watch {
     pub(super) fn work_tree(real: &Path, root: &Path, git_dir: &Path) -> Option<Self> {
         // A root that does not contain the folder names another view of the same
         // checkout, which this module does not watch, so the answer is not kept.
-        let passed = passed_folders(real, root)?;
+        let passed = passed_folders(real, root)?
+            .into_iter()
+            .map(Passed::read)
+            .collect();
         let link = Snapshot::read(root.join(".git"));
         // A `.git` directory other than the one discovery named is a link retargeted while the
         // answer was read: the files watched below belong to the directory it named before, so the
@@ -143,12 +173,12 @@ impl Watch {
     }
 
     /// The watch for a folder with no work tree: every folder Git passed while
-    /// looking, which must still hold no `.git`.
+    /// looking, which must still be passed.
     fn no_work_tree(real: &Path) -> Self {
-        let mut passed = vec![real.to_path_buf()];
+        let mut passed = vec![Passed::read(real.to_path_buf())];
         let mut at = real;
         while let Some(parent) = at.parent() {
-            passed.push(parent.to_path_buf());
+            passed.push(Passed::read(parent.to_path_buf()));
             at = parent;
         }
         Self {
@@ -159,7 +189,7 @@ impl Watch {
 
     /// Whether everything the answer rests on is still as it was.
     pub(super) fn holds(&self) -> bool {
-        self.passed.iter().all(|folder| no_git(folder)) && self.files.iter().all(Snapshot::holds)
+        self.passed.iter().all(Passed::holds) && self.files.iter().all(Snapshot::holds)
     }
 }
 
@@ -174,7 +204,8 @@ fn passed_folders(real: &Path, root: &Path) -> Option<Vec<PathBuf>> {
     Some(passed)
 }
 
-/// Whether `folder` holds no `.git` at all, which is what discovery relied on.
+/// Whether `folder` holds no `.git` at all, which is what discovery relied on to pass it.
+/// Whether it also reads as a repository of its own is [`Passed`]'s other half.
 fn no_git(folder: &Path) -> bool {
     matches!(
         std::fs::metadata(folder.join(".git")),
