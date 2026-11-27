@@ -5,9 +5,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { once } from "node:events";
 import { SCRIPTED_ENGINE, USAGE_ENGINE } from "./engine-scripts";
 import { editForgeState, readForgeState } from "./forge-state";
+import type { WireThreadEvent } from "../../src/api/types";
 
 const WEB = resolve(import.meta.dirname, "../..");
 const BIN = process.env.ORBYN_BIN ?? resolve(WEB, "../target/debug/orbynd");
@@ -35,8 +37,13 @@ function previewBrowser(dir: string): string {
   const wrapper = join(dir, "preview-browser");
   // Linux runners restrict user namespaces, which the shell's sandbox needs; Playwright drops it the same way.
   const flags = process.platform === "linux" ? "--in-process-gpu --no-sandbox" : "--in-process-gpu";
+  // The service gets a scrubbed environment, and the build box keeps the shell's libnss3 and libnspr4 outside
+  // the loader's paths, so the wrapper hands the shell the library path the test process was given.
+  const libs = process.env.LD_LIBRARY_PATH
+    ? `export LD_LIBRARY_PATH='${process.env.LD_LIBRARY_PATH.replace(/'/g, "'\\''")}'\n`
+    : "";
   // Kept only in a startup-failure diagnostic, so CI can verify the wrapper's actual flags.
-  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\nexec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\n${libs}exec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
   return wrapper;
 }
 
@@ -132,7 +139,17 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
   writeFileSync(log, "");
   writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: [{ name: "bug", color: "d73a4a", description: "About bug" }, { name: "docs", color: "0075ca", description: "About docs" }], template: pullRow({ number: 0, title: "" }), issues: STAND_IN_ISSUES }));
   if (process.platform === "win32") {
-    symlinkSync(STAND_IN_GH, join(bin, "gh.mjs"));
+    const launcher = join(bin, "gh.mjs");
+    try {
+      symlinkSync(STAND_IN_GH, launcher);
+    } catch (error) {
+      // A stock Windows box refuses a file symlink without Developer Mode (EPERM, or EACCES when a policy
+      // takes the right away). A launcher that imports the stand-in runs it from its real path, so its own
+      // relative imports resolve, and forge specs run without elevation.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "EACCES") throw error;
+      writeFileSync(launcher, `import ${JSON.stringify(pathToFileURL(STAND_IN_GH).href)};\n`);
+    }
     writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
   } else {
     symlinkSync(STAND_IN_GH, join(bin, "gh"));
@@ -200,6 +217,13 @@ export interface Service {
   ghEdit(number: number, patch: Record<string, unknown>): void;
   /** The stand-in's bare remote, for specs that read what was pushed. */
   remote: string;
+  /** The protocol double this launch's engines are (crates/orbynd/src/bin/orbyn-fake-engine). */
+  fakeEngine: string;
+  /**
+   * The thread's own event log, read from the service over SSE until `stop` matches: the replay and the live
+   * frames the page's stream receives, straight from the service rather than from the page.
+   */
+  events(threadId: string, stop: (event: WireThreadEvent) => boolean, timeoutMs?: number): Promise<WireThreadEvent[]>;
 }
 
 export interface ServiceOptions {
@@ -274,6 +298,25 @@ function viteReady(vite: ChildProcess, port: number): Promise<void> {
   });
 }
 
+/**
+ * Deletes a run's temp directory once its processes have exited. Windows can still hold the service's
+ * workspace for a moment longer than the exit wait, and a busy box stretches that out (EBUSY), so retry
+ * there; a directory a stale child still holds after that is left to the OS rather than failing the run.
+ */
+async function removeRunDir(dir: string) {
+  const deadline = process.platform === "win32" ? Date.now() + 10_000 : 0;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      return;
+    } catch (error) {
+      if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EBUSY") throw error;
+      if (Date.now() >= deadline) return;
+      await new Promise((done) => setTimeout(done, 250));
+    }
+  }
+}
+
 /** A real `orbynd` on a fresh data directory, with the dev UI proxied to it. */
 export async function startService(options: ServiceOptions = {}): Promise<Service> {
   if (!existsSync(BIN)) throw new Error(`Build the service first: cargo build -p orbynd (${BIN})`);
@@ -344,6 +387,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
     folder,
     repo,
     remote: join(dir, "github.com/o/r.git"),
+    fakeEngine: fake,
     personKey: ready.person_key,
     ghPull: (number) =>
       readForgeState(forge?.state ?? "").pulls.find((pull) => pull.number === number) ?? {},
@@ -371,6 +415,42 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
       const text = await response.text();
       return (text ? JSON.parse(text) : undefined) as T;
     },
+    async events(threadId, stop, timeoutMs = 20_000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const frames: WireThreadEvent[] = [];
+      try {
+        // A fresh stream with no Last-Event-ID replays from the thread's first event, then follows live.
+        const response = await fetch(`${ready.url}/api/threads/${encodeURIComponent(threadId)}/events`, {
+          signal: controller.signal,
+          headers: { Authorization: `Bearer ${ready.token}`, Accept: "text/event-stream" },
+        });
+        if (!response.ok || !response.body) throw new Error(`events ${threadId}: ${response.status}`);
+        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
+            const line = buffer.slice(0, at).replace(/\r$/, "");
+            buffer = buffer.slice(at + 1);
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            const event = JSON.parse(payload) as WireThreadEvent;
+            frames.push(event);
+            if (stop(event)) {
+              controller.abort();
+              return frames;
+            }
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      throw new Error(`the service's log for thread ${threadId} did not reach the expected event (${frames.length} frames)`);
+    },
     async stop() {
       const children = [service, ...(vite ? [vite] : [])];
       const gone = children.filter((child) => child.exitCode === null).map((child) => once(child, "exit"));
@@ -379,7 +459,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
       vite?.kill();
       await Promise.all(gone);
       // An engine or preview the service just stopped can still be closing its files.
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      await removeRunDir(dir);
     },
   };
 }

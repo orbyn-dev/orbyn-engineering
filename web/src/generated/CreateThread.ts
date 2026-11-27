@@ -8,7 +8,12 @@ project_id?: string, engine: string, model: string | null, title: string | null,
 /**
  * Purpose slug for an isolated worktree; `None` works in the project root.
  */
-worktree: string | null, skill_profile: string | null, 
+worktree: string | null, 
+/**
+ * A seed for the new worktree's branch name only, such as a first message's title
+ * seed. It never becomes the thread title; `None` names the branch from the purpose.
+ */
+branch_name_seed?: string, skill_profile: string | null, 
 /**
  * Where a new worktree starts; absent follows the settings.
  */
