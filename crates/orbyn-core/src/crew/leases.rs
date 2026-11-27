@@ -301,11 +301,16 @@ impl Core {
     /// to the verifier's file_scope to notice afterwards. The run's write scope has already
     /// refused a path outside the checkout, so one that cannot be read is left to it. It never
     /// fails open: an error reading the task, brief or leases is a refusal in that error's words.
+    ///
+    /// `base` is where a relative path is resolved, which is `WriteScope::engine_cwd` when the run
+    /// has a write scope: the same base `permits` and `absolute` use, so this checks the file the
+    /// write lands on rather than a second guess at it.
     pub(crate) fn crew_refuse_lease_write(
         &self,
         task_id: &str,
         member: &str,
         worktree: &Path,
+        base: &Path,
         ask: &ActionAsk,
     ) -> Option<String> {
         if ask.kind != ActionKind::FileChange {
@@ -324,14 +329,13 @@ impl Core {
             &ask.paths
         };
         for path in paths {
-            // A relative path is joined to the task's worktree here. The run's write scope joins it to
-            // the engine's own cwd (the library for Claude, the checkout for an engine that runs in
-            // it), so the two agree only when those are the same; where they differ, the write scope
-            // has already refused or resolved the path somewhere this check would not read.
+            // A relative path is resolved against `base`, the engine's own cwd, which is where the
+            // write scope resolves it. Joining it to the worktree instead would check a different
+            // file whenever the engine runs beside the checkout (a library run) rather than in it.
             let absolute = if Path::new(path).is_absolute() {
                 PathBuf::from(path)
             } else {
-                worktree.join(path)
+                base.join(path)
             };
             // `..`, links and a path that is not there yet resolve the way the write scope
             // resolves them, so the lease is read against where the bytes land.
@@ -423,7 +427,13 @@ impl ActionLease for LeaseGuard {
         else {
             return Review::Deny("Orbyn could not find this task's worktree.".to_owned());
         };
-        match core.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, ask) {
+        // A relative path resolves where the write scope resolves it, so the lease is read against
+        // the file the engine writes. Without a write scope the worktree is all there is to go on.
+        let base = scope
+            .write_scope
+            .as_ref()
+            .map_or_else(|| worktree.clone(), |scope| scope.engine_cwd.clone());
+        match core.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, &base, ask) {
             Some(words) => Review::Deny(words),
             None => Review::Pass,
         }

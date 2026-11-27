@@ -917,6 +917,7 @@ async fn a_lease_check_that_cannot_read_the_task_refuses() {
         "no-such-task",
         "alpha",
         &w.repo,
+        &w.repo,
         &ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
     );
     assert!(refused.is_some(), "a failed read let the write through");

@@ -442,6 +442,8 @@ impl ApprovalGate {
             id: id.clone(),
             settled: false,
         };
+        // The person's wait can be long, so the ask is kept for the lease to be asked again once they answer.
+        let after_wait = ask.clone();
         self.store.create_approval(NewApproval {
             id: id.clone(),
             run_id: scope.run_id.clone(),
@@ -464,7 +466,17 @@ impl ApprovalGate {
             }
         };
         Ok(match state {
-            ApprovalState::Allowed => Verdict::Allow,
+            // The lease was asked before the wait, and a lease past its `expires_at` stops blocking another
+            // member, so an allow can outlive the lease that justified it: the same lease is asked again and
+            // its refusal wins. This narrows the window to the gap between this answer and the write the engine
+            // makes itself, which reaches no Orbyn route and so cannot be fenced from here.
+            ApprovalState::Allowed => match self.lease.get() {
+                Some(lease) => match lease.lease(scope, &after_wait).await {
+                    Review::Deny(words) => Verdict::Deny(words),
+                    _ => Verdict::Allow,
+                },
+                None => Verdict::Allow,
+            },
             ApprovalState::Denied => Verdict::Deny(
                 self.take_feedback(&id)
                     .unwrap_or_else(|| "Denied in Orbyn.".to_owned()),
