@@ -11,6 +11,7 @@ const fixtures: PullFixture[] = [
   {
     number: 1,
     title: "First layer",
+    createdAt: "2026-08-01T00:00:00Z",
     body: "Why this exists.",
     headRefName: "feat-one",
     baseRefName: "main",
@@ -57,14 +58,15 @@ const fixtures: PullFixture[] = [
       },
     ],
   },
-  { number: 2, title: "Second layer", headRefName: "feat-two", baseRefName: "feat-one", isDraft: true, author: { login: "grace" }, labels: [{ name: "docs" }] },
+  { number: 2, title: "Second layer", createdAt: "2026-08-02T00:00:00Z", headRefName: "feat-two", baseRefName: "feat-one", isDraft: true, author: { login: "grace" }, labels: [{ name: "docs" }] },
   // The viewer is asked to review it, so its page offers the review.
-  { number: 3, title: "Unrelated fix", headRefName: "fix-three", author: { login: "ada" }, reviewers: ["me"] },
-  { number: 4, title: "Old idea", headRefName: "old-four", state: "CLOSED", author: { login: "ada" } },
-  { number: 5, title: "Shipped work", headRefName: "shipped-five", state: "MERGED", author: { login: "ada" } },
+  { number: 3, title: "Unrelated fix", createdAt: "2026-08-03T00:00:00Z", headRefName: "fix-three", author: { login: "ada" }, reviewers: ["me"] },
+  { number: 4, title: "Old idea", createdAt: "2026-08-04T00:00:00Z", headRefName: "old-four", state: "CLOSED", author: { login: "ada" } },
+  { number: 5, title: "Shipped work", createdAt: "2026-08-05T00:00:00Z", headRefName: "shipped-five", state: "MERGED", author: { login: "ada" } },
   {
     number: 6,
     title: "Marked later",
+    createdAt: "2026-08-06T00:00:00Z",
     headRefName: "feat-six",
     state: "MERGED",
     author: { login: "ada" },
@@ -220,7 +222,11 @@ test("the list sorts, switches state from the pills and comes back from a pull r
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("Old idea");
   await page.getByRole("button", { name: "Merged", exact: true }).click();
-  await expect(rows).toContainText("Shipped work");
+  // Both merged pull requests list, newest creation first (the Created sort set above), and each
+  // row says Merged: the second row is listed rather than hidden by the once-single expectation.
+  await expect(rows).toHaveCount(2);
+  await expect(rows).toHaveText([/Marked later/, /Shipped work/]);
+  await expect(rows.filter({ hasText: "Merged" })).toHaveCount(2);
   await open.click();
 
   // A pull request is a page of its own in history: Back returns to the list.
@@ -421,7 +427,7 @@ test("merge takes a method from the menu, strips credits and can wait for checks
   await article.getByRole("button", { name: "Ready for review" }).click();
   await expect(article.getByRole("button", { name: "Merge", exact: true })).toBeEnabled();
   await article.getByRole("button", { name: /Squash and merge/ }).click();
-  await page.getByRole("menuitem", { name: "Merge when checks pass" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Merge when checks pass" }).click();
   await article.getByRole("button", { name: "Merge", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Merge pull request" });
   await dialog.getByLabel("Commit message").fill("Second layer\n\nCo-Authored-By: Claude <noreply@example.com>");

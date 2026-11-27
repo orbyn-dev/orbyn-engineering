@@ -64,7 +64,8 @@ test("the model picker moves a thread to another engine between turns", async ({
   const id = threadIdOf(page);
   await settled(service, id);
   const before = (await thread(id)).engine;
-  await page.locator(".composer-bar [aria-haspopup]").first().click();
+  // The bar's first aria-haspopup is the profile chip; the model chip's own hook opens the model picker.
+  await page.locator(".composer-bar [data-model-trigger]").click();
   await page.getByRole("toolbar", { name: "Provider" }).getByRole("button").last().click();
   await page.getByRole("listbox", { name: "Models" }).getByRole("option").first().click();
   await expect.poll(async () => (await thread(id)).engine).not.toBe(before);
