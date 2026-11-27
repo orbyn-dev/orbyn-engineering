@@ -10,9 +10,9 @@ use serde_json::json;
 use super::fake;
 use super::harness::{self, Turn};
 
-/// The path a worktree's checkout is at, as the contract carries it.
-fn at(worktree: &orbyn_contracts::Worktree) -> PathBuf {
-    PathBuf::from(&worktree.path)
+/// The path a writing worker's checkout is at, as the contract carries it.
+fn at(made: &super::super::worktree::WriterWorktree) -> PathBuf {
+    PathBuf::from(&made.worktree.path)
 }
 
 /// Git's answer in `cwd`, trimmed.
@@ -107,7 +107,7 @@ async fn two_writers_get_two_checkouts_of_their_own() {
         .unwrap()
         .expect("a brief that writes gets a worktree");
     assert_ne!(
-        first.path, second.path,
+        first.worktree.path, second.worktree.path,
         "two writers never share a checkout"
     );
     // Both sit in the sibling root Orbyn already uses for worktrees, one folder each, and never
@@ -137,8 +137,8 @@ async fn two_writers_get_two_checkouts_of_their_own() {
         at(&second).file_name().unwrap().to_string_lossy(),
         "crew-worker-b"
     );
-    assert_eq!(first.branch, "crew-worker-a");
-    assert_eq!(second.branch, "crew-worker-b");
+    assert_eq!(first.worktree.branch, "crew-worker-a");
+    assert_eq!(second.worktree.branch, "crew-worker-b");
     // And git agrees they are the repository's worktrees, not stray folders.
     let listed = listed(repo);
     assert_eq!(listed.len(), 3, "the clone and its two writers: {listed:?}");
@@ -278,6 +278,20 @@ async fn a_start_that_fails_removes_the_checkout_it_made() {
     assert_eq!(at(&again), path);
     assert!(at(&again).is_dir());
     assert_eq!(git_out(&at(&again), &["status", "--porcelain"]), "");
+    // A checkout that is already registered is the member's own, so this start did not make it and a
+    // failed start would leave it alone.
+    assert!(again.created, "the folder was gone, so this start made it");
+    let reused = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .unwrap()
+        .expect("a brief that writes gets a worktree");
+    assert_eq!(at(&reused), path);
+    assert!(
+        !reused.created,
+        "an existing checkout is reused, never claimed as this start's own"
+    );
 }
 
 #[tokio::test]

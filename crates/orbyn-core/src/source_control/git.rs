@@ -490,23 +490,30 @@ pub(crate) async fn create_worktree(
         &["worktree", "add", "-b", &branch, &path_text, &start],
     )
     .await?;
-    let submodules: &[&str] = match options.submodules.as_str() {
-        "none" | "skip" => &[],
-        "top-level" | "top_level" => &["submodule", "update", "--init"],
-        _ => &["submodule", "update", "--init", "--recursive"],
-    };
-    // A submodule that cannot be fetched leaves the worktree usable.
-    if !submodules.is_empty()
-        && path.join(".gitmodules").exists()
-        && let Err(error) = git(&path, submodules).await
-    {
-        tracing::warn!(%error, "could not populate submodules");
-    }
+    populate_submodules(&path, &options.submodules).await;
     Ok(Worktree {
         path: path_text,
         branch,
         base: start,
     })
+}
+
+/// Populates a worktree's submodules the way the `submodules` mode asks (`recursive`, `top-level`, or
+/// none). Every path that makes a worktree calls it, so a checkout recovered from a branch an earlier
+/// attempt left out has the same contents as a new one. A submodule that cannot be fetched leaves the
+/// worktree usable.
+pub(crate) async fn populate_submodules(path: &Path, mode: &str) {
+    let submodules: &[&str] = match mode {
+        "none" | "skip" => &[],
+        "top-level" | "top_level" => &["submodule", "update", "--init"],
+        _ => &["submodule", "update", "--init", "--recursive"],
+    };
+    if submodules.is_empty() || !path.join(".gitmodules").exists() {
+        return;
+    }
+    if let Err(error) = git(path, submodules).await {
+        tracing::warn!(%error, "could not populate submodules");
+    }
 }
 
 /// The project's local branches, capped. Semantic naming avoids them; a listing past the

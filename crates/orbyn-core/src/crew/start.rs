@@ -865,12 +865,14 @@ impl Core {
             (true, None) => self.crew_writer_worktree(lead, brief, member, base).await?,
             _ => None,
         };
-        let checkout = worktree.as_ref().map(|worktree| worktree.path.as_str());
+        let checkout = worktree
+            .as_ref()
+            .map(|worktree| worktree.worktree.path.as_str());
         // The run records the worktree's own base, so the verifier reads the commit the worker
         // began at, and its own checkout, so it reads the files the worker wrote.
         let recorded_base = worktree
             .as_ref()
-            .map_or(base, |worktree| Some(worktree.base.as_str()));
+            .map_or(base, |worktree| Some(worktree.worktree.base.as_str()));
         let thread = match self
             .attach_crew_worker_at(
                 &lead.id,
@@ -884,9 +886,12 @@ impl Core {
         {
             Ok(thread) => thread,
             Err(error) => {
-                // A worker that never started leaves no checkout behind.
-                if let Some(worktree) = &worktree {
-                    self.discard_crew_worktree(lead, std::path::Path::new(&worktree.path))
+                // A worker that never started leaves no checkout behind, unless it was an existing one:
+                // the member's own checkout keeps what it already held.
+                if let Some(worktree) = &worktree
+                    && worktree.created
+                {
+                    self.discard_crew_worktree(lead, std::path::Path::new(&worktree.worktree.path))
                         .await;
                 }
                 return Err(error);

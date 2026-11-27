@@ -46,7 +46,7 @@ impl Core {
         brief: &Brief,
         member: &CrewMember,
         base: Option<&str>,
-    ) -> Result<Option<Worktree>, CrewError> {
+    ) -> Result<Option<WriterWorktree>, CrewError> {
         if brief.write_paths().next().is_none() {
             return Ok(None);
         }
@@ -85,19 +85,38 @@ impl Core {
             git::git(&repo, &["worktree", "add", &path, &purpose])
                 .await
                 .map_err(internal)?;
-            let start = git::git(&repo, &["merge-base", "HEAD", &purpose])
-                .await
-                .map_err(internal)?;
-            return Ok(Some(Worktree {
-                path,
-                branch: purpose,
-                base: text(&start),
+            // A recovered checkout is populated like a new one, so a worker in it sees the same files.
+            git::populate_submodules(&target, &options.submodules).await;
+            // The commit the task was admitted at is where its work starts, and the commit the start read the
+            // repository's own checks at, so the run records that one; with none named, where the reused branch
+            // forked, which is the commit the worker began at.
+            let start = match base {
+                Some(base) => base.to_owned(),
+                None => text(
+                    &git::git(&repo, &["merge-base", "HEAD", &purpose])
+                        .await
+                        .map_err(internal)?,
+                ),
+            };
+            return Ok(Some(WriterWorktree {
+                worktree: Worktree {
+                    path,
+                    branch: purpose,
+                    base: start,
+                },
+                created: true,
             }));
         }
+        // An already registered checkout at the path is the member's own, with whatever it holds: this
+        // start did not make it, so a start that fails leaves it as it was.
+        let reused = target.exists() && listed(&repo, &target).await.map_err(internal)?;
         let worktree = git::create_worktree(&repo, &purpose, &options)
             .await
             .map_err(internal)?;
-        Ok(Some(worktree))
+        Ok(Some(WriterWorktree {
+            worktree,
+            created: !reused,
+        }))
     }
 
     /// Removes a writing worker's worktree when its start failed, so a refused start leaves no
@@ -142,14 +161,28 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_owned()
 }
 
-/// Whether the repository already has the local branch `name`.
+/// The checkout a writing worker runs in, and whether this start made it: an earlier attempt's or
+/// another task's registered checkout is reused, and a start that fails then leaves it alone.
+#[derive(Debug)]
+pub(super) struct WriterWorktree {
+    pub worktree: Worktree,
+    /// `true` when this start created the folder, so only that one is removed on a failed start.
+    pub created: bool,
+}
+
+/// Whether the repository already has the local branch `name`. `git rev-parse --verify --quiet`
+/// answers exit code 1 for a branch that is not there; any other failure is a broken repository and is
+/// reported instead of being read as "no branch", which would make the caller try to create one.
 async fn branch_exists(repo: &Path, name: &str) -> Result<bool> {
     let reference = format!("refs/heads/{name}");
-    Ok(
-        git::git(repo, &["rev-parse", "--verify", "--quiet", &reference])
-            .await
-            .is_ok(),
-    )
+    let output = git::git_raw(repo, &["rev-parse", "--verify", "--quiet", &reference]).await?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(crate::error::CoreError::Git(
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+        )),
+    }
 }
 
 /// Whether git still lists `path` as a worktree of `repo`. Git spells a path differently on Windows,
