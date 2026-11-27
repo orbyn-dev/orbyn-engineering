@@ -7,6 +7,7 @@ use orbyn_contracts::{
 use crate::app::Core;
 use crate::testing::{TempDir, run_git};
 
+use super::super::discovery_window;
 use super::super::git_spawns;
 use super::super::tests::{configure, core, repository};
 
@@ -76,8 +77,9 @@ async fn a_repeated_catalog_read_spawns_no_git_for_unchanged_folders() {
     let observed = since(&before, &folders);
     assert_eq!(
         observed,
-        [2, 2, 2, 2],
-        "a first read observes every folder with two Git processes"
+        [3, 3, 3, 3],
+        "a first read observes every folder with three Git processes: discovery, the discovery \
+         that confirms the watch describes it, and the configuration"
     );
     let after_first = spawns(&folders);
     let started = std::time::Instant::now();
@@ -113,7 +115,7 @@ async fn a_branch_switch_is_observed_again_for_that_folder_alone() {
     let second = read(&core).await;
     assert_eq!(
         since(&before, &folders),
-        [0, 2],
+        [0, 3],
         "the folder whose HEAD moved is observed again, the other is reused"
     );
     assert_eq!(first, second, "another branch names the same checkout");
@@ -138,7 +140,7 @@ async fn a_changed_remote_is_observed_instead_of_remembered() {
     let second = read(&core).await;
     assert_eq!(
         since(&before, watched),
-        [2],
+        [3],
         "a changed remote is read again"
     );
     let member = only_member(&second);
@@ -172,7 +174,7 @@ async fn a_folder_that_becomes_its_own_repository_is_observed_again() {
     let second = read(&core).await;
     assert_eq!(
         since(&before, watched),
-        [2],
+        [3],
         "the repository that appeared in the folder is observed"
     );
     assert_eq!(
@@ -277,6 +279,43 @@ async fn a_folder_inside_an_unreadable_repository_is_not_completed_as_standalone
     );
 }
 
+/// The watch is taken after discovery named the root, so a repository that changes in that window
+/// is one the watch does not describe: the watch records the new `HEAD`, `config` and signatures,
+/// `Watch::holds` accepts them, and the answer still carries the old root as complete. Git is asked
+/// again once the watch is taken, so an answer read across a change is not kept.
+#[tokio::test]
+async fn a_repository_that_changed_between_discovery_and_the_watch_is_not_kept() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let folder = dir.path().join("repo");
+    repository(&folder);
+    configure(&folder, "origin", "git@host:Owner/Repo.git");
+    core.add_project(folder.to_str().unwrap()).await.unwrap();
+    // `core.bare` is not in the configuration the answer was read from, so only asking Git again
+    // says that the repository the answer named is not one with a work tree any more.
+    discovery_window::arm(&folder, |folder| {
+        run_git(folder, &["config", "core.bare", "true"])
+    });
+    let watched = std::slice::from_ref(&folder);
+    let catalog = read(&core).await;
+    let member = only_member(&catalog);
+    assert!(
+        !member.metadata_complete,
+        "the repository the answer was read as has no work tree now, so the checkout is left \
+         unobserved instead of described by the answer read before the change"
+    );
+    assert_eq!(
+        member.repository_key, None,
+        "and no identity is invented for it from the configuration read after the change"
+    );
+    let before = spawns(watched);
+    let _ = read(&core).await;
+    assert!(
+        since(&before, watched)[0] > 0,
+        "an answer read across a change is observed again, not kept"
+    );
+}
+
 #[tokio::test]
 async fn a_missing_folder_is_unavailable_and_starts_nothing() {
     let dir = TempDir::new();
@@ -344,7 +383,7 @@ async fn a_plain_folder_becomes_a_repository_under_the_observation() {
     let second = read(&core).await;
     assert_eq!(
         since(&before, watched),
-        [2],
+        [3],
         "the repository that appeared around the folder is observed"
     );
     let member = only_member(&second);
@@ -443,7 +482,7 @@ async fn a_git_link_retargeted_at_another_repository_is_observed_again() {
     let second = read(&core).await;
     assert_eq!(
         since(&before, watched),
-        [2],
+        [3],
         "the link names another repository now, so the folder is observed again"
     );
     assert_eq!(

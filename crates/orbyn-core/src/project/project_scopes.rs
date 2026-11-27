@@ -2,7 +2,7 @@
 //! without transport or helpers. Remote URLs never leave this module or enter storage.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -178,6 +178,40 @@ pub(super) mod git_spawns {
     }
 }
 
+/// Changes a folder after the discovery that named its work tree and Git directory, and before
+/// the watch that has to describe that answer, which is otherwise only a timing window. Keyed by
+/// the folder, so a test running beside another one arms only its own observation.
+#[cfg(test)]
+pub(super) mod discovery_window {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, PoisonError};
+
+    type Change = Box<dyn FnOnce(&Path) + Send>;
+
+    static ARMED: Mutex<Option<(PathBuf, Change)>> = Mutex::new(None);
+
+    /// Runs `change` after `folder` is next discovered, once.
+    pub(super) fn arm(folder: &Path, change: impl FnOnce(&Path) + Send + 'static) {
+        let folder = crate::util::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+        let mut armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
+        *armed = Some((folder, Box::new(change)));
+    }
+
+    /// Changes `folder` if a test armed it for this observation.
+    pub(super) fn run(folder: &Path) {
+        let change = {
+            let mut armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
+            let mine = matches!(armed.as_ref(), Some((key, _)) if key == folder);
+            if mine { armed.take() } else { None }
+        };
+        // Run outside the lock: the change reads and writes the filesystem, and a held lock would
+        // turn a panicking change into a poisoned one.
+        if let Some((_, change)) = change {
+            change(folder);
+        }
+    }
+}
+
 async fn metadata(path: &Path, args: &[&str], deadline: Instant) -> Option<(i32, Vec<u8>)> {
     let budget = deadline
         .saturating_duration_since(Instant::now())
@@ -270,17 +304,55 @@ const CONFIGURATION: [&str; 5] = [
     r"^(remote\..*\.url|include\..*|includeif\..*|url\..*\.(insteadof|pushinsteadof))$",
 ];
 
+/// The command that names a folder's work tree root and the Git directory it read that from.
+const DISCOVERY: [&str; 3] = ["rev-parse", "--show-toplevel", "--absolute-git-dir"];
+
+/// One answer to [`DISCOVERY`]: the work tree root Git named, and the Git directory it named
+/// beside it. A folder Git names no work tree for is not one of these.
+struct Answer {
+    root: PathBuf,
+    git_dir: Option<PathBuf>,
+}
+
+impl Answer {
+    fn read(output: &[u8]) -> Option<Self> {
+        let text = std::str::from_utf8(output).ok()?;
+        let mut lines = text.lines();
+        let top = lines.next()?;
+        if top.len() > MAX_PATH_BYTES {
+            return None;
+        }
+        let root = canonicalize(Path::new(top.trim())).ok()?;
+        // Git names its directory after the root; it read the answer from there.
+        let git_dir = lines
+            .next()
+            .map(str::trim)
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from);
+        Some(Self { root, git_dir })
+    }
+
+    /// Whether `self` names the same repository as `other`: the same work tree root, and the same
+    /// Git directory the answer was read from. A watch is built from the paths the first answer
+    /// named, so a second answer naming another repository is one it does not describe.
+    fn names(&self, other: &Self) -> bool {
+        self.root == other.root
+            && match (self.git_dir.as_deref(), other.git_dir.as_deref()) {
+                (None, None) => true,
+                (Some(mine), Some(theirs)) => matches!(
+                    (canonicalize(mine), canonicalize(theirs)),
+                    (Ok(mine), Ok(theirs)) if mine == theirs
+                ),
+                _ => false,
+            }
+    }
+}
+
 /// Observes one folder's Git identity: the two commands that read it, and what their
 /// answer rests on. `None` leaves the checkout unobserved, as a failed or partial read
 /// always did, and nothing is kept for it.
 async fn observe(path: &Path, real: &Path, is_git: bool, deadline: Instant) -> Option<GitFacts> {
-    let output = match metadata(
-        path,
-        &["rev-parse", "--show-toplevel", "--absolute-git-dir"],
-        deadline,
-    )
-    .await
-    {
+    let output = match metadata(path, &DISCOVERY, deadline).await {
         Some((0, output)) => output,
         Some((128, _)) if !is_git && !path.join(".git").exists() => {
             // Git also exits 128 when the configuration above the folder cannot be read, and a
@@ -294,22 +366,26 @@ async fn observe(path: &Path, real: &Path, is_git: bool, deadline: Instant) -> O
         }
         _ => return None,
     };
-    let text = std::str::from_utf8(&output).ok()?;
-    let mut lines = text.lines();
-    let top = lines.next()?;
-    if top.len() > MAX_PATH_BYTES {
-        return None;
-    }
-    let root = canonicalize(Path::new(top.trim())).ok()?;
-    // Git names its directory after the root; it read the answer from there.
-    let git_dir = lines.next().map(|line| line.trim().to_owned());
-    let git_dir = git_dir
-        .as_deref()
-        .map(Path::new)
-        .filter(|dir| !dir.as_os_str().is_empty());
+    let first = Answer::read(&output)?;
     // What the answer will rest on is watched before the configuration is read, so no byte the
     // answer comes from is newer than the watch that vouches for it.
-    let watch = git_dir.and_then(|git_dir| Watch::work_tree(real, &root, git_dir));
+    #[cfg(test)]
+    discovery_window::run(real);
+    let watch = first
+        .git_dir
+        .as_deref()
+        .and_then(|git_dir| Watch::work_tree(real, &first.root, git_dir));
+    // The watch is taken after the answer was read, so a repository that changed in between -- one
+    // that turned bare, one whose `.git` names another directory, one that became its own
+    // repository or lost the one above it -- is one the watch does not describe, however unchanged
+    // the files it does cover. Ask Git again, now that the watch vouches for the state that answers,
+    // and keep the observation only when both answers name the same repository.
+    let Some((0, output)) = metadata(path, &DISCOVERY, deadline).await else {
+        return None;
+    };
+    if !Answer::read(&output).is_some_and(|again| again.names(&first)) {
+        return None;
+    }
     // Inspect configuration without includes: the identity comes from the files the answer rests
     // on, never from what a link in them points at. Global/system configuration and
     // caller-provided config are disabled in metadata.
@@ -321,7 +397,7 @@ async fn observe(path: &Path, real: &Path, is_git: bool, deadline: Instant) -> O
     // A file that changed while the configuration was read vouches for nothing: the answer is
     // returned once and not kept, as any observation that cannot be watched is.
     let watch = watch.filter(Watch::holds);
-    Some(GitFacts::work_tree(real, root, watch, repository))
+    Some(GitFacts::work_tree(real, first.root, watch, repository))
 }
 
 async fn checkout(

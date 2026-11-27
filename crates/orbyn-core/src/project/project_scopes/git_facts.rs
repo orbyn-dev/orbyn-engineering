@@ -21,7 +21,9 @@
 //! directory it resolved: a link retargeted at another repository leaves those files
 //! as they were. What the answer rests on is watched before the configuration is read
 //! and confirmed after it, so facts are never kept against a later state than the one
-//! they were read from. Any file that differs, any folder discovery passed that now
+//! they were read from; the discovery that named the root and the Git directory is asked
+//! again once that watch is taken, because the watch describes the state after it rather
+//! than the one it answered from. Any file that differs, any folder discovery passed that now
 //! holds a `.git` or reads as a repository of its own (a bare repository has no `.git`,
 //! and Git stops at it instead of passing to the parent), and any resolution that
 //! changed makes the next read observe the folder again: a folder that was deleted,
