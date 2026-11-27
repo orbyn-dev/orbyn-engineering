@@ -257,6 +257,17 @@ pub(super) fn next_offset(page: Page, total: u32) -> Option<u32> {
     (next < total).then_some(next)
 }
 
+/// The start, in unix seconds, of the `every_hours` window `now` falls in. The schedule timer and the watch timer both claim
+/// that start (`schedule:<crew>:<start>`, `watch:<crew>:<start>`) and name their event with it. A start is comparable across
+/// intervals, so a person who changes `every_hours` is never held back by claims the old interval made: a window that starts
+/// after the newest claim fires, one that starts at or before it does not. A bucket *number* counted in `every_hours` is not
+/// comparable: it grows smaller as the interval grows, so the old interval's claim would sit above every later number the new
+/// interval could name and the crew would never fire again.
+pub fn window_start(now: i64, hours: u32) -> i64 {
+    let window = i64::from(hours) * 3600;
+    now.div_euclid(window) * window
+}
+
 impl Core {
     /// Screens a watch's stored command the way the gate screens a command before it starts: the always-denied list (N1 to N10) and
     /// the blast-radius guard. The refusal names the rule and never the command, and a command the screen cannot read is refused.
