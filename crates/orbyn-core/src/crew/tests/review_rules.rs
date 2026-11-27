@@ -1,8 +1,10 @@
 //! The pure parts of review: the rule file, how a finding stands against later rounds, and when two findings are the same place.
 
 use super::review_support::finding;
-use crate::crew::review::{FindingStatus, fingerprint, status_of};
+use crate::crew::review::{FindingStatus, RuleLane, fingerprint, status_of};
 
+/// The test's own rounds, numbered by the place it lists them in: here the index *is* the round number the
+/// assertions ask for, so the place is the value rather than a fixture order a test would look up past.
 fn rounds(each: &[&[&str]]) -> Vec<(u32, Vec<String>)> {
     each.iter()
         .enumerate()
@@ -13,6 +15,15 @@ fn rounds(each: &[&[&str]]) -> Vec<(u32, Vec<String>)> {
             )
         })
         .collect()
+}
+
+/// The rule lane named `lane`: the rule file lists its lanes in its own order, so a test names the lane it means
+/// instead of reading the place the file happened to put it in.
+fn lane<'a>(rules: &'a [RuleLane], lane: &str) -> &'a RuleLane {
+    rules
+        .iter()
+        .find(|rule| rule.lane.as_str() == lane)
+        .unwrap_or_else(|| panic!("the rules name no {lane:?} lane: {rules:?}"))
 }
 
 #[test]
@@ -67,16 +78,18 @@ fn rules_only_add_lanes_and_a_broken_file_is_an_error() {
         r#"{"lanes":[{"lane":"security","when":{"paths":["src/auth/**"]},"locked":true},{"lane":"docs"}],"checks":[1]}"#,
     );
     let rules = super::super::review::read_rules(dir.path()).unwrap();
-    assert_eq!(rules.len(), 2);
-    assert!(rules[0].locked && !rules[1].locked);
-    assert!(rules[0].applies(Some(&["src/auth/login.rs".to_owned()])));
-    assert!(!rules[0].applies(Some(&["src/ui/page.rs".to_owned()])));
+    assert_eq!(rules.len(), 2, "the fixture names two lanes");
+    let security = lane(&rules, "security");
+    let docs = lane(&rules, "docs");
+    assert!(security.locked && !docs.locked);
+    assert!(security.applies(Some(&["src/auth/login.rs".to_owned()])));
+    assert!(!security.applies(Some(&["src/ui/page.rs".to_owned()])));
     assert!(
-        rules[0].applies(None),
+        security.applies(None),
         "not knowing the paths is never a reason to skip a review"
     );
     assert!(
-        rules[1].applies(Some(&[])),
+        docs.applies(Some(&[])),
         "a lane with no condition always runs"
     );
     for bad in [

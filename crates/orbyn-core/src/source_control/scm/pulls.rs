@@ -4,21 +4,39 @@ use super::check_state;
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::redaction::Redactor;
+use crate::source_control::branch_names;
 use crate::source_control::forge::{
     self, DETAIL_FIELDS, DETAILS_ROW_LIMIT, DetailsOutcome, Forge, PullFilter, fetch_pull,
     forge_of, no_such_pull,
 };
 use crate::source_control::git::{git, text};
 use orbyn_contracts::{
-    MergePull, Project, PullChangeBreakdown, PullCheck, PullConversation, PullDetails,
-    PullDetailsRequest, PullDetailsResponse, PullFile, PullList, PullListEntry, PullListFailure,
-    PullRequest, PullRequestDetail, PullRevision, PullTimelineEvent, SubmitReview, Thread,
+    BranchDetail, MergePull, Project, PullChangeBreakdown, PullCheck, PullConversation,
+    PullDetails, PullDetailsRequest, PullDetailsResponse, PullFile, PullList, PullListEntry,
+    PullListFailure, PullRequest, PullRequestDetail, PullRevision, PullTimelineEvent, SubmitReview,
+    Thread,
 };
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 /// A check log answers with its last at most this many bytes: a failure ends a log.
 const CHECK_LOG_BYTES: usize = 32 * 1024;
+
+/// What one `git for-each-ref --format=%(refname) refs/heads refs/remotes/origin` listing says about
+/// a branch: whether the checkout has it as a local branch, and the `origin` ref that already holds
+/// it. A local branch that happens to be named `origin/main` is not a remote ref.
+pub(super) fn branch_refs(listing: &str, branch: &str) -> (bool, Option<String>) {
+    let mut local = false;
+    let mut remote = None;
+    for name in listing.lines() {
+        if name.strip_prefix("refs/heads/") == Some(branch) {
+            local = true;
+        } else if name.strip_prefix("refs/remotes/origin/") == Some(branch) {
+            remote = Some(format!("origin/{branch}"));
+        }
+    }
+    (local, remote)
+}
 
 impl Core {
     pub async fn link_pull(&self, id: &str, number: u64) -> Result<PullRequest> {
@@ -106,6 +124,84 @@ impl Core {
         {
             tracing::debug!(%error, "could not link the branch's pull request");
         }
+    }
+
+    /// A branch of a project's repository as its forge sees it: whether the `origin` remote
+    /// already has it, and the pull request it already comes from or none (issue 506, frame
+    /// `pr-detail-none`). The forge is asked only for a branch the remote holds, because a pull
+    /// request comes from such a branch: a branch that is not pushed is answered without one, so
+    /// the frame's own case needs no forge and no network.
+    pub async fn branch_detail(
+        &self,
+        project_id: &str,
+        repo_id: Option<&str>,
+        branch: &str,
+    ) -> Result<BranchDetail> {
+        if !branch_names::is_valid_branch_name(branch) {
+            return Err(CoreError::Invalid(
+                "That is not a valid branch name.".into(),
+            ));
+        }
+        let project = self.trusted_project(project_id)?;
+        // The repository asked for, else the project's own folder, which is its primary repository.
+        let (repo_id, path, is_git) = match repo_id {
+            Some(id) if id != project.id => {
+                let record = self
+                    .store
+                    .repo(&project.id, id)?
+                    .ok_or_else(|| CoreError::NotFound("repository".into()))?;
+                if !record.trusted {
+                    return Err(CoreError::RepoUntrusted(
+                        "Trust this repository before reading its branches.".into(),
+                    ));
+                }
+                (record.id, PathBuf::from(record.path), record.is_git)
+            }
+            _ => (
+                project.id.clone(),
+                PathBuf::from(&project.path),
+                project.is_git,
+            ),
+        };
+        if !is_git {
+            return Err(CoreError::NotFound("branch".into()));
+        }
+        let cwd = path.as_path();
+        let listing = git(
+            cwd,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes/origin",
+            ],
+        )
+        .await?;
+        let (local, remote_ref) = branch_refs(&text(&listing), branch);
+        if !local && remote_ref.is_none() {
+            return Err(CoreError::NotFound("branch".into()));
+        }
+        let pull_request = match remote_ref.is_some() {
+            false => None,
+            true => {
+                let forge = forge_of(cwd).await?;
+                let filter = PullFilter {
+                    state: "all".into(),
+                    head: Some(branch.to_owned()),
+                    ..PullFilter::default()
+                };
+                forge::list_pulls(forge, cwd, &filter)
+                    .await?
+                    .into_iter()
+                    .max_by_key(|pull| (pull.state == "open", pull.number))
+            }
+        };
+        Ok(BranchDetail {
+            repo_id,
+            branch: branch.to_owned(),
+            remote_ref,
+            pull_request,
+        })
     }
 
     /// The project's threads that linked this pull request, most recently changed

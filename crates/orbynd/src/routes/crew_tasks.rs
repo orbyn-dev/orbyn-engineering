@@ -1,7 +1,8 @@
 //! Crew Flow (Preview) over HTTP: the crews that have work, a crew's tasks with the ten cells of each, one task zoomed,
-//! one task's checks, artifacts and diff, one task's Run page, one of its reviewer lanes in full, and one task's
-//! recorded EvalHistory samples. Reads only: seven GETs, each listed in `orbyn_core::crew::changes::READS`, so
-//! Autopilot's N1 marker does not treat them as changes. The samples read is KC5 slice 4 read back: ids and enums
+//! one task's checks, artifacts and diff, one task's Run page, the task that made one pull request, one of its reviewer
+//! lanes in full, and one task's recorded EvalHistory samples. Reads only: eight GETs, each listed in
+//! `orbyn_core::crew::changes::READS`, so Autopilot's N1 marker does not treat them as changes. The samples read is KC5
+//! slice 4 read back: ids and enums
 //! only, never lesson or brief text. Nothing here approves,
 //! merges or reverts. Transport only: `orbyn_core::crew` builds every view and keeps the answer key, check text, repros,
 //! thread ids and paths out of them; the Run page is the one read that names a check's command, and it never names the
@@ -21,6 +22,7 @@ use crate::http::{ApiResult, AppState, QueryMap};
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/crew/flow/crews", get(crews))
+        .route("/api/crew/flow/run-link", get(run_link))
         .route("/api/crew/flow/tasks", get(tasks))
         .route("/api/crew/flow/tasks/{id}", get(task))
         .route("/api/crew/flow/tasks/{id}/artifacts", get(task_artifacts))
@@ -97,6 +99,19 @@ async fn run(
     Path(id): Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.crew_flow_run(&id)?))
+}
+
+/// `project` (required) and `number` (required): the Crew task whose run published that project's pull request, for the
+/// pull request page's Run tab. `404` when no task made it, and for a project the service does not know.
+async fn run_link(State(state): State<AppState>, query: QueryMap) -> ApiResult<impl IntoResponse> {
+    let project = query
+        .0
+        .get("project")
+        .map(String::as_str)
+        .ok_or_else(|| CoreError::Invalid("project is required".into()))?;
+    let number =
+        number(&query, "number")?.ok_or_else(|| CoreError::Invalid("number is required".into()))?;
+    Ok(Json(state.core.crew_run_link(project, u64::from(number))?))
 }
 
 /// One task's EvalHistory samples (KC5 slice 4 read): the sample its start recorded and the outcome it ended with.

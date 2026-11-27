@@ -8,6 +8,16 @@ use serde_json::json;
 use super::fake::*;
 use crate::host::confine::WorkerRefusal;
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
 fn refusing(mut view: crate::crew::EngineView) -> crate::crew::EngineView {
     view.crew_refusal = Some(WorkerRefusal {
         reason: "Crew workers on Codex are not available yet.".into(),
@@ -64,9 +74,9 @@ fn with_only_the_refused_engine_the_route_is_refused_with_its_reason() {
         &Ask::default(),
     );
     assert!(refusal.message.contains("No engine"), "{}", refusal.message);
-    let one = &refusal.rejected[0];
-    assert!(one.text.as_str().contains("not available yet"));
-    assert!(one.text.as_str().contains("another engine"));
+    let rejection = one(&refusal.rejected, "rejection of the only engine");
+    assert!(rejection.text.as_str().contains("not available yet"));
+    assert!(rejection.text.as_str().contains("another engine"));
 }
 
 #[test]
@@ -116,7 +126,9 @@ fn a_machine_wide_refusal_says_no_engine_would_do() {
         machine: true,
     });
     let refusal = refused(&brief(json!({})), &[view], &Ask::default());
-    let text = refusal.rejected[0].text.as_str();
+    let text = one(&refusal.rejected, "rejection of the machine-wide refusal")
+        .text
+        .as_str();
     assert!(
         text.starts_with("Crew can't run workers on this machine."),
         "{text}"

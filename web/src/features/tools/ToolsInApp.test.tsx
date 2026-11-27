@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { api, ApiFailure } from "../../api/client";
 import { engineTools } from "../../../mock/fixtures";
+import "../../app/routeScreens.test-support";
 import { App } from "../../app/App";
 import { installMockFetch } from "../../test-support";
 import { useUi } from "../../product/state/ui";

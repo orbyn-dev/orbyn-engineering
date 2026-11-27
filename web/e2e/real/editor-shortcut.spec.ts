@@ -15,7 +15,11 @@ let oldPath = "";
 /** A `code` on PATH that records its arguments, so no real editor is needed. */
 function stubEditor(): void {
   if (process.platform === "win32") {
-    writeFileSync(join(dir, "code.cmd"), `@echo %* > "${marker}"\r\n`);
+    // The resolver follows an npm-style .cmd to the Node script it wraps; a bare .cmd is refused
+    // rather than passed through cmd.exe, and Windows cannot start a script by itself.
+    const node = process.execPath.replace(/%/g, "%%");
+    writeFileSync(join(dir, "record.cjs"), `require("node:fs").writeFileSync(${JSON.stringify(marker)}, process.argv.slice(2).join(" ") + "\\n");\n`);
+    writeFileSync(join(dir, "code.cmd"), `@echo off\r\nsetlocal DisableDelayedExpansion\r\n"${node}" "%~dp0\\record.cjs" %*\r\n`);
     return;
   }
   writeFileSync(join(dir, "code"), `#!/bin/sh\nprintf '%s\\n' "$*" > "${marker}"\n`, { mode: 0o755 });
