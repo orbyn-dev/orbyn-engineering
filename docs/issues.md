@@ -538,8 +538,10 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   the fields that are present: `title`, `description` (the body), `labels` as one comma-separated value and
   `assignee_ids` as the whole new set (an empty list clears them). Core checks the title, the body, the labels and
   the assignees before anything is sent. A GitLab label cannot be told apart inside that comma-separated value, so a
-  name with a comma is `400 invalid` with nothing sent. The answer is the issue read back, so it carries the
-  comments and the states a detail read does.
+  name with a comma is `400 invalid` with nothing sent. The read cuts a description at 64 KiB and a label name at 200
+  characters without saying so, so a body or a label name at that cut is also `400 invalid` with nothing sent: writing
+  the cut form back would shorten the description GitLab holds, or replace a longer label with its cut name. The answer
+  is the issue read back, so it carries the comments and the states a detail read does.
 - **`state`** is one `PUT` of `state_event` (`close` or `reopen`). GitLab has one closed state and stores no reason
   for it, so the detail offers `Open` and `Closed`; a close reason the person sends is not stored, and the answer's
   `IssueState.close_reason` is `null`, which is what GitLab has. The detail is read before the write, so a name the

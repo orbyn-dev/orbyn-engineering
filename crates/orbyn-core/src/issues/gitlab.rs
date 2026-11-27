@@ -814,6 +814,16 @@ impl IssueSource for GitLab {
             payload.insert("title".into(), json!(title));
         }
         if let Some(body) = edit.body {
+            // The read cuts a description at 64 KiB, so a body this close to that cap may be the cut form: writing it
+            // back would drop what GitLab holds past the cut, which cannot be recovered from here. Refused loudly
+            // instead; the description can be edited in GitLab. A field that marks a clipped body is the better fix,
+            // and a contract change.
+            if body.len() + 4 > super::MAX_BODY_BYTES {
+                return Err(CoreError::Invalid(
+                    "A GitLab description of about 64 KiB cannot be written: the read may have cut it. Edit it in GitLab."
+                        .into(),
+                ));
+            }
             payload.insert("description".into(), json!(body));
         }
         if let Some(labels) = edit.labels {
@@ -821,6 +831,17 @@ impl IssueSource for GitLab {
             if labels.iter().any(|label| label.contains(',')) {
                 return Err(CoreError::Invalid(
                     "A GitLab label cannot contain a comma.".into(),
+                ));
+            }
+            // The read cuts a longer stored name to 200 characters and the picker seeds its selection from those
+            // names, so writing a name at that length could replace the real label with the cut form.
+            if labels
+                .iter()
+                .any(|label| label.chars().count() == MAX_LABEL)
+            {
+                return Err(CoreError::Invalid(
+                    "A GitLab label of 200 characters cannot be written: the read may have cut it. Rename it in GitLab."
+                        .into(),
                 ));
             }
             payload.insert("labels".into(), json!(labels.join(",")));

@@ -1566,6 +1566,132 @@ mod writes {
         );
     }
 
+    /// A description the read cut short reads as complete, so writing it back would drop what GitLab holds past the
+    /// cut. A body at the cap is refused before the write, and one byte under it still travels.
+    #[tokio::test]
+    async fn a_description_at_the_read_cut_is_refused_instead_of_shortening_the_stored_one() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let at_cut = "b".repeat(crate::issues::MAX_BODY_BYTES);
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: Some(&at_cut),
+                    labels: None,
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, CoreError::Invalid(_)),
+            "a body at the read cut is refused: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was sent"
+        );
+        let under = "b".repeat(crate::issues::MAX_BODY_BYTES - 8);
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: Some(&under),
+                    labels: None,
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            server
+                .seen()
+                .into_iter()
+                .filter(|r| r.line.starts_with("PUT"))
+                .count(),
+            1,
+            "a body the read could not have cut still travels"
+        );
+    }
+
+    /// The read cuts a longer label name to 200 characters and the picker seeds itself from those names, so a name at
+    /// that length may be the cut form of the label GitLab really holds.
+    #[tokio::test]
+    async fn a_label_at_the_read_cut_is_refused_instead_of_replacing_the_stored_one() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let at_cut = vec!["c".repeat(MAX_LABEL)];
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&at_cut),
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, CoreError::Invalid(_)),
+            "a label at the read cut is refused: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was sent"
+        );
+        let shorter = vec!["c".repeat(MAX_LABEL - 1)];
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&shorter),
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            server
+                .seen()
+                .into_iter()
+                .filter(|r| r.line.starts_with("PUT"))
+                .count(),
+            1,
+            "a name the read could not have cut still travels"
+        );
+    }
+
     #[tokio::test]
     async fn an_edit_writes_labels_and_assignees_as_the_whole_new_set() {
         let server = Server::start(|req| {
