@@ -1,5 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import "../../../../app/routeScreens.test-support";
 import { App } from "../../../../app/App";
 import { REVIEW_FRAMES, type ReviewFrameId } from "./names";
 import { openFrame } from "../../shared/test-support";
