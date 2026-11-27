@@ -37,6 +37,25 @@ pub struct PullRequest {
 }
 
 wire! {
+/// A branch of a project's repository, as its forge sees it: whether the remote already has
+/// it, and the pull request that already comes from it or none. This is the read a pull request
+/// page makes before a pull request exists (issue 506, frame `pr-detail-none`), so `pull_request`
+/// being `None` is an answer, not an error.
+pub struct BranchDetail {
+    /// The repository of the project the branch was read in: the one asked for, else the project's own folder.
+    pub repo_id: String,
+    pub branch: String,
+    /// The `origin` remote-tracking ref that holds the branch, such as `origin/feat/login`. `None`
+    /// means the branch is not pushed; it is as fresh as the last fetch.
+    pub remote_ref: Option<String>,
+    /// The pull request whose head is this branch: the open one with the highest number, else the
+    /// latest of any state. `None` means none was opened from it: a pull request needs a branch the
+    /// remote has, so a branch that is not pushed is answered without asking the forge.
+    pub pull_request: Option<PullRequest>,
+}
+}
+
+wire! {
 pub struct RequestedReviewer {
     /// A login, or a team's slug.
     pub name: String,

@@ -438,6 +438,12 @@ These are named so nobody assumes them. They arrive in later versions of this pr
     core's data folder (the store, the service handle and other runs' files), except the worker's own
     run folder and the checkout and library it works in. It also stops a worker starting a program
     through LaunchServices and signalling other processes.
+  - Whatever the platform, a worker's environment carries no name whose value is that folder, and the
+    search path it is given keeps only absolute folders outside the folder that offer no `orbyn`
+    program, so a worker's shell finds neither the folder nor the command line by name. This is the
+    route a shell takes by name, not a boundary: a worker that already knows an absolute path to a
+    binary still starts it, and the profile above is what stops it reading the store. Codex and ACP
+    workers get the same environment.
   - It does not stop a worker reading other processes' command lines and environment, and it does not
     cover the network, the loopback service (its token is the guard), the OS keychain, the engine's own
     login files, the saved conversations of engines other than Claude, Claude's per-session files other

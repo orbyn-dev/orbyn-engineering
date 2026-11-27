@@ -1,5 +1,6 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { LocalServer } from "../../../api/types";
 import { useUi } from "../../../product/state/ui";
@@ -174,4 +175,23 @@ it("gives the Limits row an age line and a refresh that forces a read and keeps 
     expect(screen.getByText("5h 62% left")).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   } finally { vi.useRealTimers(); }
+});
+
+it("draws the Limits row through StrictMode's replay, which cancels the first read", async () => {
+  let reads = 0;
+  const read = vi.spyOn(api.api, "threadLimits").mockImplementation(
+    ((_threadId: string, signal?: AbortSignal) => {
+      reads += 1;
+      if (reads > 1) return Promise.resolve(codexRead(38));
+      return new Promise<ReturnType<typeof codexRead>>((_done, fail) => {
+        const cancelled = () => fail(new DOMException("The request was aborted.", "AbortError"));
+        if (signal?.aborted) cancelled();
+        else signal?.addEventListener("abort", cancelled, { once: true });
+      });
+    }) as never,
+  );
+  // StrictMode's replay cancels the first mount's read and joins it; the row must still draw.
+  render(<StrictMode><LimitsRow threadId="replayed" engine="codex" /></StrictMode>);
+  expect(await screen.findByText("5h 62% left")).toBeVisible();
+  expect(read).toHaveBeenCalledTimes(2);
 });
