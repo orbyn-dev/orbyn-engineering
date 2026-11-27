@@ -49,7 +49,11 @@ const RECORDING_SAFE_FOCUS: &str = r"(() => {
 })()";
 
 const DEFAULT_SIZE: (u32, u32) = (1280, 800);
-const PROFILE_GRACE: Duration = Duration::from_millis(500);
+/// A closed tab's profile is removed after the browser using it was stopped, which can
+/// refuse the deletion for a moment: a directory-not-empty, sharing, lock or access-denied
+/// error is retried within this deadline rather than leaking the folder.
+const PROFILE_REMOVAL_DEADLINE: Duration = Duration::from_secs(1);
+const PROFILE_REMOVAL_RETRY: Duration = Duration::from_millis(100);
 /// Bounds a page's size, which sets how much memory each frame takes.
 const SIZES: std::ops::RangeInclusive<u32> = 100..=4096;
 /// How many frame ticks pass between looks at history, about one a second. A link
