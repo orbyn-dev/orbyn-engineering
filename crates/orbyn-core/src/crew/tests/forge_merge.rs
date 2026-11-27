@@ -685,6 +685,7 @@ async fn another_crew_cannot_overtake_an_unknown_publication() {
         let other = s.w.core.create_thread(orbyn_contracts::CreateThread {
             project_id: Some(project), engine: "alpha".into(), model: None, title: Some("other lead".into()),
             worktree: None, skill_profile: None, base_branch: None, effort: None, options: Default::default(),
+            branch_name_seed: None,
         }).await.unwrap();
         let token = super::harness::bind(&s.w.core, &other.id, "other-lead-run");
         let (answer, error) = s.w.call(&token, "crew_start", json!({"brief":super::harness::brief(json!({"files":[{"path":"src/**","mode":"write"}],"outcome":"Later queued work."})),"answer_key":{"checks":[{"id":"ok","kind":"command","params":{"run":"echo other-check"},"proves":"It runs."}],"protected_paths":[]}})).await;
