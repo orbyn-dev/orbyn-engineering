@@ -1,6 +1,7 @@
 //! The Flow routes over HTTP: four reads that answer empty views, refuse bad input, hide with the flag off, are open to a
-//! remote viewer (they only read) and never hold the answer key. The table, credential and flag-off walks of `crew_tests.rs`
-//! cover these routes too, since they sit under `/api/crew`.
+//! remote viewer (they only read) and never hold the answer key. One task's sample read (KC5 slice 4) sits beside
+//! them under `/api/crew/tasks`: it answers the record the store wrote and never the key either. The table, credential
+//! and flag-off walks of `crew_tests.rs` cover these routes too, since they sit under `/api/crew`.
 
 use std::sync::Arc;
 
@@ -428,6 +429,7 @@ async fn a_remote_viewer_may_read_them() {
         "/api/crew/flow/crews".to_owned(),
         "/api/crew/flow/tasks?crew=crew-1".to_owned(),
         format!("/api/crew/flow/tasks/{task}/artifacts"),
+        format!("/api/crew/tasks/{task}/samples"),
     ] {
         let (status, _) = app.get(&path).await;
         assert_eq!(status, 200, "{path}");
@@ -444,9 +446,52 @@ async fn with_the_flag_off_they_are_not_there() {
         "/api/crew/flow/tasks/sha256:abc",
         "/api/crew/flow/tasks/sha256:abc/artifacts",
         "/api/crew/flow/tasks/sha256:abc/run",
+        "/api/crew/tasks/sha256:abc/samples",
     ] {
         let (status, body) = app.get(path).await;
         assert_eq!(status, 404, "{path}");
         assert_eq!(body, unknown, "{path} answers as an absent route does");
     }
+}
+
+#[tokio::test]
+async fn a_task_sample_is_read_by_task_and_an_unknown_task_is_not_there() {
+    let app = serve("samples", true, false).await;
+    let (task, key_text) = seed_task(&app.core, "samples");
+    let key_id = app.core.store.crew_answer_key(&task).unwrap().unwrap().id;
+    let path = format!("/api/crew/tasks/{task}/samples");
+    let (status, body) = app.get(&path).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["task_id"], task.as_str());
+    let samples = body["samples"].as_array().unwrap();
+    assert_eq!(samples.len(), 1, "one task records exactly one sample");
+    assert_eq!(samples[0]["task_id"], task.as_str());
+    assert_eq!(samples[0]["kind"], "implement");
+    assert_eq!(samples[0]["had_lessons"], false);
+    assert_eq!(samples[0]["lesson_ids"], json!([]));
+    assert_eq!(samples[0]["left_out_ids"], json!([]));
+    assert_eq!(samples[0]["outcome"], Value::Null);
+    assert_eq!(samples[0]["stop_reason"], Value::Null);
+    assert_eq!(samples[0]["finished_at"], Value::Null);
+    for text in [key_text.as_str(), key_id.as_str()] {
+        assert!(!body.to_string().contains(text), "the read holds the key");
+    }
+
+    // The store's own state move writes the one outcome, and the read answers it with its finish time.
+    app.core
+        .store
+        .move_crew_task(&task, "cancelled", None)
+        .unwrap();
+    let (status, body) = app.get(&path).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["samples"][0]["outcome"], "cancelled");
+    assert!(body["samples"][0]["finished_at"].is_string());
+
+    // A task nothing stored is not found.
+    let (status, body) = app.get("/api/crew/tasks/sha256:none/samples").await;
+    assert_eq!(
+        (status, &body["code"]),
+        (404, &json!("not_found")),
+        "{body}"
+    );
 }

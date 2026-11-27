@@ -578,13 +578,13 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   page and the engine tools can default to it. `scope` must be one of the connection's scopes; a tracker that is not
   connected is `400 invalid_input`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids
   and names only), and never changes the connection, the project or any issue.
-- **Engines.** The engine-facing issue tools (N24) are list, read, create, comment, link, unlink and thread list:
-  create and comment call the same Core functions, in the project's own connected tracker and scope, as the Person
-  routes do, so they take the same inputs and answer the same refusals (a tracker that is not connected answers the
-  one "no connected issue tracker" refusal). They are acting tools, so a run's tool approval policy gates each call
-  as it gates every other acting tool; a Crew worker cannot use them (its allow list refuses an unlisted tool by
-  default). Engine tools never use the person key and add no Person-class authority; react is not an engine tool, and
-  set_state is not built because the service has no update/state route (a separate row).
+- **Engines.** The engine-facing issue tools (N24) are list, read, create, comment, set_state, link, unlink and
+  thread list: create, comment and set_state call the same Core functions, in the project's own connected tracker and
+  scope, as the Person routes do, so they take the same inputs and answer the same refusals (a tracker that is not
+  connected answers the one "no connected issue tracker" refusal; a tracker whose edit is not built answers the same
+  unsupported refusal the route answers). They are acting tools, so a run's tool approval policy gates each call as it
+  gates every other acting tool; a Crew worker cannot use them (its allow list refuses an unlisted tool by default).
+  Engine tools never use the person key and add no Person-class authority; react is not an engine tool.
 - **Tests when built.** Each write against the local fake server of each tracker that supports it: exact status and `code`,
   the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
   nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
@@ -653,13 +653,25 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - **A write the tracker refuses** answers the usual `forbidden`, `not_found`, `rate_limited` or
   `tracker_unavailable` and changes nothing here. Issue text goes in as a JSON field value, never as an argument
   position.
-- **The web client calls `comment` only**: the issue page's comment box under the comments is one
-  `POST /api/issues/item/comment` through the page-wide one-write guard, and it shows the comment the service stored
-  after the tracker's own, keeps a failed draft and says nothing changed, refuses a blank or over-64 KiB body before
-  sending anything, and goes back to Planned when a first answer is a 404 or 405 that is not `not_found`
-  (`web/src/features/issues/IssueComment.tsx`, `http.ts`). Its create and react controls stay Planned until a web
-  slice builds them against these routes; `web/src/api/personKey.ts` lists all three routes, so the key already
-  goes with them.
+- **The web client calls `comment`, `create` and `react`.** The issue page's comment box under the comments is
+  one `POST /api/issues/item/comment` through the page-wide one-write guard, and it shows the comment the service
+  stored after the tracker's own, keeps a failed draft and says nothing changed, refuses a blank or over-64 KiB body
+  before sending anything, and goes back to Planned when a first answer is a 404 or 405 that is not `not_found`
+  (`web/src/features/issues/IssueComment.tsx`, `http.ts`). The Issues page bar's New issue opens the create dialog
+  (`IssueCreate.tsx`): one `POST /api/issues/item/create` through the dialog's own one-write guard; the tracker's own
+  templates fill a missing description and are read while the dialog is open (`GET /api/issues/templates`); the label
+  and assignee rows are drawn only where `candidates` is offered, so a tracker that cannot edit its issues shows the
+  template form alone; a create whose outcome is unknown says the service's own "possibly created" sentence and offers
+  Check the list, never a re-send, while another refusal keeps the draft and sends it once more on the next click; a
+  first answer that is a 404 or 405 that is not `not_found` puts the control back to Planned. The issue page's
+  description card carries the reaction bar (`IssueReactions.tsx`): the counts the last write reported drawn as the
+  tracker's words and counts, and one `POST /api/issues/item/react` per choice through the page-wide one-write guard;
+  a first "no such route" hides the bar. Three contract gaps shape it: a plain detail read carries no reactions, so
+  the bar is only as fresh as the last write — the page keeps the counts it showed when another write's answer leaves
+  them out, and a reload starts without any; the counts carry no "did this person react", so the bar adds only and
+  cannot take the person's own reaction back; and a reaction on a comment is supported by the service, but its answer
+  carries no comment counts, so comment reactions are not drawn.
+  `web/src/api/personKey.ts` lists all three routes, so the key goes with them.
 - **Not verified.** No real GitHub, GitLab, Forgejo, Azure DevOps or Linear issue was created, commented on or
   reacted to; every writer is tested against its own local fake server, and the REST/GraphQL shapes (field names,
   GitLab's award names and its delete-by-id, Forgejo's reaction `content` words and delete body, Azure DevOps' JSON
@@ -698,8 +710,9 @@ create form; nothing feeds it to an engine.
   contents APIs can list cheaply (GitHub through the person's own `gh`); a later row reads them, with a YAML reader
   for GitHub's `.yml` forms: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has
   no issue template source at all (work item types are not templates). None of the three invents a template.
-- **The web client does not call this read yet**: its template picker stays Planned until a web slice builds it;
-  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) tracks that picker too.
+- **The web client reads this with the create dialog**: its Template row is drawn only when the read answers one, so
+  GitHub, Forgejo and Azure DevOps (all `[]`) draw no row. [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548)
+  tracks GitHub's and Forgejo's template files, and a later pass makes that picker visible for them.
 - **Not verified.** No real GitLab or Linear template list was read; both are tested against their local fake server,
   and the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
   `hasFormFields`) are from the APIs as understood. No real `orbynd` service run exercises the route.
@@ -725,17 +738,18 @@ The tracker field is required: a body without it is `400 invalid_input`, never r
   `204` again when there was nothing bound: "no binding" is the desired end state, so the call is idempotent rather
   than a `404`.
 - **Read side**: the contract specifies no read route for the binding, so none is added and nothing defaults to it
-  yet: the page does not draw a bound tracker and the engine tools (N24) still take an explicit tracker and scope.
-  A later read (and the page/engine defaulting) can read the stored row; the storage is the minimal write-only slice.
+  yet: the page does not draw a bound tracker, and the engine tools (N24) keep reading the project's own tracker and
+  scope from its git remote. A later read (and the page/engine defaulting) can read the stored row; the storage is the
+  minimal write-only slice.
 - **Not verified.** No real tracker was contacted: the binding stores names the connection already reports, and the
   route is tested through the real service with a stand-in `gh` and a local fake tracker connection. No real
   `orbynd` service run with a real connected tracker exercises it.
 
 ### As built (N24 engine issue tools)
 
-Seven engine-facing tools over the project's own connected tracker and scope, alongside the existing routes: before
-this row they were list, read, link, unlink and thread list; now `orbyn_issue_create` and `orbyn_issue_comment` join
-them.
+Eight engine-facing tools over the project's own connected tracker and scope, alongside the existing routes: before
+this row they were list, read, link, unlink and thread list; now `orbyn_issue_create`, `orbyn_issue_comment` and
+`orbyn_issue_set_state` join them.
 
 - `orbyn_issue_create`: `{ title, body?, labels?, assignees?, template? }` — the same `CreateIssue` fields, caps and
   validation as `POST /api/issues/item/create`, in the project's tracker/scope from its own git remote (never from an
@@ -745,12 +759,18 @@ them.
 - `orbyn_issue_comment`: `{ key, body }` — the same `CommentIssue` fields and 1-64 KiB not-blank rule as
   `POST /api/issues/item/comment`. It answers the stored comment (`id`, `author`, `created_at`, `body` cleaned and cut,
   and the note).
-- **Permission and approval.** Both are acting tools: each call goes through the run's own tool approval policy
-  (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
+- `orbyn_issue_set_state`: `{ key, state, close_reason? }` — the same `IssueSetStateInput` fields and rules as
+  `POST /api/issues/item/state`: `state` is the `name` of one of the issue's `states` (the detail is read first),
+  and `close_reason` is `completed` or `not_planned`, only for a closed state and `completed` when omitted. It
+  answers the issue as the other issue tools do: the summary fields, the body cleaned of the framing markers and cut at
+  16 KiB, and the note. Only GitHub's edit is built, so in a project on another connected tracker the call answers the
+  route's `422 unsupported` refusal verbatim as a plain tool failure, and nothing is read or sent.
+- **Permission and approval.** All three writes are acting tools: each call goes through the run's own tool approval
+  policy (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
   worker's allow list names no issue tool, so a worker is refused by default; the allow list was not widened.
-- **Not built.** `set_state` stays out: the service has no update/state route yet (its own parity row), and a tool
-  cannot be backed by a core function that does not exist. React is not in this row. No real tracker was contacted:
-  the tool tests use a local fake issue reader over a fake project remote.
+- **Not built.** React is not in this row. No real tracker was contacted: the tool tests use a local fake issue reader
+  over a fake project remote, and a Unix-only real-service run keeps a stand-in `gh` and observes the GitHub state
+  write's `PATCH` arguments.
 
 ## Not done
 
@@ -772,8 +792,8 @@ filters and more than the first 50 comments. None is in the beta; each is a late
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
 project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and Planned
 for the other four, whose sections say so; `candidates` is a GitLab, Forgejo, Azure DevOps and Linear gap too. The
-engine-facing issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked issues; they do not
-change state (the service has no state route for them).
+engine-facing issue tools (N24) list, read, create, comment, set a state, link, unlink and list a thread's linked
+issues; a state move is GitHub-only, as the route is.
 
 ## Differences from the web side's guessed contract
 
