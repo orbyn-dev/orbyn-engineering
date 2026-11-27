@@ -1179,8 +1179,11 @@ Only existing safe files inside the checkout receive a checkout path; missing tr
 files and sibling Git patches may retain repository coordinates for diff navigation.
 A multi-repository thread resolves the reference in the repository its `repo_id`
 names, the primary repository when it is absent, so a worktree is the checkout and
-the task folder is never one; the request's and the answer's `cwd` stay the thread's
-stored folder, so a thread that moved meanwhile is still refused as stale. Ordinary
+the task folder is never one; a thread-basis reference whose first segment is a
+repository's worktree folder in that task folder resolves in that repository, and
+the answer's `repo_id` names the repository its coordinates are in. The request's
+and the answer's `cwd` stay the thread's stored folder, so a thread that moved
+meanwhile is still refused as stale. Ordinary
 file reads/writes and engine scope remain bounded to thread cwd. File and diff reveal
 intents are transient, capture thread/cwd before resolution, and consume only their
 own nonce. Route/cwd changes and newer navigation invalidate stale responses,
