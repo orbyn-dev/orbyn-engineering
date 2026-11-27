@@ -6,6 +6,7 @@ mod support;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use base64::Engine as _;
 use serde_json::{Value, json};
@@ -13,101 +14,29 @@ use support::{Options, Service, TempDir};
 
 const PNG_CANARY: &str = "ORBYN_SCREEN_CANARY";
 
-const FAKE: &str = r#"
-const fs = require('node:fs');
-const path = require('node:path');
-
-const tool = '__TOOL__';
-const dir = process.env.ORBYN_DEVICES_FAKE_DIR;
-const args = process.argv.slice(2);
-fs.mkdirSync(dir, { recursive: true });
-fs.appendFileSync(path.join(dir, 'calls.ndjson'), JSON.stringify({ tool, args }) + '\n');
-const read = (name, fallback) => {
-  try { return fs.readFileSync(path.join(dir, name), 'utf8').trim(); }
-  catch { return fallback; }
-};
-const write = (name, value) => fs.writeFileSync(path.join(dir, name), String(value));
-const png = () => Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('ORBYN_SCREEN_CANARY')]);
-
-if (tool === 'adb') {
-  if (args[0] === 'devices') {
-    fs.writeSync(1, 'List of devices attached\n');
-    if (read('booted', '1') !== '0') fs.writeSync(1, 'emulator-5554\tdevice\n');
-    process.exit(0);
-  }
-  if (args.includes('emu') && args.includes('avd') && args.includes('name')) {
-    fs.writeSync(1, 'Pixel_8\nOK\n');
-    process.exit(0);
-  }
-  if (args.includes('getprop')) { fs.writeSync(1, '14\n'); process.exit(0); }
-  if (args.includes('dumpsys')) {
-    fs.writeSync(1, 'Input Reader\n  SurfaceOrientation: 0\n');
-    process.exit(0);
-  }
-  if (args.includes('print-states')) {
-    fs.writeSync(1, "Supported states: [\n  DeviceState{identifier=0, name='UNFOLDED'},\n]\n");
-    process.exit(0);
-  }
-  if (args.includes('print-state')) { fs.writeSync(1, '0\n'); process.exit(0); }
-  if (args.includes('sensor') && args.includes('get')) { fs.writeSync(1, '180\nOK\n'); process.exit(0); }
-  if (args.includes('exec-out')) {
-    fs.writeSync(1, png());
-    process.exit(0);
-  }
-  if (args.includes('emu') && args.includes('kill')) { write('booted', '0'); process.exit(0); }
-  if (args.includes('settings') || args.includes('input')) {
-    const code = Number(read('action_exit', '0'));
-    process.exit(code);
-  }
-  const code = Number(read('action_exit', '0'));
-  process.exit(code);
-}
-
-if (tool === 'emulator') {
-  if (args.includes('-list-avds')) { fs.writeSync(1, 'Pixel_8\nTablet\n'); process.exit(0); }
-  process.exit(0);
-}
-
-if (tool === 'xcrun') {
-  if (args.includes('list') && args.includes('--json')) {
-    const booted = read('ios_booted', '1') !== '0';
-    fs.writeSync(1, JSON.stringify({ devices: {
-      'com.apple.CoreSimulator.SimRuntime.iOS-26-1': [
-        { udid: 'UDID-1', name: 'iPhone 17 Pro', state: booted ? 'Booted' : 'Shutdown', isAvailable: true },
-      ],
-    } }));
-    process.exit(0);
-  }
-  if (args.includes('io') && args.includes('screenshot')) {
-    fs.writeFileSync(args[args.length - 1], png());
-    process.exit(0);
-  }
-  if (args.includes('ui') && args.includes('home')) { process.exit(0); }
-  if (args.includes('shutdown')) { write('ios_booted', '0'); process.exit(0); }
-  process.exit(0);
-}
-
-process.exit(3);
-"#;
+/// The one fake tool program the unit device tests run too:
+/// `crates/orbynd/tests/fixtures/devices-fake-tool.js`. The shims below pass the tool
+/// name and `ORBYN_DEVICES_FAKE_DIR` the way that program expects.
+const FAKE: &str = include_str!("fixtures/devices-fake-tool.js");
 
 fn fake(dir: &Path) -> PathBuf {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(bin.join("devices-fake-tool.cjs"), FAKE).unwrap();
     for tool in ["adb", "emulator", "xcrun"] {
         std::fs::write(
-            bin.join(format!("{tool}.cjs")),
-            FAKE.replace("__TOOL__", tool),
-        )
-        .unwrap();
-        std::fs::write(
             bin.join(format!("{tool}.cmd")),
-            format!("@node \"%~dp0\\{tool}.cjs\" %*\r\n"),
+            format!(
+                "@node \"%~dp0\\devices-fake-tool.cjs\" {tool} \"%ORBYN_DEVICES_FAKE_DIR%\" %*\r\n"
+            ),
         )
         .unwrap();
         let unix = bin.join(tool);
         std::fs::write(
             &unix,
-            format!("#!/bin/sh\nexec node \"$(dirname \"$0\")/{tool}.cjs\" \"$@\"\n"),
+            format!(
+                "#!/bin/sh\nexec node \"$(dirname \"$0\")/devices-fake-tool.cjs\" {tool} \"$ORBYN_DEVICES_FAKE_DIR\" \"$@\"\n"
+            ),
         )
         .unwrap();
         #[cfg(unix)]
@@ -337,6 +266,9 @@ async fn device_errors_have_the_fixed_copy() {
 async fn a_screenshot_answers_a_png_and_the_log_keeps_no_body_or_image() {
     let dir = TempDir::new();
     let mut service = service(&dir);
+    // The shared fake puts this text in the PNG after its magic bytes, so the answer can
+    // be compared whole, and `image` is a string no log line may carry.
+    std::fs::write(dir.path().join("screenshot_text"), PNG_CANARY).unwrap();
     let (status, answer) = service
         .send(action_path(), json!({ "type": "screenshot" }))
         .await;
@@ -347,7 +279,8 @@ async fn a_screenshot_answers_a_png_and_the_log_keeps_no_body_or_image() {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&image)
         .expect("the image is base64");
-    let expected = [b"\x89PNG\r\n\x1a\n".as_slice(), PNG_CANARY.as_bytes()].concat();
+    let mut expected = [b"\x89PNG\r\n\x1a\n".as_slice(), PNG_CANARY.as_bytes()].concat();
+    expected.resize(64, b'A');
     assert_eq!(bytes, expected);
 
     // A refused body that carries a canary must not reach the log either.
@@ -374,4 +307,68 @@ async fn a_screenshot_answers_a_png_and_the_log_keeps_no_body_or_image() {
     for secret in [PNG_CANARY, "ORBYN_BODY_CANARY", image.as_str()] {
         assert!(!log.contains(secret), "{secret} leaked into the log");
     }
+}
+
+/// Waits for the shared fake's action marker, which it writes after logging its argv
+/// and before the delay, so this marks the action running, not a guess about scheduling.
+async fn until_action_started(dir: &TempDir) {
+    for _ in 0..1000 {
+        if dir.path().join("action_started").exists() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the first action never started");
+}
+
+#[tokio::test]
+async fn a_second_action_while_one_runs_is_device_busy_and_starts_no_tool() {
+    let dir = TempDir::new();
+    let mut service = service(&dir);
+    // The shared fake holds the first action open, so the second meets the service's
+    // one-writer-per-device guard instead of racing it.
+    std::fs::write(dir.path().join("action_delay_ms"), "2000").unwrap();
+    let first = async {
+        service
+            .send(action_path(), json!({ "type": "button", "value": "home" }))
+            .await
+    };
+    let second = async {
+        until_action_started(&dir).await;
+        service
+            .send(action_path(), json!({ "type": "button", "value": "back" }))
+            .await
+    };
+    let ((first_status, first_body), (second_status, second_body)) = tokio::join!(first, second);
+    assert_eq!(first_status, 200, "{first_body}");
+    assert_eq!(second_status, 409, "{second_body}");
+    assert_eq!(second_body["code"], "device_busy");
+    assert_eq!(
+        second_body["message"],
+        "Another action is running on this device."
+    );
+
+    // The refused second action started no tool: only the first keyevent became argv.
+    let calls = calls(&dir);
+    let keyevents = calls
+        .lines()
+        .filter(|line| line.contains("\"input\"") && line.contains("\"keyevent\""))
+        .count();
+    assert_eq!(keyevents, 1, "{calls}");
+
+    // Both attempts are in the action log, the refused one with no exit status.
+    service.kill();
+    let mut log = String::new();
+    service
+        .child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut log)
+        .unwrap();
+    assert_eq!(
+        log.matches("device action").count(),
+        2,
+        "the refused attempt left no action log line: {log}"
+    );
 }
