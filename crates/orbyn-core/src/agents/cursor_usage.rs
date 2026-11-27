@@ -85,8 +85,10 @@ pub(crate) const REFETCH_OVERLAP_MS: u64 = 3_600_000;
 /// own start. Otherwise the read starts at the newest end, because that is where the spend a
 /// person opens the screen to see is; then it covers the last covered hour again, because Cursor
 /// finalizes an amount after it first reported it; then it walks older history backwards, one span
-/// at a time, and never past the period's start. A span bounds one read, not the history: a caller
-/// with no limit passes `u64::MAX`.
+/// at a time, and never past the period's start. A read still fresh walks older history before the
+/// newest end is read again, so a period shorter than the one-hour overlap, and a clock that moved
+/// since the read, still reach the period's start. A span bounds one read, not the history: a
+/// caller with no limit passes `u64::MAX`.
 ///
 /// The order, the one-hour overlap and the one-minute freshness are T3's `cursorFetchRange` and
 /// `CURSOR_ACCOUNT_TTL_MS` (`accountCache.ts`, MIT, commit 9168ca73d).
@@ -111,6 +113,17 @@ pub(crate) fn next_window(
     match read {
         // Nothing read, or nothing reaching back as far as the period begins.
         None => Some(newest),
+        // A read still fresh that reaches into the period is walked back, before the newest end is
+        // read again: while its end is behind the clock, or the period is shorter than the overlap,
+        // either of those would select the newest window on every call and never reach older
+        // history. The check above already answered a fresh read that reaches the period's start,
+        // so this one begins after it.
+        Some(read)
+            if now_ms.saturating_sub(read.fetched_at_ms) < FRESH_FOR_MS
+                && read.until_ms >= retention_start_ms =>
+        {
+            Some(older_than(read, retention_start_ms, max_span_ms))
+        }
         Some(read) if read.until_ms.saturating_sub(REFETCH_OVERLAP_MS) < retention_start_ms => {
             Some(newest)
         }
@@ -126,10 +139,16 @@ pub(crate) fn next_window(
             })
         }
         // Older history, at the end the store does not hold yet.
-        Some(read) => Some(Window {
-            since_ms: retention_start_ms.max(read.since_ms.saturating_sub(max_span_ms)),
-            until_ms: read.since_ms,
-        }),
+        Some(read) => Some(older_than(read, retention_start_ms, max_span_ms)),
+    }
+}
+
+/// The window that holds the history just before `read`, one span at a time and never past the
+/// period's start.
+fn older_than(read: AccountRead, retention_start_ms: u64, max_span_ms: u64) -> Window {
+    Window {
+        since_ms: retention_start_ms.max(read.since_ms.saturating_sub(max_span_ms)),
+        until_ms: read.since_ms,
     }
 }
 

@@ -545,8 +545,10 @@ was looked at and came back empty. A window read less than a minute ago that sti
 the period's own start answers the read. Otherwise the next read starts at the newest end, because
 that is where the spend a person opens the screen to see is; then it covers the last covered hour
 again, because Cursor finalizes an amount after it first reported it; then it walks older history
-backwards, one span at a time and never past the period's start. A span bounds one read, not the
-history. Two windows that meet or overlap are one window, because nothing between them was left
+backwards, one span at a time and never past the period's start, and a read still fresh walks older
+history before the newest end is read again, so a period shorter than that overlap, and a clock that
+moved since the read, still reach the period's start. A span bounds one read, not the history. Two
+windows that meet or overlap are one window, because nothing between them was left
 unread; a window with a gap between it and the stored one claims only itself, since the gap was
 never read. A day the read covers whole is what that day held, and the read replaces it, including
 with nothing; a day it covers in part keeps its other rows, because a part says nothing about the

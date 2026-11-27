@@ -320,6 +320,7 @@ fn only_the_exact_loopback_hosts_may_take_the_token_over_plain_http() {
     }
 }
 
+const MINUTE: u64 = 60_000;
 const HOUR: u64 = 3_600_000;
 const DAY: u64 = 86_400_000;
 /// A wall clock the policy is asked about, so no test waits or reads the machine's own clock.
@@ -433,5 +434,76 @@ fn a_settled_amount_is_seen_by_asking_for_the_last_covered_hour_again() {
             since_ms: NOW - REFETCH_OVERLAP_MS,
             until_ms: NOW,
         }
+    );
+}
+
+/// What the store would hold after reading `window`: two windows that meet or overlap are one
+/// window, the rule `store` keeps its billing window by.
+fn stored(
+    previous: Option<AccountRead>,
+    window: Window,
+    fetched_at_ms: u64,
+) -> Option<AccountRead> {
+    let (since_ms, until_ms) = match previous {
+        Some(previous)
+            if window.since_ms <= previous.until_ms.saturating_add(1)
+                && previous.since_ms <= window.until_ms.saturating_add(1) =>
+        {
+            (
+                previous.since_ms.min(window.since_ms),
+                previous.until_ms.max(window.until_ms),
+            )
+        }
+        _ => (window.since_ms, window.until_ms),
+    };
+    Some(AccountRead {
+        since_ms,
+        until_ms,
+        fetched_at_ms,
+    })
+}
+
+/// A period shorter than the one-hour overlap is walked back one span at a time, rather than the
+/// newest window being selected again on every call.
+#[test]
+fn a_period_shorter_than_the_overlap_is_walked_back_to_its_start() {
+    let period_start = NOW - 30 * MINUTE;
+    let mut covered = None;
+    let mut steps = 0;
+    while let Some(window) = next_window(covered, period_start, NOW, MINUTE) {
+        covered = stored(covered, window, NOW);
+        steps += 1;
+        assert!(
+            steps <= 40,
+            "each read walks one minute further back: {covered:?}"
+        );
+    }
+    assert_eq!(
+        covered.expect("the period is read").since_ms,
+        period_start,
+        "the stored start reaches the period's start, not only the newest minute"
+    );
+}
+
+/// A clock that moves between two reads does not hold the walk back at the newest window: it still
+/// reaches the period's start.
+#[test]
+fn a_clock_that_moves_between_reads_still_walks_back_to_the_period_start() {
+    let period_start = NOW - 10 * DAY;
+    let mut covered = None;
+    let mut steps = 0;
+    for call in 0..20 {
+        // Each call is a later instant, and the last one is far enough behind to be re-read.
+        let now = NOW + call as u64 * 30_000;
+        let Some(window) = next_window(covered, period_start, now, DAY) else {
+            break;
+        };
+        covered = stored(covered, window, now);
+        steps += 1;
+    }
+    let covered = covered.expect("the period is read");
+    assert_eq!(
+        covered.since_ms, period_start,
+        "the walk reaches the period's start in {steps} reads, not only the newest window"
     );
 }
