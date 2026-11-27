@@ -208,6 +208,16 @@ impl GitLab {
         Ok(())
     }
 
+    /// Whether the description GitLab holds is longer than one read returns, which is what makes every copy of it the
+    /// app can hold the cut form (docs/issues.md, "Issue writes and list controls"). A detail read carries the text
+    /// but not that answer, so a write that would replace the description reads the stored one first.
+    async fn description_is_clipped(&self, project: &str, key: &str) -> Result<bool> {
+        let path = format!("/api/v4/projects/{project}/issues/{key}");
+        let got = self.fetch(&path, &[], "issue").await?;
+        let value = parse(&got.body)?;
+        Ok(text(&value, "description").len() > MAX_BODY_BYTES)
+    }
+
     /// The tracker's totals, before any filter. Best effort: no answer means no totals, never a failed list.
     async fn counts(&self, project: &str) -> Option<IssueCounts> {
         let path = format!("/api/v4/projects/{project}/issues_statistics");
@@ -816,11 +826,20 @@ impl IssueSource for GitLab {
         if let Some(body) = edit.body {
             // The read cuts a description at 64 KiB, so a body this close to that cap may be the cut form: writing it
             // back would drop what GitLab holds past the cut, which cannot be recovered from here. Refused loudly
-            // instead; the description can be edited in GitLab. A field that marks a clipped body is the better fix,
-            // and a contract change.
+            // instead; the description can be edited in GitLab.
             if body.len() + 4 > super::MAX_BODY_BYTES {
                 return Err(CoreError::Invalid(
                     "A GitLab description of about 64 KiB cannot be written: the read may have cut it. Edit it in GitLab."
+                        .into(),
+                ));
+            }
+            // A shorter body is no proof the read did not cut it: the person only ever saw the read's first 64 KiB, so
+            // whatever they send was derived from it, and an edit anywhere in that text would replace the whole
+            // description and drop the rest. The description GitLab holds is read before anything is written, and a
+            // stored one past the cut refuses the write whatever the body says or however much of it was edited.
+            if self.description_is_clipped(&project, key).await? {
+                return Err(CoreError::Invalid(
+                    "This GitLab description is longer than one read, so Orbyn only has its first 64 KiB: writing it back would drop the rest. Edit it in GitLab."
                         .into(),
                 ));
             }

@@ -1629,6 +1629,60 @@ mod writes {
         );
     }
 
+    /// A stored description longer than one read returns is only ever seen cut, so an edit made against that read,
+    /// anywhere in the visible text and not only at its end, would replace the whole description with the cut form and
+    /// drop what lies past the cut. The stored text is read before the write, so the guard covers a clipped
+    /// description edited below the cap instead of only one still at it.
+    #[tokio::test]
+    async fn a_clipped_description_edited_shorter_is_refused_before_the_write() {
+        let stored = format!("{}UNSEEN", "d".repeat(crate::issues::MAX_BODY_BYTES + 32));
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            row["description"] = json!(stored.clone());
+            Reply::json(&row)
+        })
+        .await;
+        let gitlab = reader(&server);
+        // What the page holds is the read's cut form, so it never sees the suffix GitLab stores.
+        let read = gitlab.get("grp/proj", "21").await.unwrap();
+        assert_eq!(read.body.len(), crate::issues::MAX_BODY_BYTES);
+        assert!(
+            !read.body.contains("UNSEEN"),
+            "the read never sees the suffix"
+        );
+        // An edit anywhere in the visible text must still be refused, here one that makes the body shorter.
+        let edited = format!("{} edited", &read.body[..read.body.len() - 64]);
+        assert!(edited.len() + 4 < crate::issues::MAX_BODY_BYTES);
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: Some(&edited),
+                    labels: None,
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::Invalid(message) if message.contains("64 KiB")),
+            "a body the read cut is refused whatever its length: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was written, so the suffix the read never saw survives"
+        );
+    }
+
     /// The read cuts a longer label name to 200 characters and the picker seeds itself from those names, so a name at
     /// that length may be the cut form of the label GitLab really holds.
     #[tokio::test]

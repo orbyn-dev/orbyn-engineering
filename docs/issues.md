@@ -540,8 +540,12 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   the assignees before anything is sent. A GitLab label cannot be told apart inside that comma-separated value, so a
   name with a comma is `400 invalid` with nothing sent. The read cuts a description at 64 KiB and a label name at 200
   characters without saying so, so a body or a label name at that cut is also `400 invalid` with nothing sent: writing
-  the cut form back would shorten the description GitLab holds, or replace a longer label with its cut name. The answer
-  is the issue read back, so it carries the comments and the states a detail read does.
+  the cut form back would shorten the description GitLab holds, or replace a longer label with its cut name. A body
+  write reads the stored description first and is `400 invalid` with nothing written when GitLab holds more than 64 KiB
+  of it, because then every copy of the description the app can hold is the cut form, so an edit anywhere in the text
+  it shows would drop what lies past the cut; the length check above runs before that read, and a description no longer
+  than the cut is written as before. The answer is the issue read back, so it carries the comments and the states a
+  detail read does.
 - **`state`** is one `PUT` of `state_event` (`close` or `reopen`). GitLab has one closed state and stores no reason
   for it, so the detail offers `Open` and `Closed`; a close reason the person sends is not stored, and the answer's
   `IssueState.close_reason` is `null`, which is what GitLab has. The detail is read before the write, so a name the
@@ -815,10 +819,11 @@ Found in the post-merge review of the create, comment, react, template and bindi
 The event timeline, "involved/mentioned"
 filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
-project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and GitLab
-(R15 PR4) and Planned for the other three, whose sections say so; `candidates` is a Forgejo, Azure DevOps and Linear
-gap too. The engine-facing issue tools (N24) list, read, create, comment, set a state, link, unlink and list a
-thread's linked issues; a state move is built for GitHub and GitLab, the two trackers whose edit is.
+project binding in R15 PR3. The edits and state moves are built for GitHub (R15 PR3) and GitLab (R15 PR4) and
+Planned for the other three, whose sections say so; the list's order is built for GitHub only, and `candidates` is a
+Forgejo, Azure DevOps and Linear gap too. The engine-facing issue tools (N24) list, read, create, comment, set a state,
+link, unlink and list a thread's linked issues; a state move is built for GitHub and GitLab, the two trackers whose
+edit is.
 
 ## Differences from the web side's guessed contract
 
