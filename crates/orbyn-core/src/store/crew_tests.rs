@@ -42,6 +42,47 @@ fn open() -> (TempDir, Store) {
     (dir, store)
 }
 
+/// The exact `Invalid` sentence a store rule refuses with.
+fn refused_invalid(error: CoreError) -> String {
+    match error {
+        CoreError::Invalid(message) => message,
+        other => panic!("expected an Invalid refusal, got {other:?}"),
+    }
+}
+
+/// A direct write the table itself refused: a constraint violation from a trigger or index, not any
+/// error. The rule lives in the table, whatever the caller does, so there is no sentence to name.
+fn refused_by_table(result: rusqlite::Result<usize>, what: &str) {
+    match result {
+        Err(rusqlite::Error::SqliteFailure(error, message)) => assert_eq!(
+            error.code,
+            rusqlite::ErrorCode::ConstraintViolation,
+            "{what}: {message:?}"
+        ),
+        other => panic!("{what} was not refused by a table constraint: {other:?}"),
+    }
+}
+
+/// A store write refused by a database constraint, through the store's own error variant.
+fn refused_by_constraint(error: CoreError, what: &str) {
+    match error {
+        CoreError::Store(rusqlite::Error::SqliteFailure(code, message)) => assert_eq!(
+            code.code,
+            rusqlite::ErrorCode::ConstraintViolation,
+            "{what}: {message:?}"
+        ),
+        other => panic!("{what}: expected a constraint refusal, got {other:?}"),
+    }
+}
+
+/// A write refused because the row it expects is not there: a stale revision is a store row miss.
+fn refused_stale_row(error: CoreError, what: &str) {
+    match error {
+        CoreError::Store(rusqlite::Error::QueryReturnedNoRows) => {}
+        other => panic!("{what}: expected the absent row, got {other:?}"),
+    }
+}
+
 fn task(store: &Store) -> String {
     store
         .create_crew_task(&brief(), &key(), "run-01")
@@ -128,6 +169,10 @@ fn the_answer_key_lives_in_its_own_table() {
         "crew_evidence",
         "crew_gates",
         "crew_results",
+        "crew_eval_samples",
+        "crew_lessons",
+        "crew_lessons_forgotten",
+        "crew_skill_proposals",
     ] {
         let rows: Vec<String> = {
             let conn = store.reader();
@@ -183,14 +228,24 @@ fn an_object_must_verify_and_belong_to_the_task() {
         .unwrap_err();
     assert!(matches!(error, CoreError::NotFound(_)));
     // A type with no table in this slice, and a key that belongs to another brief.
-    assert!(
-        store
-            .add_crew_object(&id, &object(example!("claim.valid.unverified")))
-            .is_err()
+    let claim = object(example!("claim.valid.unverified"));
+    assert_eq!(
+        refused_invalid(store.add_crew_object(&id, &claim).unwrap_err()),
+        format!("a {} has no crew table yet", claim.type_name())
     );
     let mut wrong = key();
     wrong.brief = orbyn_contracts::CrewHash::new(format!("sha256:{}", "0".repeat(64))).unwrap();
-    assert!(store.create_crew_task(&brief(), &wrong, "run-02").is_err());
+    // The id must be recomputed after the edit, or the object is refused for not being its own hash
+    // first and the brief rule is never reached.
+    wrong.id = CrewObject::AnswerKey(wrong.clone()).computed_id().unwrap();
+    assert_eq!(
+        refused_invalid(
+            store
+                .create_crew_task(&brief(), &wrong, "run-02")
+                .unwrap_err()
+        ),
+        "crew answer key refused: it belongs to another brief"
+    );
     assert!(store.crew_messages(&id).unwrap().is_empty());
 }
 
@@ -224,16 +279,16 @@ fn stored_objects_cannot_be_rewritten() {
         [&id],
     )
     .unwrap();
-    assert!(
-        conn.execute("UPDATE crew_tasks SET state = 'done' WHERE id = ?1", [&id])
-            .is_err()
+    refused_by_table(
+        conn.execute("UPDATE crew_tasks SET state = 'done' WHERE id = ?1", [&id]),
+        "only a lifecycle state",
     );
-    assert!(
+    refused_by_table(
         conn.execute(
             "UPDATE crew_tasks SET stop_reason = 'tired' WHERE id = ?1",
-            [&id]
-        )
-        .is_err()
+            [&id],
+        ),
+        "only a stopped task names a reason",
     );
 }
 
@@ -261,7 +316,13 @@ fn a_route_decision_is_kept_with_its_task_and_only_for_its_brief() {
         .unwrap_err();
     assert!(error.to_string().contains("is not part of task"), "{error}");
     let stray = object(example!("route-decision.valid.scored"));
-    assert!(store.add_crew_object(&id, &stray).is_err());
+    assert_eq!(
+        refused_invalid(store.add_crew_object(&id, &stray).unwrap_err()),
+        format!(
+            "crew object {} is not part of task {id}",
+            stray.id().as_str()
+        )
+    );
     assert_eq!(store.crew_route_decisions(&id).unwrap().len(), 1);
 }
 
@@ -364,6 +425,7 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_escape_retention_grants",
             "crew_escape_tombstones",
             "crew_escapes",
+            "crew_eval_samples",
             "crew_evidence",
             "crew_facts",
             "crew_finding_repros",
@@ -375,10 +437,15 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_guard_targets",
             "crew_hunks",
             "crew_leases",
+            "crew_lessons",
+            "crew_lessons_forgotten",
+            "crew_manual_checks",
             "crew_merge_queue",
             "crew_merge_work",
             "crew_merges",
             "crew_messages",
+            "crew_needs_you_dismissed",
+            "crew_needs_you_notified",
             "crew_paused_starts",
             "crew_person_commits",
             "crew_provenance_start",
@@ -390,7 +457,10 @@ fn a_database_without_crew_tables_gets_them_in_30_to_39() {
             "crew_reviews",
             "crew_route_decisions",
             "crew_runs",
-            "crew_tasks"
+            "crew_skill_proposals",
+            "crew_tasks",
+            "crew_watch_changes",
+            "crew_watch_state"
         ]
     );
     let kept: String = store
@@ -458,15 +528,27 @@ fn forge_intent_keeps_identity_and_rejects_stale_or_backward_writers() {
     intent.evidence = vec![format!("sha256:{}", "d".repeat(64))];
     intent.phase = ForgePhase::Publishing;
     store.save_crew_forge_merge(&mut intent).unwrap();
-    assert!(store.save_crew_forge_merge(&mut stale).is_err());
+    refused_stale_row(
+        store.save_crew_forge_merge(&mut stale).unwrap_err(),
+        "a stale writer",
+    );
     let mut wrong = intent.clone();
     wrong.candidate = "e".repeat(40);
-    assert!(store.save_crew_forge_merge(&mut wrong).is_err());
+    assert_eq!(
+        refused_invalid(store.save_crew_forge_merge(&mut wrong).unwrap_err()),
+        "a forge intent keeps its identity"
+    );
     wrong = intent.clone();
     wrong.phase = ForgePhase::Prepared;
-    assert!(store.save_crew_forge_merge(&mut wrong).is_err());
+    assert_eq!(
+        refused_invalid(store.save_crew_forge_merge(&mut wrong).unwrap_err()),
+        "invalid forge intent transition"
+    );
     assert_eq!(store.crew_forge_merge(&id).unwrap(), Some(intent));
-    assert!(store.add_crew_forge_merge(&forge_intent(&id)).is_err());
+    refused_by_constraint(
+        store.add_crew_forge_merge(&forge_intent(&id)).unwrap_err(),
+        "an intent is created once",
+    );
 }
 
 fn queued_forge(store: &Store, id: &str, phase: ForgePhase) -> ForgeMerge {
@@ -513,8 +595,9 @@ fn needs_person_has_no_way_out_for_the_pipeline_but_a_person_can_resolve_it() {
         let mut attempt = intent.clone();
         attempt.phase = next;
         attempt.merge_commit = (next == ForgePhase::Merged).then(|| "e".repeat(40));
-        assert!(
-            store.save_crew_forge_merge(&mut attempt).is_err(),
+        assert_eq!(
+            refused_invalid(store.save_crew_forge_merge(&mut attempt).unwrap_err()),
+            "invalid forge intent transition",
             "{next:?}"
         );
     }
@@ -616,16 +699,19 @@ fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
         )
         .unwrap()
         .expect_moved();
-    assert!(
-        store
-            .resolve_crew_forge_merge(
-                &id,
-                intent.revision,
-                &ForgeResolution::Retry,
-                "user",
-                "test"
-            )
-            .is_err()
+    assert_eq!(
+        refused_invalid(
+            store
+                .resolve_crew_forge_merge(
+                    &id,
+                    intent.revision,
+                    &ForgeResolution::Retry,
+                    "user",
+                    "test",
+                )
+                .unwrap_err()
+        ),
+        "this merge already ended"
     );
     assert_eq!(
         (
@@ -657,7 +743,10 @@ fn a_rejected_intent_is_final_and_a_failed_resolution_writes_nothing() {
     // Terminal for both writers, and it is not unfinished work for recovery.
     let mut again = rejected.clone();
     again.phase = ForgePhase::AwaitingCi;
-    assert!(store.save_crew_forge_merge(&mut again).is_err());
+    assert_eq!(
+        refused_invalid(store.save_crew_forge_merge(&mut again).unwrap_err()),
+        "invalid forge intent transition"
+    );
     assert!(matches!(
         store.resolve_crew_forge_merge(
             &id,
@@ -863,9 +952,23 @@ fn a_task_moves_only_along_the_lifecycle_and_a_pass_needs_evidence() {
     assert_eq!((run.attempts, run.worker_thread_id), (0, None));
 
     let state = |store: &Store| store.crew_task(&id).unwrap().unwrap().state;
-    let refused = |to: &str, reason: Option<&str>| store.move_crew_task(&id, to, reason).is_err();
+    let refused =
+        |to: &str, reason: Option<&str>| store.move_crew_task(&id, to, reason).unwrap_err();
+    let transition_refused = |error: CoreError| {
+        assert!(
+            matches!(error, CoreError::InvalidTransition { .. }),
+            "{error}"
+        );
+    };
+    let reason_refused = |error: CoreError| {
+        assert_eq!(
+            refused_invalid(error),
+            "a stopped task names its reason, and no other state has one"
+        );
+    };
     // `briefed` goes to `routed`, and not straight to `running`.
-    assert!(refused("running", None) && refused("verifying", None));
+    transition_refused(refused("running", None));
+    transition_refused(refused("verifying", None));
     assert_eq!(
         store.move_crew_task(&id, "routed", None).unwrap().state,
         "routed"
@@ -887,8 +990,9 @@ fn a_task_moves_only_along_the_lifecycle_and_a_pass_needs_evidence() {
         id
     );
     // Only `stopped` names a reason, and nothing passes without Evidence (H8).
-    assert!(refused("stopped", None) && refused("needs_person", Some("budget")));
-    assert!(refused("passed", None));
+    reason_refused(refused("stopped", None));
+    reason_refused(refused("needs_person", Some("budget")));
+    transition_refused(refused("passed", None));
     assert_eq!(state(&store), "running");
 
     // A report counts the attempt; a failure goes through `failed` to what the guard names.
@@ -908,11 +1012,10 @@ fn a_task_moves_only_along_the_lifecycle_and_a_pass_needs_evidence() {
         ("changed_approach", Next::ChangeApproach)
     );
     // Only the core resumes the worker after a change of approach.
-    assert!(
-        store
-            .begin_crew_verification(&id, "engine-run-x", None)
-            .is_err()
-    );
+    assert!(matches!(
+        store.begin_crew_verification(&id, "engine-run-x", None),
+        Err(CoreError::InvalidTransition { .. })
+    ));
     store.move_crew_task(&id, "running", None).unwrap();
     attempt(&store, 3);
     let (moved, next) = store.fail_crew_verification(&id, "f1").unwrap();
@@ -926,10 +1029,47 @@ fn a_task_moves_only_along_the_lifecycle_and_a_pass_needs_evidence() {
     );
     // A final task goes nowhere.
     for to in ["running", "passed", "cancelled", "needs_person"] {
-        assert!(refused(to, None), "{to}");
+        transition_refused(refused(to, None));
     }
-    let again = store.create_crew_task(&brief(), &key(), "run-02");
-    assert!(again.is_err(), "the same brief is one task with one run");
+    assert_eq!(
+        refused_invalid(
+            store
+                .create_crew_task(&brief(), &key(), "run-02")
+                .unwrap_err()
+        ),
+        format!("crew task {id} already exists with a different run"),
+        "the same brief is one task with one run"
+    );
+}
+
+/// KC8: a second death keeps `engine_error` for old readers and adds the typed detail; a person's re-run
+/// answers the wait and clears the detail, while the reason every old reader sees stays.
+#[test]
+fn a_later_move_clears_the_stop_reason_and_its_detail() {
+    let (_dir, store) = open();
+    let id = task(&store);
+    store.add_crew_run(&id, "lead-1", "worker-01").unwrap();
+    for to in ["routed", "running"] {
+        store.move_crew_task(&id, to, None).unwrap();
+    }
+    store
+        .stop_crew_after_restart(&id, "already_resumed")
+        .unwrap()
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "UPDATE crew_tasks SET state = 'running' WHERE id = ?1",
+            [&id],
+        )
+        .unwrap();
+
+    let moved = store.move_crew_task(&id, "verifying", None).unwrap();
+    assert_eq!(moved.state, "verifying");
+    assert_eq!(
+        (moved.stop_reason.as_deref(), moved.stop_detail.as_deref()),
+        (None, None)
+    );
 }
 
 /// H8: a pass names the Evidence this attempt made, and each id must be the task's.
@@ -946,13 +1086,18 @@ fn a_pass_needs_the_attempts_own_evidence() {
     let evidence = object(example!("evidence.valid.test-pass"));
     store.add_crew_object(&id, &evidence).unwrap();
     // Evidence from nowhere, or none, is not enough, and neither is any move to `passed`.
-    assert!(store.pass_crew_task(&id, &[]).is_err());
-    assert!(
+    for error in [
+        store.pass_crew_task(&id, &[]).unwrap_err(),
         store
             .pass_crew_task(&id, &[format!("sha256:{}", "1".repeat(64))])
-            .is_err()
-    );
-    assert!(store.move_crew_task(&id, "passed", None).is_err());
+            .unwrap_err(),
+        store.move_crew_task(&id, "passed", None).unwrap_err(),
+    ] {
+        assert_eq!(
+            refused_invalid(error),
+            "gate_needs_evidence: a task passes only with Evidence"
+        );
+    }
     assert_eq!(store.crew_task(&id).unwrap().unwrap().state, "verifying");
     let ids = [evidence.id().as_str().to_owned()];
     assert_eq!(store.pass_crew_task(&id, &ids).unwrap().state, "passed");

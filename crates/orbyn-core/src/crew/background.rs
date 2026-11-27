@@ -5,15 +5,18 @@
 //! This module validates and redacts what the person sends, then hands it to `store::crew_background`, which audits every change
 //! in the same transaction and holds the rules that must stand whatever the caller does. **No trigger fires and no engine starts
 //! here:** the run functions are the seam slice 4h will call, and today only tests do. A run that reaches its budget stops with the
-//! reason `budget` and waits for the person's review; it has no merge authority (there is nothing to merge until a later slice
-//! brings a result through the Autopilot merge queue). The crew also carries what each engine may spend on it in a day, fixed here
-//! and enforced by `background_daily`. With the Crew Preview flag off every function answers "not found".
+//! reason `budget` and waits for the person's review; the person settles that wait by acknowledging it, and the run keeps why it
+//! waited. It has no merge authority (there is nothing to merge until a later slice brings a result through the Autopilot merge
+//! queue). The crew also carries what each engine may spend on it in a day, fixed here and enforced by `background_daily`. With
+//! the Crew Preview flag off every function answers "not found".
 
 use orbyn_contracts as wire;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
+use std::path::Path;
 use std::sync::Arc;
 
+use super::autopilot::Screened;
 use super::{Page, redact, valid_id, wire_name};
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -23,6 +26,8 @@ use crate::store::{BackgroundRow, BackgroundRunRow, NewBackground, RunEnd};
 pub const NAME_MAX: usize = 80;
 /// The longest text of a trigger setting, in characters.
 pub const SETTING_MAX: usize = 100;
+/// The longest command a watch may run, in characters.
+pub const WATCH_COMMAND_MAX: usize = 500;
 /// The widest gap of a schedule, in hours: 30 days.
 pub const EVERY_HOURS_MAX: u32 = 720;
 /// The largest budget of turns and of minutes a run may be given.
@@ -51,7 +56,7 @@ pub(super) fn parse_wire<T: DeserializeOwned>(text: &str) -> Result<T> {
 /// selectors, line and paragraph separators, the deprecated format controls and interlinear annotation marks. A name or trigger text
 /// the person types has no use for any of them; the tripwire reads agent text, where some are legitimate, so it keeps its own list.
 /// Emoji variation selectors are allowed.
-fn invisible(c: char) -> bool {
+pub(super) fn invisible(c: char) -> bool {
     matches!(c, '\u{00ad}' | '\u{034f}' | '\u{061c}' | '\u{115f}'..='\u{1160}' | '\u{17b4}'..='\u{17b5}' | '\u{180b}'..='\u{180f}'
         | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{2800}' | '\u{3164}' | '\u{feff}' | '\u{ffa0}'
         | '\u{fff9}'..='\u{fffb}' | '\u{e0000}'..='\u{e007f}')
@@ -85,6 +90,55 @@ pub(super) fn text(label: &str, value: &str, max: usize) -> Result<String> {
     Ok(redacted)
 }
 
+/// The sentence an HTTP error carries for a watch command the screen refused. The screen only ever returns one of these ids, and
+/// the sentence names the rule without ever repeating the command; N1 to N10 keep the always-denied list's own short descriptions.
+const WATCH_REFUSALS: [(&str, &str); 12] = [
+    (
+        "N1",
+        "That command is not allowed: changing account, device or sign-in state.",
+    ),
+    (
+        "N2",
+        "That command is not allowed: reading or sending secrets and credentials.",
+    ),
+    (
+        "N3",
+        "That command is not allowed: network access to a host the repository has not allowed.",
+    ),
+    (
+        "N4",
+        "That command is not allowed: writing or deleting outside the worktree.",
+    ),
+    (
+        "N5",
+        "That command is not allowed: force-push, history rewrite or any push to main.",
+    ),
+    (
+        "N6",
+        "That command is not allowed: changing branch protection, permissions or settings.",
+    ),
+    (
+        "N7",
+        "That command is not allowed: editing answer keys, check files or .orbyn/crew.json.",
+    ),
+    ("N8", "That command is not allowed: production deploys."),
+    (
+        "N9",
+        "That command is not allowed: publishing or messaging outside the repository.",
+    ),
+    ("N10", "That command is not allowed: payments."),
+    ("blast", "That command could change too much at once."),
+    ("unreadable", "That command is empty or has an open quote."),
+];
+
+fn watch_refusal(rule: &str) -> String {
+    WATCH_REFUSALS
+        .iter()
+        .find(|(id, _)| *id == rule)
+        .map(|(_, sentence)| (*sentence).to_owned())
+        .unwrap_or_else(|| format!("That command is not allowed: {rule}."))
+}
+
 /// Which settings each trigger takes, and which it needs.
 fn allowed(
     kind: wire::BackgroundTriggerKind,
@@ -95,6 +149,10 @@ fn allowed(
         IssueLabel => (&["label"], &["label"]),
         Schedule => (&["every_hours"], &["every_hours"]),
         DependencyUpdate => (&["ecosystem"], &[]),
+        Watch => (
+            &["command", "every_hours", "on_failing"],
+            &["command", "every_hours", "on_failing"],
+        ),
     }
 }
 
@@ -106,14 +164,20 @@ fn trigger(trigger: &wire::BackgroundTrigger) -> Result<(String, Value)> {
         ("workflow", trigger.workflow.as_deref()),
         ("label", trigger.label.as_deref()),
         ("ecosystem", trigger.ecosystem.as_deref()),
+        ("command", trigger.command.as_deref()),
     ];
     for (name, value) in set {
         if let Some(value) = value {
-            settings.insert(
-                name.to_owned(),
-                Value::String(text(name, value, SETTING_MAX)?),
-            );
+            let max = if name == "command" {
+                WATCH_COMMAND_MAX
+            } else {
+                SETTING_MAX
+            };
+            settings.insert(name.to_owned(), Value::String(text(name, value, max)?));
         }
+    }
+    if let Some(action) = trigger.on_failing {
+        settings.insert("on_failing".into(), Value::String(wire_name(&action)));
     }
     if let Some(hours) = trigger.every_hours {
         if !(1..=EVERY_HOURS_MAX).contains(&hours) {
@@ -154,6 +218,11 @@ fn trigger_wire(kind: &str, settings: &Value) -> Result<wire::BackgroundTrigger>
             .as_u64()
             .and_then(|n| u32::try_from(n).ok()),
         ecosystem: get("ecosystem"),
+        command: get("command"),
+        on_failing: settings["on_failing"]
+            .as_str()
+            .map(parse_wire)
+            .transpose()?,
     })
 }
 
@@ -169,6 +238,7 @@ pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     Ok(wire::BackgroundRun {
         state: parse_wire(&run.state)?,
         stop_reason: run.stop_reason.as_deref().map(parse_wire).transpose()?,
+        reason_code: run.reason_code,
         budget: budget_wire(run.budget_turns, run.budget_minutes),
         id: run.id,
         crew_id: run.background_id,
@@ -182,28 +252,49 @@ pub(super) fn run_wire(run: BackgroundRunRow) -> Result<wire::BackgroundRun> {
     })
 }
 
-fn next_offset(page: Page, total: u32) -> Option<u32> {
+pub(super) fn next_offset(page: Page, total: u32) -> Option<u32> {
     let next = page.offset.checked_add(page.limit)?;
     (next < total).then_some(next)
 }
 
 impl Core {
+    /// Screens a watch's stored command the way the gate screens a command before it starts: the always-denied list (N1 to N10) and
+    /// the blast-radius guard. The refusal names the rule and never the command, and a command the screen cannot read is refused.
+    async fn screen_watch_command(&self, worktree: &str, command: &str) -> Result<()> {
+        if let Screened::Refused(rule) = self
+            .crew_screen_command(Path::new(worktree), None, &[], command)
+            .await
+        {
+            return Err(CoreError::Invalid(watch_refusal(rule)));
+        }
+        Ok(())
+    }
+
     fn background_wire(&self, crew: BackgroundRow) -> Result<wire::BackgroundCrew> {
         let (newest, waiting) = self.store.background_standing(&crew.id)?;
         // `idle`: nothing is running, nothing waits for the person, and the newest run did not stop for a reason that still needs them.
-        // A run stopped by the person's own switch (`disabled`) needs nothing; a stop for the budget or a failure does.
-        let state = match newest
-            .as_ref()
-            .map(|run| (run.state.as_str(), run.stop_reason.as_deref()))
-        {
-            Some(("running", _)) => wire::BackgroundState::Running,
-            Some(("needs_review", _)) => wire::BackgroundState::NeedsReview,
-            Some(("stopped", Some("disabled"))) | None if waiting == 0 => {
+        // A run stopped by the person's own switch (`disabled`) needs nothing; a stop for the budget or a failure does. A run that
+        // never started needs nothing either: the disk guard refused it, so it has a `reason_code` and no stop reason, the crew never
+        // ran, and only the history row shows the refusal. A run that finished with work needs the person only while its review
+        // waits: once the person acknowledges it, the crew reads idle.
+        let state = match newest.as_ref().map(|run| {
+            (
+                run.state.as_str(),
+                run.stop_reason.as_deref(),
+                run.reason_code.as_deref(),
+            )
+        }) {
+            Some(("running", _, _)) => wire::BackgroundState::Running,
+            Some(("needs_review", _, _)) if waiting > 0 => wire::BackgroundState::NeedsReview,
+            Some(("needs_review", _, _)) => wire::BackgroundState::Idle,
+            Some(("stopped", None, Some(_))) if waiting == 0 => wire::BackgroundState::Idle,
+            Some(("stopped", None, Some(_))) => wire::BackgroundState::NeedsReview,
+            Some(("stopped", Some("disabled"), _)) | None if waiting == 0 => {
                 wire::BackgroundState::Idle
             }
-            Some(("stopped", Some("disabled"))) | None => wire::BackgroundState::NeedsReview,
-            Some(("stopped", _)) => wire::BackgroundState::Stopped,
-            Some((other, _)) => {
+            Some(("stopped", Some("disabled"), _)) | None => wire::BackgroundState::NeedsReview,
+            Some(("stopped", _, _)) => wire::BackgroundState::Stopped,
+            Some((other, _, _)) => {
                 return Err(CoreError::Internal(format!(
                     "a stored background run state is unknown: {other}"
                 )));
@@ -260,8 +351,9 @@ impl Core {
         self.background_wire(self.background_row(id)?)
     }
 
-    /// Creates a background crew, off. The project must be a live project; every bound is checked here and again by the table.
-    pub fn background_create(
+    /// Creates a background crew, off. The project must be a live project; every bound is checked here and again by the table. A
+    /// watch's command is screened here, before anything is stored.
+    pub async fn background_create(
         &self,
         create: &wire::BackgroundCrewCreate,
     ) -> Result<wire::BackgroundCrew> {
@@ -295,7 +387,14 @@ impl Core {
                 "utc_offset_minutes is -{OFFSET_MINUTES_MAX} to {OFFSET_MINUTES_MAX}"
             )));
         }
-        self.store.project(&create.project_id)?;
+        let project = self.store.project(&create.project_id)?;
+        if kind == "watch" {
+            self.screen_watch_command(
+                &project.path,
+                settings["command"].as_str().unwrap_or_default(),
+            )
+            .await?;
+        }
         let row = self.store.create_background_crew(
             &NewBackground {
                 project_id: &create.project_id,
@@ -314,14 +413,15 @@ impl Core {
         self.background_wire(row)
     }
 
-    /// Changes a crew's name and, or, trigger. The project, template and budget are fixed at creation.
-    pub fn background_update(
+    /// Changes a crew's name and, or, trigger. The project, template and budget are fixed at creation. A watch's command is screened
+    /// here too, before anything is stored.
+    pub async fn background_update(
         &self,
         id: &str,
         update: &wire::BackgroundCrewUpdate,
     ) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
-        self.background_row(id)?;
+        let current = self.background_row(id)?;
         if update.name.is_none() && update.trigger.is_none() {
             return Err(CoreError::Invalid(
                 "send a name or a trigger to change".into(),
@@ -333,6 +433,16 @@ impl Core {
             .map(|name| text("name", name, NAME_MAX))
             .transpose()?;
         let trigger = update.trigger.as_ref().map(trigger).transpose()?;
+        if let Some((kind, settings)) = &trigger
+            && kind.as_str() == "watch"
+        {
+            let project = self.store.project(&current.project_id)?;
+            self.screen_watch_command(
+                &project.path,
+                settings["command"].as_str().unwrap_or_default(),
+            )
+            .await?;
+        }
         let row = self.store.update_background_crew(
             id,
             name.as_deref(),
@@ -345,7 +455,8 @@ impl Core {
     }
 
     /// Turns a crew on or off, as the record only: turning it off ends a run in progress with the reason `disabled`, logged as the
-    /// person, and touches nothing else. A person's turn-off goes through `background_turn_off`, which also stops the run's worker.
+    /// person, and (for a watch) writes one `turned_off` row to its change history. A person's turn-off goes through
+    /// `background_turn_off`, which also stops the run's worker.
     pub fn background_set_enabled(&self, id: &str, enabled: bool) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
         self.background_row(id)?;
@@ -354,7 +465,8 @@ impl Core {
     }
 
     /// A person turns a crew off: the run in progress ends `disabled`, and every task of it that has not ended is cancelled, so the
-    /// worker stops spending with the record. Cancelling after the record is safe: a task's end finds its run no longer running.
+    /// worker stops spending with the record. Cancelling after the record is safe: a task's end finds its run no longer running. A
+    /// watch's change history gets one `turned_off` row, written with the switch.
     pub async fn background_turn_off(self: &Arc<Self>, id: &str) -> Result<wire::BackgroundCrew> {
         self.crew_preview_only()?;
         self.background_row(id)?;
@@ -386,6 +498,27 @@ impl Core {
             runs: rows.into_iter().map(run_wire).collect::<Result<_>>()?,
             total,
             next_offset: next_offset(page, total),
+        })
+    }
+
+    /// One background run with the crew it belongs to, for "Open the run": the run's own state, times, reason and spend, and
+    /// the crew's name and template. Behind the Crew Preview flag. An unknown run, or a run whose crew is not stored, is NotFound.
+    pub fn background_run_detail(&self, run_id: &str) -> Result<wire::BackgroundRunDetail> {
+        self.crew_preview_only()?;
+        valid_id(run_id)?;
+        let run = self
+            .store
+            .background_run(run_id)?
+            .ok_or_else(|| CoreError::NotFound("background run".into()))?;
+        let crew = self
+            .store
+            .background_crew(&run.background_id)?
+            .ok_or_else(|| CoreError::NotFound("background crew".into()))?;
+        Ok(wire::BackgroundRunDetail {
+            crew_id: crew.id,
+            name: redact(&crew.name),
+            template: parse_wire(&crew.template)?,
+            run: run_wire(run)?,
         })
     }
 
@@ -438,5 +571,14 @@ impl Core {
             }
         };
         run_wire(self.store.end_background_run(run_id, end)?)
+    }
+
+    /// The person's acknowledgement of one background run's waiting review: the wait is cleared and the run is returned as it now
+    /// stands. The run keeps its state, its stop reason, its spend and why it waited, and the crew's state follows: a crew whose
+    /// newest run finished with work reads idle once nothing waits. A run that is not waiting is refused plainly and nothing changes.
+    pub fn background_acknowledge_review(&self, run_id: &str) -> Result<wire::BackgroundRun> {
+        self.crew_preview_only()?;
+        valid_id(run_id)?;
+        run_wire(self.store.acknowledge_background_review(run_id, "user")?)
     }
 }

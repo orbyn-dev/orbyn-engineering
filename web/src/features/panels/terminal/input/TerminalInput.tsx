@@ -6,9 +6,10 @@ import { routeHref } from "../../../../product/state/route";
 import { useUi } from "../../../../product/state/ui";
 import { useWorkspace } from "../../../../product/state/workspace";
 import { controlsOf } from "../terminalControls";
+import { takeReportedCommands, useReportedCommands } from "../shellOutcomes";
 import { completeAt, applyCompletion, resolveDir } from "./completions";
 import { HistoryPop, type HistoryScope } from "./HistoryPop";
-import { historyAcross, historyOf, recordCommand, suggestion } from "./history";
+import { historyAcross, recordCommand, recordExitCode, suggestion, useHistory } from "./history";
 import { tokenize } from "./highlight";
 import { ProposalCard, useProposal } from "./ProposalCard";
 import { routeLine, type Mode } from "./route";
@@ -61,7 +62,18 @@ export function TerminalInput({ threadId, keyOf }: { threadId: string; keyOf: st
   const engine = useEngineTarget(threadId);
   const offered = useProposal(threadId, askedRun);
 
-  const history = historyOf(keyOf);
+  const history = useHistory(keyOf);
+  /**
+   * How the shell said the lines it finished ended, from its own marks. Each report is given once to the
+   * oldest line of this terminal still unknown that carries the same command, so a row shows a result only
+   * when the shell reported one. A shell that emits no marks reports nothing and the rows stay as they were.
+   */
+  const reported = useReportedCommands(keyOf);
+  useEffect(() => {
+    for (const command of takeReportedCommands(keyOf, reported)) {
+      if (command.exitCode !== null) recordExitCode(keyOf, command.command, command.exitCode);
+    }
+  }, [reported, keyOf]);
   const full = held === null ? line : line === "" ? held : `${held}\n${line}`;
   const route = useMemo(() => routeLine(mode, full, engine, keepInShell), [mode, full, engine, keepInShell]);
   const tokens = useMemo(() => (route.target === "engine" ? [] : tokenize(line)), [route.target, line]);

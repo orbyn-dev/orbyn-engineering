@@ -3,7 +3,7 @@ import { Explorer } from "./Explorer";
 import { FileTab } from "../../panels/files/FileTab";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { useWorkspace } from "../../../product/state/workspace";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../../../app/App";
@@ -24,7 +24,12 @@ const findRow = (name: string | RegExp) => screen.findByRole("treeitem", { name:
 const reads = () => (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0])).filter((url) => url.includes("/worktrees"));
 const folderReads = (path: string) => reads().filter((url) => url.includes(`/tree?path=${encodeURIComponent(path)}`));
 
+// These tests render the whole App and wait for tree reads; on a busy machine a read can take longer than the 1 s a
+// findBy gets by default, so waits get 5 s and each test 20 s. A test that finds nothing still fails, only later.
+// At the file's top, where the timeout is read: set from a beforeEach it does not reach the first test.
+vi.setConfig({ testTimeout: 20_000 });
 beforeEach(() => {
+  configure({ asyncUtilTimeout: 5000 });
   useExplorer.getState().reset();
   installMockFetch();
   useUi.setState({ projectFolders: true, panelOpen: false, panelTab: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools"], layouts: {}, leftBarView: "files", explorerOpen: {}, sidebarWidth: 224 });
@@ -33,7 +38,10 @@ beforeEach(() => {
   window.location.hash = "#/threads/t-done";
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  configure({ asyncUtilTimeout: 1000 });
+  vi.restoreAllMocks();
+});
 
 it("opens on the thread's own project and worktree, and reads a folder only when it is unfolded", async () => {
   const user = userEvent.setup();
@@ -308,6 +316,29 @@ it("offers Open and the path copies on a file, and no worktree removal", async (
   expect(within(worktree).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["New thread here", "Copy path"]);
 });
 
+const OUTSIDE_EDITOR = [{ id: "code", name: "VS Code", launch_style: "goto", file_manager: false }];
+
+it("writes the outside-editor chord the way a Windows platform does", async () => {
+  vi.spyOn(api, "editors").mockResolvedValue(OUTSIDE_EDITOR);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const user = userEvent.setup();
+  render(<App />);
+  await user.pointer({ keys: "[MouseRight]", target: await findRow(/^README\.md/) });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).getByRole("menuitem", { name: /^Open in an outside editor/ })).toHaveTextContent("Open in an outside editorAlt+↵");
+  expect(within(menu).queryByText("⌥↵")).toBeNull();
+});
+
+it("keeps the outside-editor chord as ⌥↵ on macOS", async () => {
+  vi.spyOn(api, "editors").mockResolvedValue(OUTSIDE_EDITOR);
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  const user = userEvent.setup();
+  render(<App />);
+  await user.pointer({ keys: "[MouseRight]", target: await findRow(/^README\.md/) });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).getByRole("menuitem", { name: /^Open in an outside editor/ })).toHaveTextContent("Open in an outside editor⌥↵");
+});
+
 it("reads a project's files again, quietly, when the service says they changed", async () => {
   const stop = startDataRefresh();
   render(<App />);
@@ -320,6 +351,7 @@ it("reads a project's files again, quietly, when the service says they changed",
   // Another project's files changed: nothing of this one is read.
   const now = reads().length;
   act(() => dataChanged("explorer:p-site"));
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await new Promise((done) => setTimeout(done, 400));
   expect(reads().length).toBe(now);
   stop();

@@ -1,12 +1,12 @@
 import { ChevronDown, ChevronRight, ChevronUp, Folder, Hash, Lock, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Button, IconButton } from "../../../ui/controls";
+import { isMacClient } from "../../../lib/platform";
+import { formatShortcut } from "../../../product/shell/shortcuts";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { CommentForm, CommentList, type LineSelection } from "../files/FileComments";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { endingLabel, endingsOf, toLF, findMatches, indentOf, languageOf, lineCount, lineStart } from "./editorModel";
-
-const isMac = () => /mac/i.test(navigator.platform || navigator.userAgent);
 
 export type Standing = "saved" | "unsaved" | "read-only";
 
@@ -35,7 +35,7 @@ export function EditorSurface({
   /** A line a link named: the cursor goes there once, when the file opens. */
   reveal?: number | null;
   /** Where the file lives, so a line comment can name it: the comments become chips on the thread's next message. */
-  comments?: { threadId: string; cwd: string; revision: string; text: string };
+  comments?: { threadId: string; cwd: string; revision: string; text: string; repoId?: string; repoName?: string };
   onChange?(text: string): void;
   onSave?(): void;
 }) {
@@ -113,7 +113,7 @@ export function EditorSurface({
     if (which === "goto" && lineText === "") setLineText(String(position.line));
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const accel = isMac() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+    const accel = isMacClient() ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     if (!accel || event.altKey || event.shiftKey) return;
     const key = event.key.toLowerCase();
     if (key === "f" || key === "g") {
@@ -140,10 +140,10 @@ export function EditorSurface({
         ))}
         <b title={path}>{name}</b>
         <span className="ed-sp" />
-        <IconButton label="Find ⌘F" pressed={bar === "find"} onClick={() => (bar === "find" ? closeBar() : open("find"))}>
+        <IconButton label={`Find ${formatShortcut("mod+f")}`} pressed={bar === "find"} onClick={() => (bar === "find" ? closeBar() : open("find"))}>
           <Search size={14} aria-hidden />
         </IconButton>
-        <IconButton label="Go to line ⌘G" pressed={bar === "goto"} onClick={() => (bar === "goto" ? closeBar() : open("goto"))}>
+        <IconButton label={`Go to line ${formatShortcut("mod+g")}`} pressed={bar === "goto"} onClick={() => (bar === "goto" ? closeBar() : open("goto"))}>
           <Hash size={14} aria-hidden />
         </IconButton>
       </div>
@@ -225,7 +225,7 @@ export function EditorSurface({
               ...(standing === "unsaved" ? { commentBlocked: "Save to comment" } : {}),
               onComment: (line: number, extend: boolean) => setSelection((now) => ({ anchor: extend && now ? now.anchor : line, end: line })),
               selected: selection ? { from: Math.min(selection.anchor, selection.end), to: Math.max(selection.anchor, selection.end) } : null,
-              commented: standing === "unsaved" ? [] : (chips ?? []).flatMap((chip) => (chip.kind === "review" && chip.path === path && chip.sourceRevision === comments.revision && chip.sourceCwd === comments.cwd && !chip.stale && chip.line ? [chip.line] : [])),
+              commented: standing === "unsaved" ? [] : (chips ?? []).flatMap((chip) => (chip.kind === "review" && chip.path === path && chip.repoId === comments.repoId && chip.sourceRevision === comments.revision && chip.sourceCwd === comments.cwd && !chip.stale && chip.line ? [chip.line] : [])),
             }
           : {})}
         onChange={(next) => onChange?.(next)}

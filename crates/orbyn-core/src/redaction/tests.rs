@@ -569,6 +569,35 @@ fn the_person_patterns_alone_mask_display_text() {
 }
 
 #[test]
+fn a_json_document_is_masked_in_its_values_and_in_its_keys() {
+    let redactor = Redactor::only(vec![Custom {
+        name: "Corp id",
+        regex: regex::Regex::new("corp_[a-z]{6}").unwrap(),
+        applies_to: PatternScope::Anywhere,
+    }]);
+    let value = json!({
+        "note": "see corp_abcdef and corp_ghijkl",
+        "corp_abcdef": ["corp_ghijkl", 7, true, null],
+    });
+    let shown = redactor.mask_json(&value);
+    assert_eq!(shown["note"], "see [hidden: Corp id] and [hidden: Corp id]");
+    assert!(
+        shown.get("[hidden: Corp id]").is_some(),
+        "a JSON key was not masked: {shown}"
+    );
+    assert!(
+        !shown.to_string().contains("corp_"),
+        "a value inside the array was not masked: {shown}"
+    );
+    // Other scalars are shown as they are, and the keys around them are not over-masked.
+    let array = shown["[hidden: Corp id]"].as_array().unwrap();
+    assert_eq!(array.len(), 4);
+    assert_eq!(array[1], json!(7));
+    assert_eq!(array[2], json!(true));
+    assert_eq!(array[3], json!(null));
+}
+
+#[test]
 fn the_view_lists_every_format_on_and_the_ledger_locked() {
     let dir = TempDir::new();
     let core = core(&dir);
@@ -899,6 +928,13 @@ fn changes_that_widen_are_audited_by_name_without_the_pattern_text() {
     assert!(
         ours.iter()
             .all(|row| !row.detail.to_string().contains(&text))
+    );
+    // The change can only come from the person (Person routes, enforced with the person key),
+    // so the audit row says so rather than leaving the source unknown.
+    assert!(
+        ours.iter().all(|row| row.source == "person"),
+        "{:?}",
+        ours.iter().map(|row| &row.source).collect::<Vec<_>>()
     );
 }
 

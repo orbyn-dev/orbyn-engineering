@@ -1,15 +1,34 @@
 use super::*;
 
 impl RunManager {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a run is started from the values admission already holds; a struct would only rename them"
+    )]
     pub(super) async fn execute(
         self: Arc<Self>,
         thread: Thread,
         run_id: String,
         prompt: String,
+        title_prompt: String,
         files: Vec<PathBuf>,
         write_scope: WriteScope,
         stops: Stops,
     ) {
+        // A run that asked for a typed result gets Orbyn's fixed instruction after the person's text (M20).
+        let prompt = match self
+            .results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&run_id)
+        {
+            // Only an ordinary message gets the instruction: a slash command or goal action is classified from the
+            // person's own words and must reach the engine as written.
+            Some(request) if matches!(RunKind::parse(&prompt), RunKind::Turn) => {
+                request.instructed(&prompt)
+            }
+            _ => prompt,
+        };
         let lifecycle = thread.lifecycle.clone();
         let driver = self.engines.driver(&thread.engine).ok();
         let saved = lifecycle
@@ -48,7 +67,7 @@ impl RunManager {
                     Ok(false) => return EngineOutcome::Cancelled,
                     Err(error) => return EngineOutcome::Failed(error.public_message()),
                 }
-                self.title_new_thread(&thread, &prompt);
+                self.title_new_thread(&thread, &title_prompt);
                 self.drive(
                     &thread,
                     &scope,
@@ -87,23 +106,35 @@ impl RunManager {
             tracing::warn!(%error, "could not remove a run directory");
         }
         let mut limit = None;
-        let mut sign_in_note = None;
+        let mut failure_note = None;
+        let mut prepare_failure = |message: String, code: Option<&'static str>| {
+            let sign_in = self.engines.driver(&scope.engine).ok();
+            let sign_in = sign_in.as_ref().and_then(|driver| driver.sign_in_command());
+            let sign_in = sign_in.as_deref();
+            let sign_in_required = diagnostics::is_sign_in_failure(&message);
+            if code.is_some() || sign_in_required {
+                let mut note = serde_json::Map::new();
+                if let Some(code) = code {
+                    note.insert("code".into(), code.into());
+                }
+                if sign_in_required {
+                    note.insert("command".into(), json!(sign_in));
+                }
+                failure_note = Some(Value::Object(note));
+            }
+            if let Some(resets_at) = self.limit_of(&scope.run_id, &message) {
+                limit = Some((message.clone(), resets_at));
+            }
+            diagnostics::failure_message(&message, sign_in)
+        };
         let (state, message) = match outcome {
             EngineOutcome::Completed => (RunState::Completed, None),
             EngineOutcome::Cancelled => (RunState::Cancelled, None),
-            EngineOutcome::Failed(message)
-            | EngineOutcome::FailedWith(crate::agents::driver::Failure { message, .. }) => {
-                let sign_in = self.engines.driver(&scope.engine).ok();
-                let sign_in = sign_in.as_ref().and_then(|driver| driver.sign_in_command());
-                let sign_in = sign_in.as_deref();
-                if diagnostics::is_sign_in_failure(&message) {
-                    sign_in_note = Some(json!({ "command": sign_in }));
-                }
-                if let Some(resets_at) = self.limit_of(&scope.run_id, &message) {
-                    limit = Some((message.clone(), resets_at));
-                }
-                let message = diagnostics::failure_message(&message, sign_in);
-                (RunState::Failed, Some(message))
+            EngineOutcome::Failed(message) => {
+                (RunState::Failed, Some(prepare_failure(message, None)))
+            }
+            EngineOutcome::FailedWith(crate::agents::driver::Failure { message, code, .. }) => {
+                (RunState::Failed, Some(prepare_failure(message, code)))
             }
             EngineOutcome::SessionLost => (
                 RunState::Failed,
@@ -111,7 +142,11 @@ impl RunManager {
             ),
         };
         self.limit_signals().remove(&run_id);
-        let closed = self.close_run(&run_id, state, message.as_deref(), sign_in_note.as_ref());
+        self.results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&run_id);
+        let closed = self.close_run(&run_id, state, message.as_deref(), failure_note.as_ref());
         let completed = closed
             .as_ref()
             .is_some_and(|run| run.state == RunState::Completed);
@@ -188,14 +223,19 @@ impl RunManager {
             engine: thread.engine.clone(),
             family: driver.family(),
             // The same limit the thread's runs get, while this token is live unadopted.
-            write_scope: Some(write_scope(&root, Path::new(&thread.cwd), warm_start.1)),
+            write_scope: Some(write_scope(
+                &self.data_dir,
+                &root,
+                Path::new(&thread.cwd),
+                warm_start.1,
+            )),
             mode,
             plan,
         };
         let token = self.mcp.register(McpBinding {
             scope,
             permission_prompt: driver.family() == "claude",
-            skills: route.selection.clone(),
+            skills: self.skills.tool_selection(&route)?,
         })?;
         let url = format!("{}/mcp/{token}", self.base_url);
         let chosen = selection::of_thread(&thread);
@@ -204,6 +244,9 @@ impl RunManager {
             thread_id: thread.id.clone(),
             cwd: warm_start.0,
             library: root,
+            // A warm process's folder is made when it starts, so it cannot hold this
+            // run's copy; a run that needs the device-local skills starts fresh.
+            local_skills: None,
             checkout,
             prompt: String::new(),
             user_prompt: String::new(),

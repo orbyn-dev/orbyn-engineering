@@ -3,6 +3,7 @@
 use super::check_state;
 use crate::app::Core;
 use crate::error::{CoreError, Result};
+use crate::redaction::Redactor;
 use crate::source_control::forge::{
     self, DETAIL_FIELDS, DETAILS_ROW_LIMIT, DetailsOutcome, Forge, PullFilter, fetch_pull,
     forge_of, no_such_pull,
@@ -15,6 +16,9 @@ use orbyn_contracts::{
 };
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+/// A check log answers with its last at most this many bytes: a failure ends a log.
+const CHECK_LOG_BYTES: usize = 32 * 1024;
 
 impl Core {
     pub async fn link_pull(&self, id: &str, number: u64) -> Result<PullRequest> {
@@ -344,6 +348,58 @@ impl Core {
         outcome
     }
 
+    /// The failed jobs' log of one named check, redacted and then cut to its last
+    /// 32 KiB. The scan runs over the whole log first, so the cut cannot leave the
+    /// front of a secret that the shortened text no longer matches.
+    pub async fn pull_check_log(
+        &self,
+        project_id: &str,
+        number: u64,
+        check: &str,
+    ) -> Result<String> {
+        let (project, forge) = self.pull_site(project_id).await?;
+        if forge != Forge::GitHub {
+            return Err(forge.unsupported("read a check log"));
+        }
+        let run = self.check_run(project_id, number, check).await?;
+        let log = forge::check_log(forge, Path::new(&project.path), run).await?;
+        let redacted = Redactor::locked().labelled(&log);
+        Ok(tail_safely(&redacted, CHECK_LOG_BYTES))
+    }
+
+    /// Re-runs the failed jobs of one named check, and drops what was kept for the
+    /// pull request so its next read sees the run again.
+    pub async fn rerun_pull_checks(
+        &self,
+        project_id: &str,
+        number: u64,
+        check: &str,
+        actor: &str,
+    ) -> Result<()> {
+        let (project, forge) = self.pull_site(project_id).await?;
+        if forge != Forge::GitHub {
+            return Err(forge.unsupported("re-run a check"));
+        }
+        let run = self.check_run(project_id, number, check).await?;
+        self.scm_audit(actor, "git.ci_rerun", &number.to_string(), None)?;
+        let outcome = forge::rerun_failed(forge, Path::new(&project.path), run).await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
+    }
+
+    /// The run of one named check, from a fresh read of the pull request's checks.
+    async fn check_run(&self, project_id: &str, number: u64, check: &str) -> Result<u64> {
+        let checks = self.pull_checks(project_id, number, true).await?;
+        let found = checks.iter().find(|row| row.name == check).ok_or_else(|| {
+            CoreError::Invalid("No check of that name on this pull request.".into())
+        })?;
+        found
+            .url
+            .as_deref()
+            .and_then(forge::run_id_of)
+            .ok_or_else(|| CoreError::Invalid("That check has no workflow run to read.".into()))
+    }
+
     pub async fn pull_conversation(
         &self,
         project_id: &str,
@@ -362,7 +418,8 @@ impl Core {
         self.cached_timeline(project_id, number, refresh).await
     }
 
-    /// Changed files, with this service's viewed marks.
+    /// Changed files. On GitHub a mark is GitHub's own viewed state; elsewhere, and while GitHub
+    /// cannot be read, it is this service's mark.
     pub async fn pull_files(
         &self,
         project_id: &str,
@@ -398,6 +455,19 @@ impl Core {
         let (project, forge) = self.pull_site(project_id).await?;
         forge::revision_files(forge, Path::new(&project.path), sha).await
     }
+}
+
+/// The last at most `max` bytes of `text`, starting on a character boundary. Not
+/// `redactor::cut_safely`, which keeps the head: a failed job's own end is what matters.
+fn tail_safely(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_owned();
+    }
+    let mut start = text.len() - max;
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text[start..].to_owned()
 }
 
 /// Counts one pull request's changed files by the kind of change. A status none of

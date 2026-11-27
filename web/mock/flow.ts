@@ -1,7 +1,10 @@
 /**
- * The mock's Flow reads (`/api/crew/flow/*`): the crews that have work, a crew's tasks with the ten cells of each, and one task
- * zoomed. They answer in the Crew scenarios (`crew`, `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route
- * at 404 as the service does with Crew Preview off. The sample tasks exercise every state the real data can have: running, needs
+ * The mock's Flow reads (`/api/crew/flow/*`): the crews that have work, a crew's tasks with the ten cells of each, one task
+ * zoomed, one task's Run page read and one task's checks, artifacts and diff. They answer in the Crew scenarios (`crew`,
+ * `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route at 404 as the service does with Crew
+ * Preview off. A sample with a `run` answers the Run page route; one without it keeps the older service's 404, so the page
+ * falls back to its Flow-based Planned marks. A sample with an `artifacts` answers the artifacts route; one without it keeps
+ * the older service's 404 too. The sample tasks exercise every state the real data can have: running, needs
  * you, failed after loops, merged and waiting for review, skipped stages, queued and stopped. Reads only.
  *
  * The person's two writes (`POST /api/crew/tasks/{id}/cancel` and `/rerun-checks`) are answered by `board.ts`, for the zoom as well.
@@ -15,7 +18,9 @@ import type { FlowCellState } from "../src/generated/FlowCellState.ts";
 import type { FlowCrewList } from "../src/generated/FlowCrewList.ts";
 import type { FlowCounts } from "../src/generated/FlowCounts.ts";
 import type { FlowFilter } from "../src/generated/FlowFilter.ts";
+import type { FlowRunPage } from "../src/generated/FlowRunPage.ts";
 import type { FlowStage } from "../src/generated/FlowStage.ts";
+import type { FlowTaskArtifacts } from "../src/generated/FlowTaskArtifacts.ts";
 import type { FlowTaskDetail } from "../src/generated/FlowTaskDetail.ts";
 import type { FlowTaskList } from "../src/generated/FlowTaskList.ts";
 import type { FlowTaskRow } from "../src/generated/FlowTaskRow.ts";
@@ -39,7 +44,27 @@ function line(states: Partial<Record<FlowStage, FlowCellState | [FlowCellState, 
 interface Sample {
   row: FlowTaskRow;
   detail: Omit<FlowTaskDetail, "row" | "truncated" | "crew">;
+  /** The Run page read answers for this task. A sample without one keeps the older service's 404. */
+  run?: FlowRunPage;
+  /** The checks, artifacts and diff read answers for this task. A sample without one keeps the older service's 404. */
+  artifacts?: FlowTaskArtifacts;
 }
+
+const RUN_COMMIT = "a41c9e2c0ffee0123456789abcdef0123456789a";
+const BASE_COMMIT = "0b1e5f00c0ffee0123456789abcdef0123456789b";
+
+/** The change the checks read in the samples: two files, +18 −4, as the frame draws it. */
+const SAMPLE_DIFF: FlowTaskArtifacts["diff"] = {
+  base: BASE_COMMIT,
+  files: [
+    { path: "auth/redirect.ts", status: "modified", added: 12, removed: 3 },
+    { path: "auth/redirect.test.ts", status: "modified", added: 6, removed: 1 },
+  ],
+  files_total: 2,
+  added: 18,
+  removed: 4,
+  truncated: false,
+};
 
 const row = (id: string, name: string, kind: string, engine: string | null, state: string, round: number, cells: FlowCell[], at: string): FlowTaskRow => ({
   id,
@@ -49,6 +74,7 @@ const row = (id: string, name: string, kind: string, engine: string | null, stat
   owner: "Lead",
   state,
   could_not_start: false,
+  resumed: false,
   round,
   cells,
   created_at: `2026-11-07T${at}:00Z`,
@@ -70,12 +96,31 @@ function samples(): Sample[] {
           { lane: "Docs", group: "code", task: "task-redirect-r3", round: 1, state: "passed", engine: "opencode", model: "DeepSeek V4", findings: 1, confirmed: 0, unconfirmed: 1, same_engine: true },
           { lane: "security", group: "security", task: "task-redirect-r4", round: 1, state: "running", engine: "codex", model: "GPT-5.5", findings: 0, confirmed: 0, unconfirmed: 0 },
         ],
-        findings: [{ id: "f-1", lane: "Docs", round: 1, severity: "low", path: "docs/login.md", line: 12, claim: "The example uses //evil.com", check: "unconfirmed", status: "open", blocks: false, fix_task: null }],
+        findings: [{ id: "f-1", lane: "Docs", round: 1, severity: "low", path: "docs/login.md", line: 12, claim: "The example uses //evil.com", evidence: "12  next: \"//evil.com\" // a browser reads this as another site", check: "unconfirmed", status: "open", blocks: false, fix_task: null }],
         gates: [{ stage: "checks", decision: "passed", decided_by: "code", lane: null, reason: null, at: "2026-11-07T14:10:00Z" }],
         rounds: [{ n: 1, task: "task-redirect", state: "verifying" }],
         merge: null,
         watch: null,
         you: null,
+      },
+      // Not final: the service withholds a check's command and proves line, so the page must say so.
+      run: {
+        task: "task-redirect", crew: MOCK_CREW, state: "verifying", finished: false,
+        prompt: { text: "Use next when it points inside the app.", hidden: true, truncated: false },
+        checks: [
+          { label: "", outcome: "pass", exit_code: 0, duration_ms: 4000, proves: "", commit: RUN_COMMIT },
+          { label: "", outcome: "fail", exit_code: 1, duration_ms: 22000, proves: "", commit: RUN_COMMIT },
+        ],
+        not_verified: [], commit: RUN_COMMIT, pull: null, truncated: false,
+      },
+      // The build under way: two checks, none of them naming an artifact yet, and the change they read.
+      artifacts: {
+        task: "task-redirect", crew: MOCK_CREW,
+        checks: [
+          { id: "check-1", kind: "test", task: "task-redirect", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
+          { id: "check-2", kind: "lint", task: "task-redirect", outcome: "fail", exit_code: 1, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
+        ],
+        diff: SAMPLE_DIFF, diff_absent: null, truncated: false,
       },
     },
     {
@@ -85,6 +130,28 @@ function samples(): Sample[] {
     {
       row: row("task-failed", "Rename the legacy returnTo helper", "implement", "claude", "failed", 3, line({ brief: "done", route: "done", build: "failed", checks: ["failed", { passed: 2, of: 3 }] }), "13:10"),
       detail: { brief, route: { engine: "claude", model: "Sonnet 5.5", tier: "builder" }, lanes: [], findings: [], gates: [{ stage: "checks", decision: "failed", decided_by: "code", lane: null, reason: null, at: "2026-11-07T13:20:00Z" }], rounds: [{ n: 1, task: "task-failed", state: "failed" }, { n: 2, task: "task-failed-fix1", state: "failed" }, { n: 3, task: "task-failed-fix2", state: "failed" }], merge: null, watch: null, you: null },
+      // Final: the service now carries each check's command and proves line.
+      run: {
+        task: "task-failed", crew: MOCK_CREW, state: "failed", finished: true,
+        prompt: { text: "Rename the helper without changing its callers.", hidden: false, truncated: false },
+        checks: [
+          { label: "pnpm lint", outcome: "pass", exit_code: 0, duration_ms: 4000, proves: "The changed files follow the style rules.", commit: RUN_COMMIT },
+          { label: "pnpm test auth", outcome: "fail", exit_code: 1, duration_ms: 22000, proves: "The old name still resolves.", commit: RUN_COMMIT },
+          { label: "pnpm test:types", outcome: "skipped", exit_code: null, duration_ms: 0, proves: "Every caller uses the new name.", commit: RUN_COMMIT },
+        ],
+        not_verified: ["The mobile app's callers: no check covers them."], commit: RUN_COMMIT, pull: null, truncated: false,
+      },
+      // Three rows, one of them a lead's repro check the task's key does not name. No check producer stores an artifact yet,
+      // so no row names one.
+      artifacts: {
+        task: "task-failed", crew: MOCK_CREW,
+        checks: [
+          { id: "check-1", kind: "test", task: "task-failed", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
+          { id: "check-2", kind: "test", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
+          { id: "lead-repro-1", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 1000, commit: RUN_COMMIT, artifacts: [] },
+        ],
+        diff: SAMPLE_DIFF, diff_absent: null, truncated: false,
+      },
     },
     {
       row: row("task-merged", "Update the login docs", "docs", "codex", "passed", 1, line({ brief: "done", route: "done", build: "done", checks: ["done", { passed: 2, of: 2 }], code: ["done", { lanes: 2 }], security: "skipped", finding: "done", merge: "done", main: "done", you: "review_waiting" }), "12:30"),
@@ -102,6 +169,27 @@ function samples(): Sample[] {
         watch: "green",
         you: { review_state: "waiting", due_unix: Date.parse("2026-11-08T12:50:00Z") / 1000, needs_person: null },
       },
+      // Final, with the forge's number and what the run published.
+      run: {
+        task: "task-merged", crew: MOCK_CREW, state: "passed", finished: true,
+        prompt: { text: "Say how the redirect works.", hidden: false, truncated: false },
+        checks: [
+          { label: "pnpm lint", outcome: "pass", exit_code: 0, duration_ms: 4000, proves: "The changed files follow the style rules.", commit: RUN_COMMIT },
+          { label: "pnpm test docs", outcome: "pass", exit_code: 0, duration_ms: 22000, proves: "The example shows the redirect.", commit: RUN_COMMIT },
+        ],
+        not_verified: ["The mobile app's redirect: no check covers it."], commit: RUN_COMMIT,
+        pull: { number: 142, branch: "crew/login-docs", commit: RUN_COMMIT }, truncated: false,
+      },
+      // A passed task whose checkout is gone: the checks are there and the read names why there is no diff. No check
+      // producer stores an artifact yet, so no row names one.
+      artifacts: {
+        task: "task-merged", crew: MOCK_CREW,
+        checks: [
+          { id: "check-1", kind: "lint", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
+          { id: "check-2", kind: "test", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
+        ],
+        diff: null, diff_absent: "no_checkout", truncated: false,
+      },
     },
     {
       row: row("task-queued", "Move the CHANGELOG entry", "docs", null, "briefed", 1, line({ brief: "done" }), "12:00"),
@@ -113,12 +201,17 @@ function samples(): Sample[] {
         brief: { ...brief, purpose: "Add a rate limit", files: ["auth/login.ts"] },
         route: { engine: "codex", model: "Sol", tier: "lead" },
         lanes: [{ lane: "security", group: "security", task: "task-stopped-r1", round: 2, state: "passed", engine: "claude", model: "Opus 5.5", findings: 2, confirmed: 2, unconfirmed: 0 }],
-        findings: [{ id: "f-2", lane: "security", round: 2, severity: "high", path: "auth/login.ts", line: 41, claim: "The limit resets on every request", check: "confirmed", status: "open", blocks: true, fix_task: "task-stopped-fix" }],
+        findings: [{ id: "f-2", lane: "security", round: 2, severity: "high", path: "auth/login.ts", line: 41, claim: "The limit resets on every request", evidence: "41  limit = attempts.length; // rebuilt from this request alone", check: "confirmed", status: "open", blocks: true, fix_task: "task-stopped-fix" }],
         gates: [{ stage: "finding", decision: "blocks", decided_by: "confirmed_finding", lane: "security", reason: "A confirmed finding still blocks", at: "2026-11-07T11:50:00Z" }],
         rounds: [{ n: 1, task: "task-stopped", state: "failed" }, { n: 2, task: "task-stopped-fix", state: "stopped" }],
         merge: null,
         watch: null,
         you: null,
+      },
+      // The read answers and is empty: no check ran, and the checkout could not be read.
+      artifacts: {
+        task: "task-stopped", crew: MOCK_CREW,
+        checks: [], diff: null, diff_absent: "unreadable", truncated: false,
       },
     },
   ];
@@ -157,6 +250,19 @@ export function flowMock(scenario: string, method: string, path: string, query: 
       sample.row.state = "passed";
       if (scenario === "crew-review-remove") sample.row.name = "Review dependency licences";
       sample.row.cells = line({ brief:"done",route:"done",build:"done",checks:["done",{passed:3,of:3}],code:"done",security:scenario === "crew-review-consent" ? "needs_you" : "running" });
+      // The sample row ends here, so its Run page read is final and carries the texts the service withholds while it runs.
+      if (sample.run) {
+        sample.run = {
+          ...sample.run,
+          state: sample.row.state,
+          finished: true,
+          checks: sample.run.checks.map((check, at) => ({
+            ...check,
+            label: at === 0 ? "pnpm lint" : "pnpm test auth",
+            proves: at === 0 ? "The changed files follow the style rules." : "next=//evil.com is rejected.",
+          })),
+        };
+      }
       sample.detail.lanes = sample.detail.lanes.filter((l) => l.group !== "security");
       if (scenario === "crew-review-consent") {
         sample.detail.review_consents = [{ id:"consent-preview",task:sample.row.id,lane:"security",commit:"a41c9e2c0ffee0123456789abcdef0123456789a",round:1,engine:"claude",model:"Opus 5.5",state:"waiting",expires_unix:4102444800,can_answer:true }];
@@ -200,6 +306,18 @@ export function flowMock(scenario: string, method: string, path: string, query: 
     const end = Math.min(offset + limit, matched.length);
     const body: FlowTaskList = { crew, counts, tasks: matched.slice(offset, end), total: matched.length, next_offset: end < matched.length ? end : null, truncated };
     return { status: 200, body };
+  }
+  const artifactsId = /^\/api\/crew\/flow\/tasks\/([^/]+)\/artifacts$/.exec(path)?.[1];
+  if (artifactsId) {
+    const found = [...all, ...many()].find((one) => one.row.id === decodeURIComponent(artifactsId));
+    if (!found) return missing("task");
+    return found.artifacts ? { status: 200, body: found.artifacts } : missing("artifacts");
+  }
+  const runId = /^\/api\/crew\/flow\/tasks\/([^/]+)\/run$/.exec(path)?.[1];
+  if (runId) {
+    const found = [...all, ...many()].find((one) => one.row.id === decodeURIComponent(runId));
+    if (!found) return missing("task");
+    return found.run ? { status: 200, body: found.run } : missing("run");
   }
   const id = /^\/api\/crew\/flow\/tasks\/([^/]+)$/.exec(path)?.[1];
   if (id) {

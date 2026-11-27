@@ -134,6 +134,18 @@ describe("Cancel on a Taskboard card", () => {
     expect(await screen.findByText(/^Already cancelled\./)).toBeVisible();
   });
 
+  it("keeps the task in its column and shows the service's 502 words, with no cancelled confirmation", async () => {
+    const user = await board("crew-write-engine");
+    await choose(user, /^Running/, /^Actions for Use next/, /^Cancel$/);
+    await user.click(await screen.findByRole("button", { name: "Cancel task" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The task was not cancelled. Try again.");
+    expect(within(screen.getByRole("region", { name: /^Running/ })).getByRole("button", { name: /^Actions for Use next/ })).toBeVisible();
+    expect(screen.queryByText(/^Cancelled\./)).toBeNull();
+    expect(posts()).toHaveLength(1);
+    expect(String(posts()[0]![0])).toBe("/api/crew/tasks/b-running/cancel");
+  });
+
   it.each([
     ["crew-write-ended", "This task already ended."],
     // The service's own two messages for a 502, copied from crates/orbyn-core/src/crew/cancel.rs: shown as they are, and nothing added.
@@ -145,6 +157,7 @@ describe("Cancel on a Taskboard card", () => {
     await user.click(await screen.findByRole("button", { name: "Cancel task" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(`${message}Dismiss`);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(posts()).toHaveLength(1);
     await user.click(within(alert).getByRole("button", { name: "Dismiss" }));
@@ -217,6 +230,7 @@ describe("Re-run checks", () => {
     await rerun(user);
     await user.dblClick(await screen.findByRole("button", { name: "Re-run checks" }));
     expect(await screen.findByText("Re-running the checks. This can take up to 30 minutes.")).toBeVisible();
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(posts()).toHaveLength(1);
     release();
@@ -229,6 +243,7 @@ describe("Re-run checks", () => {
     await rerun(user);
     await user.click(await screen.findByRole("button", { name: "Re-run checks" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Another re-run is running. Try again in 7 seconds.");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(posts()).toHaveLength(1);
   });

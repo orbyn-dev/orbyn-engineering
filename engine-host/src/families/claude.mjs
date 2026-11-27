@@ -7,7 +7,32 @@ import { AsyncQueue } from "../asyncQueue.mjs";
 // see the README (Anthropic terms gate). Nothing here has run against the real SDK yet.
 
 const EXTRA_ENV_PREFIXES = ["CLAUDE_CODE_", "CLAUDE_AGENT_SDK_"];
+// The core refuses a credential-named variable from a confined child's allowlist (crates/orbyn-core/src/agents/driver/host/confinement.rs,
+// `names_a_secret`). The SDK hands back the host process environment, so a key under an allowed prefix gets the same refusal here: a
+// `CLAUDE_CODE_OAUTH_TOKEN` set in the service environment must not re-enter a confined worker. The core rule's account names cannot
+// start with either prefix, so these credential parts are the whole rule that can be reached.
+const SECRET_NAME_PARTS = ["SECRET", "TOKEN", "PASSWORD", "PASSPHRASE", "CREDENTIAL", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY"];
+const namesASecret = (name) => {
+  const upper = name.toUpperCase();
+  return SECRET_NAME_PARTS.some((part) => upper.includes(part)) || upper.endsWith("_KEY");
+};
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "killed", "stopped", "cancelled"]);
+const TURN_HEADS_KEPT = 500;
+const HISTORY_BUDGET_BYTES = 6 * 1024 * 1024; // the same limit as the OpenCode family's history
+const SUBAGENT_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const SUBAGENT_LIMIT_MAX = 5000;
+
+const hostError = (name, message, kind) => Object.assign(new Error(message), { name, ...(kind ? { kind } : {}) });
+const historyTooLarge = () => hostError("HistoryTooLarge", "This conversation is too large to read in one piece.", "host");
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const invalidRequest = (message) => hostError("InvalidRequest", message, "invalid_request");
+const unsupportedSdkMethod = (method) => Object.assign(new Error(`${method} is not available in this SDK`), { name: "UnsupportedRequest" });
+
+/** The engine's own messages, unchanged, unless their JSON would not fit one frame. */
+function boundedHistory(messages) {
+  if (JSON.stringify(messages).length > HISTORY_BUDGET_BYTES) throw historyTooLarge();
+  return messages;
+}
 
 function errorKind(status, text = "") {
   if (status === 401 || status === 403 || /not logged in|authenticat|oauth|\/login/i.test(text)) return "auth";
@@ -18,10 +43,13 @@ function errorKind(status, text = "") {
 }
 
 export function claudeFamily({ loadSdk }) {
+  let probed;
   return {
     name: "claude",
     sdk: { name: "@anthropic-ai/claude-agent-sdk", version: process.env.ORBYN_CLAUDE_SDK_VERSION ?? "unknown" },
-    capabilities: ["steer", "fork", "models", "usage", "stopTask", "background"],
+    capabilities: ["steer", "fork", "models", "usage", "readHistory", "readSubagent", "rollback", "stopTask", "background"],
+    // Whether this build carries the SDK, asked once at init. Node caches the import, so a first run does not load it twice.
+    probeSdk: () => (probed ??= Promise.resolve().then(loadSdk).then(() => true, () => false)),
     create(ctx) {
       const sessions = new Map();
       const pendingPermissions = new Map(); // requestId -> {resolve, sessionId}
@@ -57,7 +85,7 @@ export function claudeFamily({ loadSdk }) {
         const env = { ...c.env };
         const added = [];
         for (const [k, v] of Object.entries(spawnOptions.env ?? {})) {
-          if (!(k in env) && EXTRA_ENV_PREFIXES.some((p) => k.startsWith(p))) {
+          if (!(k in env) && EXTRA_ENV_PREFIXES.some((p) => k.startsWith(p)) && !namesASecret(k)) {
             env[k] = v;
             added.push(k);
           }
@@ -90,7 +118,15 @@ export function claudeFamily({ loadSdk }) {
           ctx.send({ type: "session", sendId: session.run?.sendId, engineSessionId: msg.session_id, turnId: session.run?.turnId });
         }
         const run = session.run;
-        if (run) ctx.send({ type: "delta", sendId: run.sendId, update: msg });
+        if (run) {
+          ctx.send({ type: "delta", sendId: run.sendId, update: msg });
+          // The point after this turn: its last top-level assistant message, not one from a subagent.
+          if (msg.type === "assistant" && !msg.parent_tool_use_id && typeof msg.uuid === "string") {
+            session.turnHeads.delete(run.turnId);
+            session.turnHeads.set(run.turnId, msg.uuid);
+            while (session.turnHeads.size > TURN_HEADS_KEPT) session.turnHeads.delete(session.turnHeads.keys().next().value);
+          }
+        }
         if (msg.type === "system" && msg.subtype === "task_started") {
           const holds = msg.task_type === "local_agent" || msg.task_type === "local_workflow";
           if (holds && run) run.held.add(msg.task_id);
@@ -143,12 +179,16 @@ export function claudeFamily({ loadSdk }) {
         const base = { ...session.options.sdk, cwd: session.cwd, includePartialMessages: true, canUseTool: canUseTool(session), spawnClaudeCodeProcess: spawnProcess(session) };
         if (session.options.claudePath) base.pathToClaudeCodeExecutable = session.options.claudePath;
         if (session.resume) base.resume = session.resume;
-        session.query = query({ prompt: session.inbox, options: base });
+        if (session.resumeAt) base.resumeSessionAt = session.resumeAt;
+        const live = query({ prompt: session.inbox, options: base });
+        session.query = live;
+        session.resumeAt = undefined;
         session.pump = (async () => {
           try {
-            for await (const msg of session.query) onMessage(session, msg);
-            finish(session, failure(new Error("The engine stopped before answering."), "engine"));
+            for await (const msg of live) onMessage(session, msg);
+            if (session.query === live) finish(session, failure(new Error("The engine stopped before answering."), "engine"));
           } catch (cause) {
+            if (session.query !== live) return;
             const kind = errorKind(cause?.status, String(cause?.message));
             finish(session, failure(cause, kind));
           }
@@ -166,7 +206,19 @@ export function claudeFamily({ loadSdk }) {
                 const forked = await forkSession(request.engineSessionId, { dir: cwd });
                 resume = forked.sessionId;
               }
-              sessions.set(sessionId, { id: sessionId, cwd, options, confinement, resume, engineSessionId: resume, run: null });
+              let resumeAt;
+              if (request.resumeAt !== undefined) {
+                if (request.operation !== "resume" || typeof request.resumeAt !== "string" || !UUID.test(request.resumeAt)) {
+                  throw invalidRequest("resumeAt needs operation resume and the uuid of an assistant message.");
+                }
+                const api = await sdk();
+                if (typeof api.getSessionMessages !== "function") throw unsupportedSdkMethod("getSessionMessages");
+                const known = await api.getSessionMessages(resume, { dir: cwd });
+                const found = Array.isArray(known) && known.some((m) => m?.type === "assistant" && m.uuid === request.resumeAt && !m.parent_tool_use_id);
+                if (!found) throw invalidRequest("resumeAt is not a top-level assistant message of this session.");
+                resumeAt = request.resumeAt;
+              }
+              sessions.set(sessionId, { id: sessionId, cwd, options, confinement, resume, resumeAt, engineSessionId: resume, turnHeads: new Map(), run: null });
               return { engineSessionId: resume ?? null };
             }
             case "send": {
@@ -255,6 +307,54 @@ export function claudeFamily({ loadSdk }) {
                 inbox.close();
                 probe.close?.();
               }
+            }
+            case "rollback": {
+              const session = sessions.get(request.sessionId);
+              if (!session) throw Object.assign(new Error("unknown session"), { name: "UnknownSession" });
+              if (session.run) throw Object.assign(new Error("a run is already open on this session"), { name: "RunInProgress" });
+              const head = session.turnHeads.get(request.toTurn);
+              if (!head || !session.engineSessionId) return { ok: false };
+              session.inbox?.close();
+              session.query?.close?.();
+              session.query = undefined;
+              session.inbox = undefined;
+              session.pump = undefined;
+              session.resume = session.engineSessionId;
+              session.resumeAt = head;
+              // The engine's transcript still holds the rolled-back turns; the host forgets their heads.
+              let after = false;
+              for (const turnId of [...session.turnHeads.keys()]) {
+                if (after) session.turnHeads.delete(turnId);
+                else if (turnId === request.toTurn) after = true;
+              }
+              return { ok: true };
+            }
+            case "readHistory": {
+              const session = sessions.get(request.sessionId);
+              if (!session) throw Object.assign(new Error("unknown session"), { name: "UnknownSession" });
+              if (!session.engineSessionId) throw hostError("NoEngineSession", "this session has no engine session yet");
+              const api = await sdk();
+              if (typeof api.getSessionMessages !== "function") throw unsupportedSdkMethod("getSessionMessages");
+              return boundedHistory(await api.getSessionMessages(session.engineSessionId, { dir: session.cwd }));
+            }
+            case "readSubagent": {
+              const session = sessions.get(request.sessionId);
+              if (!session) throw Object.assign(new Error("unknown session"), { name: "UnknownSession" });
+              if (!session.engineSessionId) throw hostError("NoEngineSession", "this session has no engine session yet");
+              if (typeof request.agentId !== "string" || !SUBAGENT_ID.test(request.agentId)) {
+                throw invalidRequest("agentId must be 1 to 128 letters, digits, underscores or hyphens.");
+              }
+              if (request.limit !== undefined && (!Number.isInteger(request.limit) || request.limit < 1 || request.limit > SUBAGENT_LIMIT_MAX)) {
+                throw invalidRequest(`limit must be a positive integer no greater than ${SUBAGENT_LIMIT_MAX}.`);
+              }
+              const api = await sdk();
+              if (typeof api.getSubagentMessages !== "function") throw unsupportedSdkMethod("getSubagentMessages");
+              return boundedHistory(
+                await api.getSubagentMessages(session.engineSessionId, request.agentId, {
+                  dir: session.cwd,
+                  ...(request.limit !== undefined ? { limit: request.limit } : {}),
+                }),
+              );
             }
             case "closeSession": {
               const session = sessions.get(request.sessionId);

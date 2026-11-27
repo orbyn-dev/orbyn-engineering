@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use orbyn_contracts::{KeybindingConflict, KeybindingRule, KeybindingsView};
+use orbyn_contracts::{KeybindingConflict, KeybindingRule, KeybindingViewRule, KeybindingsView};
 use serde_json::Value;
 
 use crate::app::Core;
@@ -27,6 +27,12 @@ pub(crate) const DEFAULTS: &[(&str, &str, &str)] = &[
     (
         "mod+t",
         "rightPanel.new",
+        "rightPanelOpen && !terminalFocus",
+    ),
+    // Maximise is the shift variant of the panel toggle, as appearance.cycle is of theme.select.
+    (
+        "mod+alt+shift+b",
+        "rightPanel.maximize",
         "rightPanelOpen && !terminalFocus",
     ),
     ("mod+d", "terminal.split", "terminalFocus"),
@@ -199,38 +205,92 @@ fn parse(text: &str) -> (Vec<KeybindingRule>, Vec<String>) {
     (rules, issues)
 }
 
-/// The file's rules over the defaults. A later rule for one key and context wins,
-/// and `remove` takes a rule out.
-fn merged(own: &[KeybindingRule]) -> Vec<KeybindingRule> {
-    let mut rules = defaults();
+/// The file's rules over the defaults, each marked with whether it is the person's own.
+/// A later rule for one key and context wins, and `remove` takes a rule out.
+fn merged(own: &[KeybindingRule]) -> Vec<(KeybindingRule, bool)> {
+    let mut rules: Vec<(KeybindingRule, bool)> =
+        defaults().into_iter().map(|rule| (rule, false)).collect();
     for rule in own {
         if rule.remove {
-            rules.retain(|known| !(known.key == rule.key && known.command == rule.command));
+            rules.retain(|(known, _)| !(known.key == rule.key && known.command == rule.command));
             continue;
         }
-        rules.retain(|known| !(known.command == rule.command && known.when == rule.when));
-        rules.retain(|known| !(known.key == rule.key && known.when == rule.when));
-        rules.push(rule.clone());
+        rules.retain(|(known, _)| !(known.command == rule.command && known.when == rule.when));
+        rules.retain(|(known, _)| !(known.key == rule.key && known.when == rule.when));
+        rules.push((rule.clone(), true));
     }
     rules
 }
 
-/// One key in one exact context with more than one command. Different contexts are
-/// how one key does two jobs, so they are not conflicts.
+/// True when the rule is a built-in one: the same key (however spelled), command and context.
+fn is_built_in(rule: &KeybindingRule) -> bool {
+    let key = crate::account::settings_record::normalize_key(&rule.key);
+    let when = rule.when.as_deref().filter(|when| !when.trim().is_empty());
+    DEFAULTS.iter().any(|(known_key, command, known_when)| {
+        *command == rule.command
+            && crate::account::settings_record::normalize_key(known_key) == key
+            && (!known_when.trim().is_empty()).then_some(*known_when) == when
+    })
+}
+
+/// The built-in keys of a command in a context, in table order.
+fn default_keys(command: &str, when: Option<&str>) -> Vec<String> {
+    let when = when.filter(|when| !when.trim().is_empty());
+    DEFAULTS
+        .iter()
+        .filter(|(_, known_command, known_when)| {
+            *known_command == command
+                && (!known_when.trim().is_empty()).then_some(*known_when) == when
+        })
+        .map(|(key, _, _)| (*key).to_owned())
+        .collect()
+}
+
+/// Report exact-context collisions and unconditional bindings that overlap a context.
+/// Distinct nonempty contexts are left separate because they may be disjoint.
 fn conflicts(rules: &[KeybindingRule]) -> Vec<KeybindingConflict> {
     let mut found: Vec<KeybindingConflict> = Vec::new();
     for rule in rules {
+        let key = crate::account::settings_record::normalize_key(&rule.key);
+        let when = rule.when.as_ref().filter(|when| !when.trim().is_empty());
         match found
             .iter_mut()
-            .find(|known| known.key == rule.key && known.when == rule.when)
+            .find(|known| known.key == key && known.when.as_ref() == when)
         {
             Some(known) => known.commands.push(rule.command.clone()),
             None => found.push(KeybindingConflict {
-                key: rule.key.clone(),
-                when: rule.when.clone(),
+                key,
+                when: when.cloned(),
                 commands: vec![rule.command.clone()],
             }),
         }
+    }
+    for conflict in &mut found {
+        if conflict
+            .when
+            .as_deref()
+            .is_some_and(|when| !when.trim().is_empty())
+        {
+            let mut unconditional: Vec<String> = rules
+                .iter()
+                .filter(|rule| {
+                    crate::account::settings_record::normalize_key(&rule.key) == conflict.key
+                        && rule
+                            .when
+                            .as_deref()
+                            .is_none_or(|when| when.trim().is_empty())
+                })
+                .map(|rule| rule.command.clone())
+                .collect();
+            unconditional.append(&mut conflict.commands);
+            conflict.commands = unconditional;
+        }
+    }
+    for conflict in &mut found {
+        let mut seen = std::collections::HashSet::new();
+        conflict
+            .commands
+            .retain(|command| seen.insert(command.clone()));
     }
     found.retain(|conflict| conflict.commands.len() > 1);
     found
@@ -249,10 +309,24 @@ impl Core {
         let path = self.keybindings_path();
         let (own, issues) = read(&path);
         let rules = merged(&own);
+        let plain: Vec<KeybindingRule> = rules.iter().map(|(rule, _)| rule).cloned().collect();
         KeybindingsView {
             path: path.to_string_lossy().into_owned(),
-            conflicts: conflicts(&rules),
-            rules,
+            conflicts: conflicts(&plain),
+            rules: rules
+                .into_iter()
+                .map(|(rule, custom)| {
+                    let default_keys = default_keys(&rule.command, rule.when.as_deref());
+                    KeybindingViewRule {
+                        key: rule.key,
+                        command: rule.command,
+                        when: rule.when,
+                        remove: false,
+                        custom: Some(custom),
+                        default_keys: Some(default_keys),
+                    }
+                })
+                .collect(),
             issues,
         }
     }
@@ -305,6 +379,60 @@ impl Core {
         let staged: Vec<_> = displaced
             .iter()
             .chain(std::iter::once(rule))
+            .map(crate::account::settings_record::stage_keybinding)
+            .collect();
+        if let Err(error) = self
+            .store
+            .account_stage(crate::account::settings_record::ZONE, &staged)
+        {
+            tracing::warn!(%error, "could not queue a keybinding for sync");
+        }
+        Ok(self.keybindings())
+    }
+
+    /// Drops the person's own rules for a command and context, so the built-in binding
+    /// shows again. A hidden default stays hidden.
+    pub fn reset_keybinding(&self, command: &str, when: Option<&str>) -> Result<KeybindingsView> {
+        let _writer = self
+            .keybinding_writer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if command.trim().is_empty() || command.len() > MAX_FIELD {
+            return Err(CoreError::Invalid("A reset needs a command.".into()));
+        }
+        let path = self.keybindings_path();
+        let (mut own, issues) = read(&path);
+        if !issues.is_empty() {
+            return Err(CoreError::Invalid(
+                "Fix the keybindings file before changing it here.".into(),
+            ));
+        }
+        let when = when.filter(|when| !when.trim().is_empty());
+        let same = |rule: &KeybindingRule| {
+            !rule.remove
+                && rule.command == command
+                && rule.when.as_deref().filter(|when| !when.trim().is_empty()) == when
+        };
+        let dropped: Vec<KeybindingRule> = own
+            .iter()
+            .filter(|rule| same(rule))
+            .map(|rule| KeybindingRule {
+                remove: true,
+                ..rule.clone()
+            })
+            .collect();
+        if dropped.is_empty() {
+            return Ok(self.keybindings());
+        }
+        own.retain(|rule| !same(rule));
+        write_rules(&path, &own)?;
+        // Queued for sync when the account is on; the file is already saved, so a
+        // failure here never fails the person's reset.
+        // A dropped rule that is the same chord as a built-in one stages nothing: its removal marker would hide that
+        // built-in binding on every other device, and the rule there already reads as the default.
+        let staged: Vec<_> = dropped
+            .iter()
+            .filter(|rule| !is_built_in(rule))
             .map(crate::account::settings_record::stage_keybinding)
             .collect();
         if let Err(error) = self
@@ -385,6 +513,23 @@ mod tests {
         }
     }
 
+    fn merged_rules(own: &[KeybindingRule]) -> Vec<KeybindingRule> {
+        merged(own).into_iter().map(|(rule, _)| rule).collect()
+    }
+
+    fn core_with_account() -> (crate::testing::TempDir, Core) {
+        use crate::account::settings_record::ZONE;
+        use crate::{CoreConfig, testing::TempDir};
+        let dir = TempDir::new();
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        core.store
+            .account_enable(ZONE, &[], false, Some("test-device"))
+            .unwrap();
+        (dir, core)
+    }
+
     #[test]
     fn saving_equivalent_chord_in_another_context_replaces_and_stages_the_old_rule() {
         use crate::account::settings_record::{ZONE, keybinding_name};
@@ -443,12 +588,153 @@ mod tests {
     }
 
     #[test]
+    fn reset_restores_the_built_in_binding_and_queues_a_removal() {
+        use crate::account::settings_record::{ZONE, keybinding_name};
+        let (_dir, core) = core_with_account();
+        core.save_keybinding(&rule("mod+y", "sidebar.toggle", None))
+            .unwrap();
+        let custom = core
+            .keybindings()
+            .rules
+            .into_iter()
+            .find(|r| r.key == "mod+y" && r.command == "sidebar.toggle")
+            .expect("the rebinding is in the view");
+        assert_eq!(custom.custom, Some(true));
+        assert_eq!(custom.default_keys, Some(vec!["mod+b".to_owned()]));
+        assert!(
+            !core
+                .keybindings()
+                .rules
+                .iter()
+                .any(|r| r.key == "mod+b" && r.command == "sidebar.toggle")
+        );
+
+        let view = core.reset_keybinding("sidebar.toggle", None).unwrap();
+        let restored = view
+            .rules
+            .iter()
+            .find(|r| r.key == "mod+b" && r.command == "sidebar.toggle")
+            .expect("the built-in binding is back");
+        assert_eq!(restored.custom, Some(false));
+        assert_eq!(restored.default_keys, Some(vec!["mod+b".to_owned()]));
+        assert!(!view.rules.iter().any(|r| r.key == "mod+y"));
+
+        let (own, issues) = read(&core.keybindings_path());
+        assert!(issues.is_empty());
+        assert!(
+            !own.iter()
+                .any(|r| r.command == "sidebar.toggle" && !r.remove)
+        );
+        let record = core.store.account_record(ZONE).unwrap();
+        let removed = &record[&keybinding_name("mod+y", None)].value;
+        assert_eq!(removed["remove"], true);
+        assert_eq!(removed["command"], "sidebar.toggle");
+    }
+
+    #[test]
+    fn resetting_a_rule_equal_to_a_built_in_one_never_stages_a_removal_that_hides_it() {
+        use crate::account::settings_record::{ZONE, keybinding_name};
+        let (_dir, core) = core_with_account();
+        core.save_keybinding(&rule("mod+b", "sidebar.toggle", None))
+            .unwrap();
+        let view = core.reset_keybinding("sidebar.toggle", None).unwrap();
+        let back = view
+            .rules
+            .iter()
+            .find(|r| r.key == "mod+b" && r.command == "sidebar.toggle")
+            .expect("the built-in binding shows");
+        assert_eq!(back.custom, Some(false));
+        let record = core.store.account_record(ZONE).unwrap();
+        let staged = &record[&keybinding_name("mod+b", None)].value;
+        assert_eq!(
+            staged["remove"], false,
+            "a removal of mod+b would hide the built-in binding on another device"
+        );
+    }
+
+    #[test]
+    fn reset_keeps_a_hidden_default_hidden() {
+        let (_dir, core) = core_with_account();
+        let mut hidden = rule("mod+b", "sidebar.toggle", None);
+        hidden.remove = true;
+        core.save_keybinding(&hidden).unwrap();
+        core.save_keybinding(&rule("mod+y", "thread.pin", Some("!terminalFocus")))
+            .unwrap();
+        let view = core
+            .reset_keybinding("thread.pin", Some("!terminalFocus"))
+            .unwrap();
+        assert!(
+            !view
+                .rules
+                .iter()
+                .any(|r| r.key == "mod+b" && r.command == "sidebar.toggle")
+        );
+        let pinned = view
+            .rules
+            .iter()
+            .find(|r| r.command == "thread.pin")
+            .expect("thread.pin is bound");
+        assert_eq!(pinned.key, "mod+shift+p");
+        assert_eq!(pinned.custom, Some(false));
+        assert!(!view.rules.iter().any(|r| r.key == "mod+y"));
+    }
+
+    #[test]
+    fn reset_of_a_command_with_no_custom_rule_changes_nothing() {
+        let (_dir, core) = core_with_account();
+        let before = core.keybindings();
+        let after = core.reset_keybinding("sidebar.toggle", None).unwrap();
+        assert_eq!(after, before);
+        assert!(!core.keybindings_path().exists());
+    }
+
+    #[test]
+    fn a_bound_command_with_no_built_in_has_no_default_keys() {
+        let (_dir, core) = core_with_account();
+        core.save_keybinding(&rule("mod+y", "my.custom.command", None))
+            .unwrap();
+        let custom = core
+            .keybindings()
+            .rules
+            .into_iter()
+            .find(|r| r.key == "mod+y" && r.command == "my.custom.command")
+            .expect("the custom rule is in the view");
+        assert_eq!(custom.custom, Some(true));
+        assert_eq!(custom.default_keys, Some(Vec::new()));
+    }
+
+    #[test]
     fn the_defaults_have_no_conflicts() {
         assert!(
             conflicts(&defaults()).is_empty(),
             "{:?}",
             conflicts(&defaults())
         );
+    }
+
+    #[test]
+    fn the_right_panel_commands_are_bound_in_the_scheme_they_follow() {
+        let rules = defaults();
+        let one = |command: &str| {
+            rules
+                .iter()
+                .find(|rule| rule.command == command)
+                .unwrap_or_else(|| panic!("{command} has no binding"))
+        };
+        let new = one("rightPanel.new");
+        assert_eq!(new.key, "mod+t");
+        assert_eq!(
+            new.when.as_deref(),
+            Some("rightPanelOpen && !terminalFocus")
+        );
+        // Maximise is the shift variant of the panel toggle (mod+alt+b), as appearance.cycle is of theme.select.
+        let maximize = one("rightPanel.maximize");
+        assert_eq!(maximize.key, "mod+alt+shift+b");
+        assert_eq!(
+            maximize.when.as_deref(),
+            Some("rightPanelOpen && !terminalFocus")
+        );
+        assert!(conflicts(&rules).is_empty(), "{:?}", conflicts(&rules));
     }
 
     #[test]
@@ -460,7 +746,7 @@ mod tests {
             assert_eq!(found.len(), 1, "{command}");
             assert_eq!(found[0].key, format!("mod+{digit}"));
         }
-        let moved = merged(&[rule("alt+3", "thread.jump.3", Some("!terminalFocus"))]);
+        let moved = merged_rules(&[rule("alt+3", "thread.jump.3", Some("!terminalFocus"))]);
         assert!(!moved.iter().any(|r| r.key == "mod+3"));
         assert!(moved.iter().any(|r| r.key == "mod+4"));
     }
@@ -481,8 +767,77 @@ mod tests {
     }
 
     #[test]
+    fn repeated_command_in_overlapping_contexts_is_not_a_conflict() {
+        let rules = [
+            rule("mod+q", "same", None),
+            rule("mod+q", "same", Some("")),
+            rule("mod+q", "same", Some("!terminalFocus")),
+        ];
+        assert!(conflicts(&rules).is_empty());
+        let mut with_other = rules.to_vec();
+        with_other.push(rule("mod+q", "other", Some("!terminalFocus")));
+        let clashes = conflicts(&with_other);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].commands, ["same", "other"]);
+    }
+
+    #[test]
+    fn unconditional_context_variants_collide() {
+        let rules = [
+            rule("mod+q", "one", None),
+            rule("mod+q", "two", Some("")),
+            rule("mod+q", "three", Some("  ")),
+        ];
+        let clashes = conflicts(&merged_rules(&rules));
+        let clash = clashes
+            .iter()
+            .find(|clash| clash.key == "mod+q")
+            .expect("unconditional rules overlap");
+        assert_eq!(clash.when, None);
+        assert_eq!(clash.commands, ["one", "two", "three"]);
+    }
+
+    #[test]
+    fn differently_spelled_keys_conflict_under_the_normalised_key() {
+        let rules = [rule("Mod+K", "a.one", None), rule("mod+k ", "a.two", None)];
+        let clashes = conflicts(&rules);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].key, "mod+k");
+        assert_eq!(clashes[0].commands, ["a.one", "a.two"]);
+        let mixed = [
+            rule("mod+k", "a.one", None),
+            rule("MOD+K", "a.two", Some("!terminalFocus")),
+        ];
+        let clashes = conflicts(&mixed);
+        assert_eq!(clashes.len(), 1);
+        assert_eq!(clashes[0].key, "mod+k");
+        assert_eq!(clashes[0].when.as_deref(), Some("!terminalFocus"));
+        assert_eq!(clashes[0].commands, ["a.one", "a.two"]);
+    }
+
+    #[test]
+    fn rebinding_sidebar_to_palette_key_reports_overlap() {
+        let rules = merged_rules(&[rule("mod+k", "sidebar.toggle", None)]);
+        let clashes = conflicts(&rules);
+        let clash = clashes.iter().find(|clash| clash.key == "mod+k").unwrap();
+        assert_eq!(clash.when.as_deref(), Some("!terminalFocus"));
+        assert!(
+            clash
+                .commands
+                .iter()
+                .any(|command| command == "sidebar.toggle")
+        );
+        assert!(
+            clash
+                .commands
+                .iter()
+                .any(|command| command == "commandPalette.toggle")
+        );
+    }
+
+    #[test]
     fn the_file_rebinds_removes_and_reports_conflicts() {
-        let rules = merged(&[rule("mod+y", "sidebar.toggle", None)]);
+        let rules = merged_rules(&[rule("mod+y", "sidebar.toggle", None)]);
         assert!(
             rules
                 .iter()
@@ -494,12 +849,22 @@ mod tests {
             ..rule("mod+j", "terminal.toggle", None)
         };
         assert!(
-            !merged(&[gone])
+            !merged_rules(&[gone])
                 .iter()
                 .any(|r| r.command == "terminal.toggle")
         );
         let clash = [rule("mod+q", "one", None), rule("mod+q", "two", Some("x"))];
-        assert!(conflicts(&merged(&clash)).is_empty(), "contexts differ");
+        assert_eq!(conflicts(&merged_rules(&clash))[0].commands, ["one", "two"]);
+        let disjoint = [
+            rule("mod+q", "one", Some("terminalFocus")),
+            rule("mod+q", "two", Some("!terminalFocus")),
+        ];
+        assert!(conflicts(&merged_rules(&disjoint)).is_empty());
+        let blank = [
+            rule("mod+q", "one", Some("  ")),
+            rule("mod+q", "two", Some("!terminalFocus")),
+        ];
+        assert_eq!(conflicts(&merged_rules(&blank))[0].commands, ["one", "two"]);
         let same = [rule("a", "one", None), rule("a", "two", None)];
         assert_eq!(conflicts(&same)[0].commands, ["one", "two"]);
     }

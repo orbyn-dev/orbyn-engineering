@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use orbyn_contracts::{CrewPathPattern, LeaseMode};
+use orbyn_contracts::{CheckKind, CheckOutcome, CrewObject, CrewPathPattern, LeaseMode};
 use serde_json::{Value, json};
 
 use super::harness::{KEY_MARKER, Turn, World, bind, brief, key, report, world};
@@ -270,8 +270,24 @@ async fn a_stored_decision_moves_the_task_to_routed_only_when_the_lifecycle_allo
     assert_eq!(refusal.code, orbyn_contracts::ErrorCode::InvalidTransition);
     assert_eq!(w.task(&id).state, "running");
     // Nor can a task skip a state, or pass without Evidence (H8).
-    assert!(w.core.store.move_crew_task(&id, "passed", None).is_err());
-    assert!(w.core.store.move_crew_task(&id, "stopped", None).is_err());
+    let skipped = w
+        .core
+        .store
+        .move_crew_task(&id, "passed", None)
+        .unwrap_err();
+    assert!(
+        matches!(&skipped, crate::error::CoreError::InvalidTransition { from, to } if (from.as_str(), to.as_str()) == ("running", "passed")),
+        "{skipped:?}"
+    );
+    let reasonless = w
+        .core
+        .store
+        .move_crew_task(&id, "stopped", None)
+        .unwrap_err();
+    assert!(
+        matches!(&reasonless, crate::error::CoreError::Invalid(why) if why == "a stopped task names its reason, and no other state has one"),
+        "{reasonless:?}"
+    );
     assert!(
         w.core
             .store
@@ -473,6 +489,228 @@ async fn an_in_flight_task_is_not_killed_by_the_crew_budget() {
     );
 }
 
+/// The crew budget fails closed: a budget that no read can settle refuses the start instead of
+/// reading as "no budget", so a crew whose Settings cannot be read starts nothing rather than
+/// spending turns nobody can count. The refusal names the failed read, as the background crews'
+/// daily budget does (`refuse_background_daily`).
+#[tokio::test]
+async fn a_crew_turn_budget_that_cannot_be_read_refuses_a_new_start() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(5))]),
+        )
+        .unwrap();
+    // The read of the stored settings is what fails, as under a corrupt settings row or a locked
+    // database; the budget itself is still on disk and unread.
+    w.core
+        .store
+        .reader()
+        .execute_batch("DROP TABLE settings")
+        .unwrap();
+    let (refusal, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(
+        refusal["message"],
+        "The crew's turn budget could not be read, so no new task can start. Try again."
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    assert!(
+        w.prompts.lock().unwrap().is_empty(),
+        "a refused start sends nothing"
+    );
+}
+
+/// The budget record itself holds only whole turns, so a value the setting cannot hold is a count
+/// nobody can settle: the start is refused rather than read as an absent budget. Nothing is
+/// stored or sent, and the refusal is the same one an unreadable settings row gives.
+#[tokio::test]
+async fn a_crew_turn_budget_that_is_not_a_whole_number_refuses_a_new_start() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(5))]),
+        )
+        .unwrap();
+    // What an older or damaged row leaves behind: the setting only ever writes a whole number.
+    w.core
+        .store
+        .reader()
+        .execute_batch("UPDATE settings SET value = '\"a few\"' WHERE key LIKE '%crew_turn_budget'")
+        .unwrap();
+    let (refusal, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized");
+    assert_eq!(
+        refusal["message"],
+        "The crew's turn budget could not be read, so no new task can start. Try again."
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    assert!(
+        w.prompts.lock().unwrap().is_empty(),
+        "a refused start sends nothing"
+    );
+}
+
+/// A crew whose spend cannot be read fails closed too: "not under budget" is not something a
+/// failed count can establish, so the start is refused. The crew's own tasks stay untouched.
+#[tokio::test]
+async fn a_crew_whose_turns_cannot_be_read_refuses_a_new_start() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(5))]),
+        )
+        .unwrap();
+    // The per-task tally reads the approvals it reserved, but only for a run that exists: a crew with no run yet is
+    // never asked for them. So one task runs first, and then losing that table loses the count.
+    let (answer, error) = w.start(leased("src/first.txt"), key()).await;
+    assert!(!error, "{answer}");
+    w.until("the first task's turn is spent", |w| {
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap() == 1
+    })
+    .await;
+    w.core
+        .store
+        .reader()
+        .execute_batch("DROP TABLE crew_autopilot_events")
+        .unwrap();
+    let prompts_before = w.prompts.lock().unwrap().len();
+    let (refusal, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refusal}");
+    assert_eq!(refusal["code"], "not_authorized", "{refusal}");
+    assert_eq!(
+        refusal["message"],
+        "The crew's turns could not be read, so no new task can start. Try again."
+    );
+    assert_eq!(
+        count(&w, "crew_tasks"),
+        1,
+        "a refused start stores nothing beside the first task"
+    );
+    assert_eq!(
+        w.prompts.lock().unwrap().len(),
+        prompts_before,
+        "a refused start sends nothing"
+    );
+}
+
+/// The boundary the budget is read against is "at least the limit", never "over it": a crew one
+/// turn under its budget still starts a task, and the start that spends the last turn is the one
+/// after which starts are refused.
+#[tokio::test]
+async fn one_turn_under_the_crew_turn_budget_still_starts_a_task() {
+    let w = quiet().await;
+    w.core
+        .set_preferences(
+            None,
+            &BTreeMap::from([("crew_turn_budget".to_owned(), json!(3))]),
+        )
+        .unwrap();
+    for path in ["src/a.txt", "src/b.txt"] {
+        let (answer, error) = w.start(leased(path), key()).await;
+        assert!(!error, "{answer}");
+    }
+    w.until("the crew's two turns are spent", |w| {
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap() == 2
+            && w.prompts.lock().unwrap().len() == 2
+    })
+    .await;
+    // Two of the three turns are gone: the crew is one under, so this start runs.
+    let (answer, error) = w.start(leased("src/c.txt"), key()).await;
+    assert!(
+        !error,
+        "a start one turn under the budget was refused: {answer}"
+    );
+    w.until("the crew's third turn is spent", |w| {
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap() == 3
+    })
+    .await;
+    let (refusal, error) = w.start(leased("src/d.txt"), key()).await;
+    assert!(error, "the start at the limit was not refused: {refusal}");
+    assert_eq!(
+        refusal["message"],
+        "The crew has spent its turn budget, so no new task can start."
+    );
+    assert_eq!(count(&w, "crew_tasks"), 3, "a refused start stores nothing");
+}
+
+/// No budget recorded behaves as documented: a crew made before the budget existed (unset) and a
+/// budget of 0 both start tasks without limit, while the turns are still counted for the person.
+#[tokio::test]
+async fn a_crew_with_no_turn_budget_recorded_starts_every_task() {
+    let w = quiet().await;
+    for (budget, paths) in [
+        (None, ["src/a.txt", "src/b.txt"]),
+        (Some(json!(0)), ["src/c.txt", "src/d.txt"]),
+    ] {
+        if let Some(value) = budget {
+            w.core
+                .set_preferences(
+                    None,
+                    &BTreeMap::from([("crew_turn_budget".to_owned(), value)]),
+                )
+                .unwrap();
+        }
+        for path in paths {
+            let (answer, error) = w.start(leased(path), key()).await;
+            assert!(
+                !error,
+                "a crew with no turn budget refused a start: {answer}"
+            );
+        }
+    }
+    w.until("the crew's four turns are counted", |w| {
+        w.core.store.crew_turns_spent_in_crew(&w.lead).unwrap() == 4
+    })
+    .await;
+    assert_eq!(
+        count(&w, "crew_tasks"),
+        4,
+        "a crew with no budget starts every task"
+    );
+}
+
+/// The disk guard (KC4): a start is refused, with the free space in the reason, when the lead's volume has less than the
+/// person's floor, and nothing is started. The default floor is 5 GB; faked free space lets this run on any machine.
+#[tokio::test]
+async fn a_start_under_the_disk_floor_is_refused_with_the_free_space() {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let w = quiet().await;
+    let cwd = w.core.store.thread(&w.lead).unwrap().cwd;
+    let path = std::path::Path::new(&cwd);
+    crate::host::disk::set_free_for_test(path, Some(7 * GIB / 2));
+    let (refused, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refused}");
+    assert_eq!(refused["code"], "disk_low");
+    assert_eq!(refused["free_bytes"].as_u64(), Some(7 * GIB / 2));
+    assert_eq!(refused["floor_gb"].as_u64(), Some(5));
+    assert_eq!(
+        refused["message"],
+        "Not started: 3.5 GB free, Crew needs 5 GB. Free space and try again."
+    );
+    assert!(w.prompts.lock().unwrap().is_empty(), "nothing was started");
+
+    crate::host::disk::set_free_for_test(path, Some(640 * 1024 * 1024));
+    let (refused, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(error, "the start was not refused: {refused}");
+    assert_eq!(refused["code"], "disk_low");
+    assert_eq!(refused["free_bytes"].as_u64(), Some(640 * 1024 * 1024));
+    assert_eq!(refused["floor_gb"].as_u64(), Some(5));
+    let message = refused["message"].as_str().unwrap();
+    assert!(message.contains("640 MB free"), "{message}");
+    assert!(w.prompts.lock().unwrap().is_empty(), "nothing was started");
+
+    crate::host::disk::set_free_for_test(path, Some(20 * GIB));
+    let (answer, error) = w.start(leased("src/a.txt"), key()).await;
+    assert!(!error, "{answer}");
+    crate::host::disk::set_free_for_test(path, None);
+}
+
 /// The budget is a device-local number measured per crew: a second crew has its own allowance,
 /// so one crew's spend never refuses another's start. The docs define no reset; the count is read
 /// from each crew's tasks, so a new crew starts at zero.
@@ -509,6 +747,7 @@ async fn a_crew_budget_measures_each_crew_on_its_own() {
             base_branch: None,
             effort: None,
             options: Default::default(),
+            branch_name_seed: None,
         })
         .await
         .unwrap();
@@ -564,4 +803,242 @@ async fn a_task_whose_first_prompt_is_queued_counts_a_turn() {
     assert!(error, "a queued start was counted as free: {refusal}");
     assert_eq!(refusal["code"], "not_authorized");
     assert_eq!(count(&w, "crew_tasks"), 1);
+}
+
+/// Writes the repository's rules file and commits it, so it is part of the commit a task starts from.
+fn crew_json(w: &World, text: &str) {
+    std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
+    std::fs::write(w.repo.join(".orbyn/crew.json"), text).unwrap();
+    crate::testing::run_git(&w.repo, &["add", "-f", ".orbyn/crew.json"]);
+    super::review_support::commit_all(&w.repo, "repository checks");
+}
+
+/// The key a task was started with, as the store holds it.
+fn stored_key(w: &World, task: &str) -> orbyn_contracts::AnswerKey {
+    w.core.store.crew_answer_key(task).unwrap().unwrap()
+}
+
+/// Issue #795: every task that writes inherits the repository's own checks at the commit it starts from, and
+/// the task runs them, so a lead does not have to declare one and a worker cannot lower the bar.
+#[tokio::test]
+async fn a_task_that_writes_inherits_the_repositorys_checks_at_its_start() {
+    let w = world(
+        true,
+        Arc::new(|_, root| {
+            std::fs::write(root.join("src/lib.txt"), "fn parse_duration() {}\n").unwrap();
+            Turn::Report(report("done"))
+        }),
+    )
+    .await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let inherited: Vec<_> = stored
+        .checks
+        .iter()
+        .filter(|check| matches!(check.kind, CheckKind::RepoRequired))
+        .collect();
+    assert_eq!(inherited.len(), 1, "{:?}", stored.checks);
+    assert_eq!(inherited[0].id.as_str(), "chk-repo-required");
+    assert_eq!(
+        inherited[0].params["name"], "inherited",
+        "the inherited check is not marked as inherited"
+    );
+    // Nothing the lead declared was dropped, and the key's id is the hash of what now runs.
+    assert_eq!(stored.checks.len(), 4, "{:?}", stored.checks);
+    assert_eq!(
+        stored.id,
+        CrewObject::AnswerKey(stored.clone()).computed_id().unwrap()
+    );
+    // The inherited check runs in the task and records its Evidence.
+    w.until_state(&id, "passed").await;
+    let evidence = w.core.store.crew_evidence(&id).unwrap();
+    let ran = evidence
+        .iter()
+        .find(|one| one.check.as_str() == "chk-repo-required")
+        .unwrap_or_else(|| panic!("the inherited check did not run: {evidence:?}"));
+    assert_eq!(ran.outcome, CheckOutcome::Pass);
+    assert_eq!(ran.command.as_str(), "repo_required: chk-repo-required");
+    assert!(
+        ran.excerpt.contains("echo repository-check"),
+        "the log does not show the repository's own check: {}",
+        ran.excerpt
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a repository that declares no check, or no rules file at all, leaves the key as the lead sent it.
+#[tokio::test]
+async fn a_repository_that_declares_no_check_inherits_nothing() {
+    for rules in [None, Some(r#"{"checks":[]}"#)] {
+        let w = quiet().await;
+        if let Some(rules) = rules {
+            crew_json(&w, rules);
+        }
+        let (answer, error) = w.start(brief(json!({})), key()).await;
+        assert!(!error, "{answer}");
+        let id = answer["task"].as_str().unwrap().to_owned();
+        let stored = stored_key(&w, &id);
+        assert_eq!(stored.checks.len(), 3, "{rules:?}: {:?}", stored.checks);
+        assert!(
+            !stored
+                .checks
+                .iter()
+                .any(|check| matches!(check.kind, CheckKind::RepoRequired)),
+            "{rules:?}: an empty repository config added a check"
+        );
+        w.core.shutdown().await;
+    }
+}
+
+/// Issue #795: a key that already runs the repository's checks keeps its own check rather than gaining a second.
+#[tokio::test]
+async fn a_key_that_already_runs_the_repositorys_checks_gets_no_second_one() {
+    let w = quiet().await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-repo", "kind": "repo_required", "params": {},
+        "proves": "The repository's own checks pass.",
+    }));
+    let (answer, error) = w.start(brief(json!({})), declared).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let repo_required: Vec<_> = stored
+        .checks
+        .iter()
+        .filter(|check| matches!(check.kind, CheckKind::RepoRequired))
+        .collect();
+    assert_eq!(repo_required.len(), 1, "{:?}", stored.checks);
+    assert_eq!(
+        repo_required[0].id.as_str(),
+        "chk-repo",
+        "the start replaced the lead's own check"
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: repository rules only add or tighten (docs/crew.md, "Rules"), so a check the brief declares
+/// stays beside the inherited one and is never removed to make room for it.
+#[tokio::test]
+async fn a_briefs_own_check_coexists_with_the_inherited_one() {
+    let w = quiet().await;
+    crew_json(&w, r#"{"checks":[{"run":"echo repository-check"}]}"#);
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-same-line", "kind": "command",
+        "params": { "run": "echo repository-check" },
+        "proves": "The same line passes for the brief.",
+    }));
+    let (answer, error) = w.start(brief(json!({})), declared).await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let stored = stored_key(&w, &id);
+    let ids: Vec<&str> = stored
+        .checks
+        .iter()
+        .map(|check| check.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "chk-scope",
+            "chk-run",
+            "chk-probe",
+            "chk-same-line",
+            "chk-repo-required"
+        ],
+        "{ids:?}"
+    );
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a review writes nothing, so it runs no repository check; the reviewed work's own key carries
+/// them. A key that already runs them needs no second one either.
+#[tokio::test]
+async fn a_review_task_inherits_no_repository_checks() {
+    use crate::crew::stamp::Stamper;
+    use crate::crew::start::needs_repo_checks;
+    use crate::crew::tool::stamp_now;
+    use orbyn_contracts::{CrewId, CrewMember, CrewToken};
+
+    let w = quiet().await;
+    let lead = w.core.store.thread(&w.lead).unwrap();
+    let stamper = Stamper {
+        crew_id: CrewId::new(lead.id.clone()).unwrap(),
+        engine: CrewToken::new("alpha").unwrap(),
+        member: CrewMember::new("lead-01").unwrap(),
+        now: stamp_now().unwrap(),
+    };
+    let writing = stamper.brief(&brief(json!({}))).unwrap();
+    let writing_key = stamper.answer_key(&key(), &writing.id).unwrap();
+    assert!(needs_repo_checks(&writing, &writing_key));
+    let review = stamper
+        .brief(&brief(
+            json!({ "kind": "review", "files": [], "allowed_effects": ["read_repo"] }),
+        ))
+        .unwrap();
+    let review_key = stamper.answer_key(&key(), &review.id).unwrap();
+    assert!(!needs_repo_checks(&review, &review_key));
+    let mut declared = key();
+    declared["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-repo", "kind": "repo_required", "params": {},
+        "proves": "The repository's own checks pass.",
+    }));
+    let declared_key = stamper.answer_key(&declared, &writing.id).unwrap();
+    assert!(!needs_repo_checks(&writing, &declared_key));
+    // A fix key's internal byte comparison has the same kind but runs no repository command: it does not count as coverage.
+    let mut fix = key();
+    fix["checks"].as_array_mut().unwrap().push(json!({
+        "id": "chk-fix-touched", "kind": "repo_required", "params": { "name": "crew-fix-touched" },
+        "proves": "The fix touched what it said.",
+    }));
+    let fix_key = stamper.answer_key(&fix, &writing.id).unwrap();
+    assert!(needs_repo_checks(&writing, &fix_key));
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a rules file that cannot be read refuses the start, rather than starting a task whose bar
+/// nobody can read (docs/crew.md: a broken rule file is never an empty rule set).
+#[tokio::test]
+async fn a_repository_check_file_that_cannot_be_read_refuses_the_start() {
+    let w = quiet().await;
+    crew_json(&w, "{");
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert_eq!(answer["code"], "invalid_object");
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains(".orbyn/crew.json"),
+        "{answer}"
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    w.core.shutdown().await;
+}
+
+/// Issue #795: a check that declares the `when` this version does not read refuses the start, so a condition is
+/// never silently dropped and its check never runs unconditionally.
+#[tokio::test]
+async fn a_repository_that_declares_a_check_condition_refuses_the_start() {
+    let w = quiet().await;
+    crew_json(
+        &w,
+        r#"{"checks":[{"run":"echo repository-check","when":{"paths":["src/**"]}}]}"#,
+    );
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert!(
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains("checks[].when"),
+        "{answer}"
+    );
+    assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    w.core.shutdown().await;
 }

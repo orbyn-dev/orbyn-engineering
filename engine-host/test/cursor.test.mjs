@@ -488,7 +488,7 @@ test("without ORBYN_ENGINE_HOST_CURSOR=1 the family is unknown and the host exit
 });
 
 test("with the flag the host says hello, and a missing SDK fails open with a plain message", async () => {
-  const child = startMain({ ORBYN_ENGINE_HOST_CURSOR: "1" });
+  const child = startMain({ ORBYN_ENGINE_HOST_CURSOR: "1", ORBYN_CURSOR_SDK_MODULE: "/nonexistent/cursor-sdk.mjs" });
   const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   const hello = JSON.parse((await lines.next()).value);
   assert.equal(hello.family, "cursor");
@@ -503,9 +503,10 @@ test("with the flag the host says hello, and a missing SDK fails open with a pla
   assert.equal(await exited(child), 0);
 });
 
-test("package.json does not depend on @cursor/sdk, even optionally", () => {
+test("@cursor/sdk is an exact-pinned dependency and stays out of the single-file bundle", () => {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-  for (const key of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
+  assert.match(pkg.dependencies["@cursor/sdk"], /^\d+\.\d+\.\d+$/);
+  for (const key of ["devDependencies", "optionalDependencies", "peerDependencies"]) {
     assert.equal(Object.keys(pkg[key] ?? {}).includes("@cursor/sdk"), false, key);
   }
   const build = readFileSync(new URL("../scripts/build-sea.mjs", import.meta.url), "utf8");
@@ -653,4 +654,63 @@ test("usage limits are unavailable, not an error, without a credential, on a cus
   assert.equal(JSON.stringify(failed).includes(KEY), false);
   const empty = await unavailable({ CURSOR_AUTH_TOKEN: "t" }, { "/aiserver.v1.DashboardService/GetCurrentPeriodUsage": json({}) });
   assert.equal(empty.unavailable, "unsupported");
+});
+
+test("a key inside options.local is refused like options.apiKey", async () => {
+  const f = fakeSdk();
+  const h = boot(f.sdk, { env: { CURSOR_API_KEY: "crsr_test_local_0123456789" } });
+  await h.ready;
+  const { response } = await h.call("open", { operation: "create", sessionId: "a", cwd: "/w", options: { ...basicOptions, local: { apiKey: "from-the-wire" } } });
+  assert.equal(response.ok, false);
+  assert.equal(response.error.cause.kind, "invalid_request");
+  assert.equal(f.calls.creates.length, 0);
+  assert.equal(JSON.stringify(h.all).includes("from-the-wire"), false);
+});
+
+test("a key in send options is dropped and never reaches run.send", async () => {
+  const f = fakeSdk();
+  const h = boot(f.sdk, { env: { CURSOR_API_KEY: "crsr_test_send_0123456789" } });
+  await h.ready;
+  await h.call("open", { operation: "create", sessionId: "a", cwd: "/w", options: basicOptions });
+  const sent = await h.call("send", { sessionId: "a", message: "hi", options: { apiKey: "from-the-wire" } });
+  assert.equal(sent.response.ok, true);
+  assert.equal(f.calls.sends.length, 1);
+  assert.equal(Object.hasOwn(f.calls.sends[0].options, "apiKey"), false);
+  assert.equal(JSON.stringify(h.all).includes("from-the-wire"), false);
+});
+
+test("without CURSOR_API_KEY the SDK gets no apiKey property", async () => {
+  const f = fakeSdk();
+  const h = boot(f.sdk, { env: {} });
+  await h.ready;
+  await h.call("open", { operation: "create", sessionId: "a", cwd: "/w", options: basicOptions });
+  assert.equal(f.calls.creates.length, 1);
+  assert.equal(Object.hasOwn(f.calls.creates[0], "apiKey"), false);
+});
+
+test("the key reaches Agent.resume too", async () => {
+  const key = "crsr_test_resume_0123456789";
+  const f = fakeSdk();
+  const h = boot(f.sdk, { env: { CURSOR_API_KEY: key } });
+  await h.ready;
+  const { response } = await h.call("open", { operation: "resume", sessionId: "a", engineSessionId: "agent-7", cwd: "/w", options: basicOptions });
+  assert.equal(response.ok, true);
+  assert.equal(f.calls.resumes.length, 1);
+  assert.equal(f.calls.resumes[0].o.apiKey, key);
+});
+
+test("attachments are unsupported, an empty message and a duplicate session are invalid_request", async () => {
+  const f = fakeSdk();
+  const h = boot(f.sdk);
+  await h.ready;
+  const first = await h.call("open", { operation: "create", sessionId: "a", cwd: "/w", options: basicOptions });
+  assert.equal(first.response.ok, true);
+  const attachments = await h.call("send", { sessionId: "a", message: { text: "look", attachments: [{ path: "/tmp/a.png", mimeType: "image/png" }] } });
+  assert.equal(attachments.response.error.cause.kind, "unsupported");
+  const empty = await h.call("send", { sessionId: "a", message: "" });
+  assert.equal(empty.response.error.cause.kind, "invalid_request");
+  const duplicate = await h.call("open", { operation: "create", sessionId: "a", cwd: "/w", options: basicOptions });
+  assert.equal(duplicate.response.error.cause.kind, "invalid_request");
+  const noThread = await h.call("open", { operation: "resume", sessionId: "b", cwd: "/w", options: basicOptions });
+  assert.equal(noThread.response.error.cause.kind, "invalid_request");
 });

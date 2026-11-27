@@ -15,18 +15,19 @@ import { useFileTabNames } from "../workspace";
 import { useWorkspace } from "../../product/state/workspace";
 import { api } from "../../api/client";
 import { useAsync } from "../../lib/useAsync";
-import { commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
+import { closeTabShortcut, commandShortcut, formatShortcut } from "../../product/shell/shortcuts";
 import { usePanelShortcuts } from "./usePanelShortcuts";
 import { PanelEmpty } from "./strip/PanelEmpty";
-import { crewViewsItem } from "./strip/launcher";
+import { crewViewsItem, deviceLauncherItem } from "./strip/launcher";
 import { moveIndex, slotShift, useTabDrag } from "./strip/tabDrag";
 import { repoLabel, useThreadRepos } from "../repos";
 import { RIGHT_TABS, SLOT_PITCH, orderChanged, tabOf, tabSlots, visibleTabs } from "./strip/tabs";
 import { clampPanelWidth, dragPanelWidth, PANEL_DEFAULT, snapPoints } from "./strip/panelWidth";
 import { useConnectionKind } from "../../product/state/connection";
+import { useLayoutWidth } from "../../lib/useLayout";
 import { Menu, type MenuItem } from "../../ui/Menu";
 import { Presence } from "../../ui/Presence";
-import { useDevicesOffered } from "../devices";
+import { useDevicesEntry } from "../devices";
 import { useLibraryOffered } from "../library";
 import { setPageResizing, type PanelDrag } from "./strip/panelDrag";
 /** The launcher entries that already have a shortcut, by the command it runs. The rest show none. */
@@ -193,9 +194,11 @@ export function PanelHost({
 }) {
   const order = useUi((state) => state.panelTabOrder);
   const closedTabs = useUi((state) => state.panelTabsClosed);
-  const devicesOffered = useDevicesOffered();
+  const devices = useDevicesEntry();
+  const phone = useLayoutWidth() === "phone";
   const libraryOffered = useLibraryOffered();
-  const rowIds = order.filter((id) => isFileTab(id) || (!closedTabs.includes(id) && (id !== "devices" || devicesOffered) && (id !== "library" || libraryOffered)));
+  const devicesShown = devices.state === "ready" && devices.enabled;
+  const rowIds = order.filter((id) => isFileTab(id) || (!closedTabs.includes(id) && (id !== "devices" || devicesShown) && (id !== "library" || libraryOffered)));
   // With no surface chosen yet, or the chosen one closed, the panel shows the first in the row; with none open, it is empty.
   const chosen = useUi((state) => state.panelTab);
   const tab: RightTab | null = chosen && rowIds.includes(chosen) ? chosen : (rowIds[0] ?? null);
@@ -295,11 +298,16 @@ export function PanelHost({
     };
   });
   // The "+" lists everything that can be opened; choosing one already open shows it. Reset tab order shows once the order has changed.
+  // A phone does not show the Devices row; a missing route or no tools draws it disabled, a failure leaves it out.
+  const devicesItem: MenuItem[] = phone || devices.state === "loading" || devices.state === "failed" ? [] : [{
+    ...deviceLauncherItem(devices.enabled, devices.reason),
+    onSelect: () => reopenTab("devices"),
+  }];
   const launcher: MenuItem[] = [
-    ...RIGHT_TABS.filter(({ id }) => (id !== "devices" || devicesOffered) && (id !== "library" || libraryOffered)).map(({ id, label, icon: Icon }) => {
+    ...RIGHT_TABS.filter(({ id }) => id !== "devices" && (id !== "library" || libraryOffered)).map(({ id, label, icon: Icon }) => {
       const key = LAUNCHER_COMMANDS[id] ? commandShortcut(keymap.data?.rules, LAUNCHER_COMMANDS[id]!) : null;
       return { label, icon: <Icon size={14} aria-hidden />, shortcut: key ? formatShortcut(key) : undefined, disabled: gitless && id === "diff", onSelect: () => reopenTab(id) };
-    }),
+    }).flatMap((item) => item.label === "Review and comments" ? [item, ...devicesItem] : [item]),
     // Crew views is drawn in the launcher as Planned: its submenu lists the open thread's crew views, and nothing reads a thread's crew yet.
     crewViewsItem(),
     { label: "Open file…", icon: <File size={14} aria-hidden />, separatorBefore: true, shortcut: formatShortcut(commandShortcut(keymap.data?.rules, "filePicker.toggle") ?? ""), onSelect: () => useUi.getState().setPalette("files") },
@@ -368,22 +376,22 @@ export function PanelHost({
   // The ⋯ under the strip belongs to the open tab. With one tab, closing it is closing the panel (the ×), so only Maximise shows.
   const maximise: MenuItem[] =
     mode === "sheet" ? [] : [{ label: maximized ? "Restore" : "Maximise panel", icon: maximized ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />, onSelect: onToggleMaximize }];
+  const closeKey = closeTabShortcut(keymap.data?.rules);
   const tabMenuItems: MenuItem[] =
     tab === null
       ? []
       : [
           ...(rowIds.length > 1
             ? [
-                { label: "Close tab", icon: <X size={14} aria-hidden />, onSelect: () => closeWithFocus(tab) },
+                { label: "Close tab", icon: <X size={14} aria-hidden />, shortcut: closeKey, onSelect: () => closeWithFocus(tab) },
                 { label: "Close other tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds.filter((one) => one !== tab), () => { closeOthers(tab); setSaid("Other tabs closed"); focusTab(tab); }) },
                 { label: "Close all tabs", icon: <X size={14} aria-hidden />, onSelect: () => guardClose(rowIds, () => { closeAll(); setSaid("All tabs closed. Nothing is open."); plusButton.current?.focus(); }) },
               ]
             : []),
           ...maximise.map((item, at) => (at === 0 && rowIds.length > 1 ? { ...item, separatorBefore: true } : item)),
         ];
-
   // A file's own items come first and the tab's own menu stays whole after them: Close tab, Close other tabs, Close all tabs, Maximise.
-  const fileItems = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab));
+  const fileItems = useFileTabMenu(thread.id, tab, () => tab && closeWithFocus(tab), closeKey);
   const menuItems = withFileItems(fileItems, tabMenuItems);
   const asked = pending?.ids[0];
   const askedSession = asked ? sessionFor(asked) : undefined;
@@ -564,7 +572,7 @@ export function PanelHost({
           </div>
         ) : (
           <div id={`context-${domId(tab)}`} role="tabpanel" aria-labelledby={`${TAB_ID}${domId(tab)}`} className="tabpanel">
-            <PanelBody tab={tab} thread={thread} content={content} />
+            <PanelBody tab={tab} thread={thread} content={content} repoName={target?.kind === "thread" && target.repoId !== undefined ? repoName(target.repoId) : undefined} />
           </div>
         )}
       </div>

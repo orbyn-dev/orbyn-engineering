@@ -62,6 +62,7 @@ impl Rig {
                 base_branch: None,
                 effort: None,
                 options: std::collections::BTreeMap::new(),
+                branch_name_seed: None,
             })
             .await
             .unwrap();
@@ -371,4 +372,78 @@ async fn the_status_says_one_mode_and_reviewer_only_for_the_engine_that_never_as
     let wire = serde_json::to_value(&other).unwrap();
     assert_eq!(wire["crew_role"], "any");
     assert_eq!(wire["crew_role_reason"], Value::Null);
+}
+
+/// Every engine Orbyn cannot ask before it acts is treated by what its driver reports, not by name: one mode, the notice
+/// first, then Supervised and Auto edits refused at run start with the typed body, and a saved mode left alone.
+#[tokio::test]
+async fn every_engine_that_cannot_ask_refuses_supervised_and_auto_edits_at_run_start() {
+    use crate::agents::driver::acp::AcpDriver;
+    use crate::agents::engines::known::{KNOWN_ENGINES, known_engine};
+    let silent: Vec<&str> = KNOWN_ENGINES
+        .iter()
+        .filter(|known| !known.asks)
+        .map(|known| known.id)
+        .collect();
+    for id in [
+        "kiro",
+        "droid",
+        "glm",
+        "mistral-vibe",
+        "omp",
+        "deepseek",
+        "fx",
+    ] {
+        assert!(silent.contains(&id), "{id} must be in the silent list");
+    }
+    let rig = rig(&[]).await;
+    for id in silent {
+        let known = known_engine(id).unwrap();
+        rig.core
+            .engines
+            .register(Arc::new(AcpDriver::known(known.as_custom(), known)));
+        let thread = rig
+            .thread(&rig.project, id, PermissionMode::Supervised)
+            .await;
+        // The notice comes first, as for Cursor.
+        let first = rig.core.runs.admit(&thread, "go", "t").unwrap_err();
+        assert_eq!(refusal(first).1, "engine_notice_required", "{id}");
+        rig.core
+            .engines
+            .acknowledge_notice(&rig.project, id, "person")
+            .unwrap();
+        for mode in [PermissionMode::Supervised, PermissionMode::AutoEdits] {
+            rig.save(&thread, mode);
+            let error = rig.core.runs.admit(&thread, "go", "t").unwrap_err();
+            assert_eq!(error.status(), 409, "{id}");
+            let (_, code, message, fields) = refusal(error);
+            assert_eq!(code, "engine_mode_refused", "{id}");
+            assert!(
+                message.ends_with('.') && !message.contains('{'),
+                "{message}"
+            );
+            assert_eq!(
+                fields,
+                json!({
+                    "engine": id,
+                    "thread_id": thread,
+                    "mode": serde_json::to_value(mode).unwrap(),
+                    "allowed": ["no_approvals"],
+                }),
+                "{id}"
+            );
+            // The saved mode is untouched: it is refused at start, never silently changed.
+            assert_eq!(
+                rig.core
+                    .store
+                    .thread(&thread)
+                    .unwrap()
+                    .lifecycle
+                    .unwrap()
+                    .permission_mode,
+                mode,
+                "{id}"
+            );
+        }
+    }
 }

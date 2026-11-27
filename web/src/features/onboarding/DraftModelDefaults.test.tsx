@@ -1,8 +1,11 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, expect, it, vi } from "vitest";
-import { api, request } from "../../api/client";
-import type { EngineStatus, PreferenceView, Project, Run, Thread } from "../../api/types";
+import { beforeEach, expect, it } from "vitest";
+import type { MockApi } from "../../../mock/api";
+import type { EngineStatus, Project } from "../../api/types";
+import { installMockFetch } from "../../test-support";
+import { wireWrites } from "../../wire.test-support";
+import { holdEach } from "../../wire.held.test-support";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { DRAFT_KEY } from "../../product/state/draftStore";
@@ -10,103 +13,86 @@ import { DraftView } from "./DraftView";
 import { createReposMock } from "../../../mock/repos";
 import { setReposApi } from "../repos";
 
-vi.mock("../../api/client", async (original) => {
-  const actual = await original<typeof import("../../api/client")>();
-  return { ...actual, request: vi.fn(), api: { ...actual.api, createThread: vi.fn(), startRun: vi.fn() } };
-});
-vi.mock("../../product/shell/shortcuts", () => ({ useCommand: () => undefined }));
-vi.mock("../workspace/app-chrome/GitHubStarPrompt", () => ({ recordUserPrompt: () => undefined }));
-vi.mock("./useDraftCheckout", () => ({ useDraftCheckout: () => ({ worktree: null, setWorktree: () => undefined, loading: false, error: null }) }));
-vi.mock("../../product/state/modelStore", () => ({ useEngineModels: () => null, resolveModel: () => null }));
-vi.mock("../thread/composer/ComposerTraits", () => ({
-  ACCESS: { supervised: { label: "Supervised", icon: () => null } },
-  EffortTrigger: () => null,
-  offeredModes: () => ["supervised"],
-  shownAccess: (_engine: unknown, saved: string) => saved,
-  useTraitsMenu: () => ({ menu: null, openAt: () => undefined }),
-}));
-vi.mock("../thread/composer/ModelPicker", () => ({ ModelPickerTrigger: ({ selected, onPick }: {
-  selected: { engine: string; model: string | null }; onPick(choice: { engine: string; model: string }): void;
-}) => <button type="button" onClick={() => onPick({ engine: "codex", model: "explicit" })}>
-  Model {selected.engine}/{selected.model ?? "automatic"}</button> }));
-
-const defaults = (model: string): PreferenceView[] => [
-  { key: "default_engine", value: "codex", default: "", source: "project", project_scoped: true },
-  { key: "default_model", value: model, default: "", source: "project", project_scoped: true },
-  { key: "disabled_engines", value: [], default: [], source: "default", project_scoped: true },
-];
+let mock: MockApi;
+/** Saves the project's default engine and model the way Settings does, and answers what the draft reads. */
+const saveDefaults = (model: string, engine = "codex") =>
+  mock.handle("PUT", "/api/projects/p-app/preferences", { values: { default_engine: engine, default_model: model, disabled_engines: [] } });
+const created = () => wireWrites().filter((call) => call.method === "POST" && call.path === "/api/threads");
+const runs = () => wireWrites().filter((call) => /^\/api\/threads\/[^/]+\/runs$/.test(call.path));
 beforeEach(() => {
-  vi.mocked(request).mockReset();
-  vi.mocked(api.createThread).mockReset().mockResolvedValue({ id: "created", project_id: "a", title: "Thread" } as Thread);
-  vi.mocked(api.startRun).mockReset().mockResolvedValue({ id: "run" } as Run);
+  mock = installMockFetch();
+  const model = (id: string, label: string) => ({ id, label, description: null, is_default: false, custom: false, options: [] });
+  mock.setEngineModels("codex", { engine: "codex", source: "engine", checked_at: "fixture", error: null, fallback: false, options: [], agents: [], output_styles: [],
+    models: [model("remembered", "Remembered"), model("explicit", "Explicit"), model("late-default", "Late default"), model("project-model", "Project model")] });
   useWorkspace.setState({
-    projects: { data: [{ id: "a", name: "Fixture", trusted: true, is_git: true, path: "/fixture/a" } as Project], loading: false, error: null },
+    projects: { data: [{ id: "p-app", name: "Fixture", trusted: true, is_git: true, path: "/fixture/a" } as Project], loading: false, error: null },
     engines: { data: [{ id: "codex", name: "Codex", auth: "logged_in", installed: true, capabilities: { managed: true } } as EngineStatus], loading: false, error: null },
-    putThread: vi.fn(),
   });
   useUi.setState({ lastModel: { engine: "codex", model: "remembered", effort: "high" },
     drafts: { [DRAFT_KEY]: "Fixture prompt" } });
 });
 
 it("sends the project default from the real draft handler instead of the remembered model", async () => {
-  vi.mocked(request).mockResolvedValue(defaults("project-model") as never);
-  render(<DraftView projectId="a" />);
+  saveDefaults("project-model");
+  render(<DraftView projectId="p-app" />);
   const send = screen.getByRole("button", { name: "Send" });
   await waitFor(() => expect(send).toBeEnabled());
   await userEvent.setup().click(send);
-  await waitFor(() => expect(api.createThread).toHaveBeenCalledTimes(1));
-  expect(vi.mocked(api.createThread).mock.calls[0]?.[0]).toMatchObject({ project_id: "a", engine: "codex", model: "project-model" });
-  expect(vi.mocked(api.startRun).mock.calls[0]?.[3]).toEqual({});
+  await waitFor(() => expect(created()).toHaveLength(1));
+  expect(created()[0]?.body).toEqual({ project_id: "p-app", engine: "codex", model: "project-model", title: null, worktree: null, skill_profile: null });
+  await waitFor(() => expect(runs()).toHaveLength(1));
+  expect(runs()[0]?.body).toEqual({ prompt: "Fixture prompt" });
 });
 
 it("keeps an explicit draft model when defaults arrive later, then sends that explicit model", async () => {
-  let done!: (value: PreferenceView[]) => void;
-  vi.mocked(request).mockImplementation(() => new Promise((resolve) => { done = resolve; }) as never);
-  render(<DraftView projectId="a" />);
+  saveDefaults("late-default");
+  const held = holdEach("GET", "/api/preferences?project_id=p-app");
+  render(<DraftView projectId="p-app" />);
   const user = userEvent.setup();
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  await user.click(screen.getByRole("button", { name: "Model codex/remembered" }));
-  await act(async () => done(defaults("late-default")));
+  await user.click(screen.getByRole("button", { name: "Remembered" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Choose a model" })).getByRole("option", { name: /Explicit/ }));
+  await act(async () => held[0]!.release());
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
-  expect(screen.getByRole("button", { name: "Model codex/explicit" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Explicit" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Send" }));
-  await waitFor(() => expect(api.createThread).toHaveBeenCalledTimes(1));
-  expect(vi.mocked(api.createThread).mock.calls[0]?.[0].model).toBe("explicit");
+  await waitFor(() => expect(created()).toHaveLength(1));
+  expect(created()[0]?.body).toMatchObject({ model: "explicit" });
 });
 
 it("keeps a missing configured provider blocked until the person explicitly chooses a replacement", async () => {
-  const missing = defaults("missing-model"); missing[0]!.value = "removed-provider";
-  vi.mocked(request).mockResolvedValue(missing as never);
-  render(<DraftView projectId="a" />);
+  saveDefaults("missing-model", "removed-provider");
+  render(<DraftView projectId="p-app" />);
   expect(await screen.findByRole("alert")).toHaveTextContent("selected default provider is unavailable");
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  expect(api.createThread).not.toHaveBeenCalled();
+  expect(created()).toHaveLength(0);
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "Model codex/automatic" }));
+  await user.click(screen.getByRole("button", { name: "Remembered" }));
+  await user.click(within(await screen.findByRole("dialog", { name: "Choose a model" })).getByRole("option", { name: /Explicit/ }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
   await user.click(screen.getByRole("button", { name: "Send" }));
-  await waitFor(() => expect(api.createThread).toHaveBeenCalledTimes(1));
-  expect(vi.mocked(api.createThread).mock.calls[0]?.[0]).toMatchObject({ engine: "codex", model: "explicit" });
+  await waitFor(() => expect(created()).toHaveLength(1));
+  expect(created()[0]?.body).toMatchObject({ engine: "codex", model: "explicit" });
 });
 
 it("shows no side panel and no launcher on a draft, even when the panel preference is open", () => {
-  vi.mocked(request).mockResolvedValue(defaults("project-model") as never);
+  saveDefaults("project-model");
   useUi.setState({ panelOpen: true });
-  render(<DraftView projectId="a" />);
+  render(<DraftView projectId="p-app" />);
   expect(screen.queryByRole("complementary", { name: "Thread context" })).toBeNull();
   expect(screen.queryByText("Open a surface")).toBeNull();
   expect(screen.queryByRole("button", { name: "Surfaces" })).toBeNull();
 });
 
 it("offers the repository dialog on the new-thread screen only when the service reports several repositories for the project", async () => {
-  vi.mocked(request).mockResolvedValue(defaults("project-model") as never);
-  const first = render(<DraftView projectId="a" />);
+  saveDefaults("project-model");
+  const first = render(<DraftView projectId="p-app" />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeEnabled());
   expect(screen.queryByRole("button", { name: /^Repositories/ })).toBeNull();
   first.unmount();
   setReposApi(createReposMock());
   try {
-    render(<DraftView projectId="a" />);
+    render(<DraftView projectId="p-app" />);
     await userEvent.setup().click(await screen.findByRole("button", { name: "Repositories: 4" }));
     const dialog = await screen.findByRole("dialog", { name: /New thread in Fixture/ });
     expect(within(dialog).getByText("Engine")).toBeVisible();

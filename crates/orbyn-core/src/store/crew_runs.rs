@@ -31,6 +31,12 @@ pub struct CrewRun {
     pub verifying_since: Option<String>,
     /// The index entries hiding a change from git when the task started, as JSON.
     pub index_flags: Option<String>,
+    /// When the task resumed after a restart, if it ever did. A task resumes once in its life.
+    pub resumed_at: Option<String>,
+    /// 0 until the one resume after a restart, then 1.
+    pub resume_count: u32,
+    /// The time the app was off before that resume, which the task's budget does not pay for.
+    pub downtime_secs: i64,
 }
 
 fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
@@ -52,6 +58,9 @@ fn run_row(row: &Row<'_>) -> rusqlite::Result<CrewRun> {
         protected: row.get("protected")?,
         verifying_since: row.get("verifying_since")?,
         index_flags: row.get("index_flags")?,
+        resumed_at: row.get("resumed_at")?,
+        resume_count: row.get("resume_count")?,
+        downtime_secs: row.get("downtime_secs")?,
     })
 }
 
@@ -98,13 +107,52 @@ pub(super) fn find_run(tx: &Transaction<'_>, task_id: &str) -> Result<CrewRun> {
 }
 
 /// Moves a task one step, or refuses with `InvalidTransition`. `stopped` names its reason and
-/// nothing else does; a task passes only with Evidence (H8).
+/// nothing else does; a task passes only with Evidence (H8). A move always clears the typed stop
+/// detail, which only a stop can set.
 pub(super) fn step(
     tx: &Transaction<'_>,
     task: &CrewTask,
     to: &str,
     stop_reason: Option<&str>,
     evidence: &[String],
+) -> Result<CrewTask> {
+    step_with_detail(tx, task, to, stop_reason, None, evidence)
+}
+
+/// [`step`], with the typed stop detail a stop writes in the same UPDATE as its state and reason, so
+/// the two cannot diverge. Any other move passes `None` and clears it.
+pub(super) fn step_with_detail(
+    tx: &Transaction<'_>,
+    task: &CrewTask,
+    to: &str,
+    stop_reason: Option<&str>,
+    stop_detail: Option<&str>,
+    evidence: &[String],
+) -> Result<CrewTask> {
+    advance(tx, task, to, stop_reason, stop_detail, evidence, true)
+}
+
+/// [`step_with_detail`] for a transient state: the state is written, but the task's eval sample is not finished on it.
+/// `fail_crew_verification` goes through `failed` to the state the guard names in one transaction, so only that
+/// transaction's last move records the outcome.
+fn step_transient(
+    tx: &Transaction<'_>,
+    task: &CrewTask,
+    to: &str,
+    stop_reason: Option<&str>,
+    evidence: &[String],
+) -> Result<CrewTask> {
+    advance(tx, task, to, stop_reason, None, evidence, false)
+}
+
+fn advance(
+    tx: &Transaction<'_>,
+    task: &CrewTask,
+    to: &str,
+    stop_reason: Option<&str>,
+    stop_detail: Option<&str>,
+    evidence: &[String],
+    sample: bool,
 ) -> Result<CrewTask> {
     if !allowed(&task.state, to) {
         return Err(CoreError::InvalidTransition {
@@ -115,6 +163,11 @@ pub(super) fn step(
     if (to == "stopped") != stop_reason.is_some() {
         return Err(CoreError::Invalid(
             "a stopped task names its reason, and no other state has one".into(),
+        ));
+    }
+    if stop_detail.is_some() && to != "stopped" {
+        return Err(CoreError::Invalid(
+            "only a stopped task names a stop detail".into(),
         ));
     }
     if to == "passed" {
@@ -133,15 +186,22 @@ pub(super) fn step(
             ));
         }
     }
+    let at = now();
     tx.execute(
-        "UPDATE crew_tasks SET state = ?2, stop_reason = ?3, updated_at = ?4 WHERE id = ?1",
-        params![task.id, to, stop_reason, now()],
+        "UPDATE crew_tasks SET state = ?2, stop_reason = ?3, stop_detail = ?4, updated_at = ?5
+         WHERE id = ?1",
+        params![task.id, to, stop_reason, stop_detail, at],
     )?;
     // A claim on a verification ends with the state it was for.
     tx.execute(
         "UPDATE crew_runs SET verifying_since = NULL WHERE task_id = ?1",
         [&task.id],
     )?;
+    if sample {
+        // KC5 slice 4: the sample's outcome is written once, in this same transaction. Its own savepoint logs a
+        // failure and rolls only the sample back, so bookkeeping never refuses the state change.
+        super::crew_eval_samples::record_finish(tx, &task.id, to, stop_reason, &at);
+    }
     find_task(tx, &task.id)
 }
 
@@ -356,7 +416,7 @@ impl Store {
         self.commit(|tx, _| {
             let task = find_task(tx, task_id)?;
             let run = find_run(tx, task_id)?;
-            let failed = step(tx, &task, "failed", None, &[])?;
+            let failed = step_transient(tx, &task, "failed", None, &[])?;
             let (guard, next) = run.guard.after_failure(fingerprint);
             tx.execute(
                 "UPDATE crew_runs SET failures = failures + 1, streak = ?2, fingerprint = ?3,
@@ -402,14 +462,30 @@ impl Store {
 
     /// Tasks a worker is on or that are being verified, for a restart to pick up.
     pub fn crew_tasks_in_flight(&self) -> Result<Vec<(CrewTask, CrewRun)>> {
+        self.crew_tasks_in(&["running", "verifying", "changed_approach"])
+    }
+
+    /// Tasks waiting for a person, with their runs, for a restart to credit their off time: a held task has no timer
+    /// across a restart, and a later resume must not count the window the app was off as spent.
+    pub fn crew_tasks_held(&self) -> Result<Vec<(CrewTask, CrewRun)>> {
+        self.crew_tasks_in(&["needs_person"])
+    }
+
+    /// The tasks in one of `states` that have a run, oldest first.
+    fn crew_tasks_in(&self, states: &[&str]) -> Result<Vec<(CrewTask, CrewRun)>> {
+        let marks = vec!["?"; states.len()].join(",");
+        let args: Vec<rusqlite::types::Value> = states
+            .iter()
+            .map(|state| rusqlite::types::Value::from((*state).to_owned()))
+            .collect();
         let ids: Vec<String> = {
             let conn = self.reader();
-            let mut statement = conn.prepare(
+            let mut statement = conn.prepare(&format!(
                 "SELECT t.id FROM crew_tasks t JOIN crew_runs r ON r.task_id = t.id
-                 WHERE t.state IN ('running', 'verifying', 'changed_approach')",
-            )?;
+                 WHERE t.state IN ({marks})"
+            ))?;
             statement
-                .query_map([], |row| row.get(0))?
+                .query_map(rusqlite::params_from_iter(args.iter()), |row| row.get(0))?
                 .collect::<rusqlite::Result<_>>()?
         };
         let mut found = Vec::new();

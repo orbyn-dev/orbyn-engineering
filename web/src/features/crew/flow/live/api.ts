@@ -1,9 +1,12 @@
-// The three reads Flow has: the crews that have work, a crew's tasks with the ten cells of each, and one task zoomed.
-// Review consent is an explicit local-person write; every Crew route is hidden with Preview off.
+// The reads Flow has: the crews that have work, a crew's tasks with the ten cells of each, one task zoomed, and the task
+// reads of its Run page and of its checks, artifacts and diff. Review consent is an explicit local-person write; every Crew
+// route is hidden with Preview off.
 import { ApiFailure, request } from "../../../../api/client";
 import type { FlowCrewList } from "../../../../generated/FlowCrewList";
 import type { FlowCrewRow } from "../../../../generated/FlowCrewRow";
 import type { FlowFilter } from "../../../../generated/FlowFilter";
+import type { FlowRunPage } from "../../../../generated/FlowRunPage";
+import type { FlowTaskArtifacts } from "../../../../generated/FlowTaskArtifacts";
 import type { FlowTaskDetail } from "../../../../generated/FlowTaskDetail";
 import type { FlowTaskList } from "../../../../generated/FlowTaskList";
 import type { CrewReviewConsentInput } from "../../../../generated/CrewReviewConsentInput";
@@ -36,6 +39,14 @@ export function tasksPath(query: TaskQuery): string {
   return `/api/crew/flow/tasks?${params.toString()}`;
 }
 
+/** One work task's Run page: the prompt, the checks, what was not verified, the commit and the pull request. */
+export const readRun = (id: string, signal?: AbortSignal): Promise<FlowRunPage> =>
+  get<FlowRunPage>(`/api/crew/flow/tasks/${encodeURIComponent(id)}/run`, signal);
+
+/** One task's checks, the artifacts they named and the change they read, pinned to the commit the task started from. */
+export const readTaskArtifacts = (id: string, signal?: AbortSignal): Promise<FlowTaskArtifacts> =>
+  get<FlowTaskArtifacts>(`/api/crew/flow/tasks/${encodeURIComponent(id)}/artifacts`, signal);
+
 export const flowApi = {
   consent: (task: string, input: CrewReviewConsentInput): Promise<CrewReviewConsentAnswer> => {
     if (!validTaskId(task)) throw new ApiFailure("invalid", "That task’s id is not valid.", 0);
@@ -54,4 +65,6 @@ export const flowApi = {
   },
   tasks: (query: TaskQuery, signal?: AbortSignal): Promise<FlowTaskList> => get<FlowTaskList>(tasksPath(query), signal),
   task: (id: string, signal?: AbortSignal): Promise<FlowTaskDetail> => get<FlowTaskDetail>(`/api/crew/flow/tasks/${encodeURIComponent(id)}`, signal),
+  run: readRun,
+  artifacts: readTaskArtifacts,
 };

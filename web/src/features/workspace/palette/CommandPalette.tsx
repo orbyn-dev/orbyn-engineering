@@ -1,4 +1,4 @@
-import { File, FolderPlus, GitPullRequest, MessageSquare, RotateCcw, Search, Settings, Sparkles, SquarePen, SunMoon, TextSearch } from "lucide-react";
+import { File, FolderPlus, GitPullRequest, MessageSquare, RotateCcw, Search, Settings, Sparkles, SquarePen, SunMoon, TextSearch, TriangleAlert } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { api, pullsApi } from "../api";
 import { compactAge } from "../../../lib/format";
@@ -68,24 +68,40 @@ function useMessageSearch(query: string, enabled: boolean) {
   return hits.data ?? [];
 }
 
-type PullEntry = Awaited<ReturnType<typeof pullsApi.list>>["pulls"][number];
+type PullList = Awaited<ReturnType<typeof pullsApi.list>>;
+type PullEntry = PullList["pulls"][number];
 
-/** Open pull requests across projects, read from the list the Pull requests page uses, only once a query is typed. */
+/**
+ * Open pull requests across projects, read from the list the Pull requests page uses, only once a query is typed.
+ * A project whose forge could not be read is named by the service in the list's own `failed` rows rather than by
+ * failing the whole answer, so those rows are what mark the group unreadable. Retry is the person's own re-read: the
+ * service keeps a list for a while, so it asks for a fresh one instead of the answer it already served.
+ */
 function usePullSearch(query: string, enabled: boolean): { pulls: PullEntry[]; status: "idle" | "loading" | "error"; retry(): void } {
   const on = enabled && query.trim().length >= MESSAGE_SEARCH_MIN;
-  const list = useAsync(`palette:pulls:${on ? "on" : "off"}`, async (signal) => {
-    if (!on) return [];
-    return (await pullsApi.list("open", "", signal)).pulls;
+  const list = useAsync<PullList>(`palette:pulls:${on ? "on" : "off"}`, async (signal, how) => {
+    if (!on) return { pulls: [], failed: [] };
+    return pullsApi.list("open", "", signal, undefined, how.force);
   });
-  return { pulls: list.data ?? [], status: !on ? "idle" : list.status === "loading" ? "loading" : list.status === "error" ? "error" : "idle", retry: list.reload };
+  const unreadable = list.status === "error" || (list.data?.failed ?? []).length > 0;
+  return {
+    pulls: list.data?.pulls ?? [],
+    status: !on ? "idle" : list.status === "loading" ? "loading" : unreadable ? "error" : "idle",
+    retry: list.reloadNow,
+  };
 }
 
-/** What the palette says in the Pull requests group while the list is read or cannot be (palette-prs-loading, palette-prs-unreadable). */
-function PullsNote({ status, onRetry }: { status: "loading" | "error"; onRetry(): void }) {
+/**
+ * What the palette says in the Pull requests group while the list is read or cannot be (palette-prs-loading,
+ * palette-prs-unreadable). A partial read can have rows under the group's heading already, so `heading` is false then:
+ * the note sits under the one heading those rows drew.
+ */
+function PullsNote({ status, heading, onRetry }: { status: "loading" | "error"; heading: boolean; onRetry(): void }) {
   return (
     <div>
-      <div className="palette-group">Pull requests</div>
+      {heading ? <div className="palette-group">Pull requests</div> : null}
       <div className="palette-note" role="status">
+        {status === "error" ? <TriangleAlert className="palette-note-icon" size={14} aria-hidden /> : null}
         <span>{status === "loading" ? "Looking for pull requests…" : "Couldn’t read pull requests. Threads and commands still work."}</span>
         {status === "error" ? <Button small onClick={onRetry}>Retry</Button> : null}
       </div>
@@ -314,7 +330,8 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
         {entries.length === 0 && pullStatus === "idle" ? <p className="sidebar-empty">No results</p> : null}
         {entries.map((entry, at) => {
           // The pull request line sits after the ranked groups, ahead of the messages.
-          const note = pullStatus !== "idle" && at === noteAt ? <PullsNote key="pulls-note" status={pullStatus} onRetry={retryPulls} /> : null;
+          // The note keeps the heading only when the rows above it did not draw the group's own.
+          const note = pullStatus !== "idle" && at === noteAt ? <PullsNote key="pulls-note" status={pullStatus} heading={group !== "Pull requests"} onRetry={retryPulls} /> : null;
           const heading = entry.group !== group ? entry.group : null;
           group = entry.group;
           return (
@@ -334,7 +351,7 @@ export function CommandPalette({ start, onClose }: { start: PaletteStart; onClos
             </div>
           );
         })}
-        {pullStatus !== "idle" && noteAt >= entries.length ? <PullsNote status={pullStatus} onRetry={retryPulls} /> : null}
+        {pullStatus !== "idle" && noteAt >= entries.length ? <PullsNote status={pullStatus} heading={group !== "Pull requests"} onRetry={retryPulls} /> : null}
       </div>
       <footer className="palette-foot">
         <span>

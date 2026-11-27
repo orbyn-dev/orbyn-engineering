@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../../../ui/controls";
-import { attentionApi } from "./contract";
 import { useAttention, type AttentionEntry } from "./store";
 import { clearedLine, engineName, itemTitle, whyLine } from "./text";
 
@@ -56,7 +55,7 @@ export function TerminalAttention({ threadId, onOpen }: { threadId: string; onOp
   const mine = [...entries.values()].filter((entry) => entry.threadId === threadId && !entry.dismissed).sort((a, b) => a.toldAt - b.toldAt || a.seq - b.seq);
   const waiting = mine.filter((entry) => entry.cleared === null);
   const now = useNow(waiting.length > 0);
-  if (!attentionApi() || mine.length === 0) return null;
+  if (mine.length === 0) return null;
   const done = mine.filter((entry) => entry.cleared !== null);
   const open = (entry: AttentionEntry) => onOpen({ threadId: entry.threadId, terminalId: entry.terminalId });
   return (

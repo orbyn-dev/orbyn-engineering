@@ -12,7 +12,16 @@ export function repoState(row: Pick<RepoRow, "is_git" | "trusted">): RepoState {
   return row.is_git ? "trusted" : "not_git";
 }
 
-export const STATE_LABEL: Record<RepoState, string> = { trusted: "Trusted", untrusted: "Not trusted", not_git: "Not a Git folder" };
+export const STATE_LABEL: Record<RepoState, string> = { trusted: "Trusted", untrusted: "Not trusted", not_git: "Folder" };
+
+/**
+ * The folder's Git state where its branch would stand: a folder with no Git says so, rather than naming a branch it has
+ * none of. A project row has no `branch`, so the field is optional here.
+ */
+export function branchText(row: Pick<RepoRow, "is_git" | "trusted"> & { branch?: string | null }): string {
+  if (repoState(row) === "not_git") return "Not a Git repository";
+  return row.branch ?? "No branch";
+}
 
 /** Only a trusted Git folder that is not still cloning can join a thread. An untrusted one never runs anything. */
 export function canJoinThread(row: RepoRow): boolean {
@@ -25,27 +34,6 @@ export function defaultTicks(rows: RepoRow[], limit: number): string[] {
 }
 
 export const startLabel = (count: number) => (count === 1 ? "Start in 1 repository" : `Start in ${count} repositories`);
-
-/**
- * A clone source, by the list in docs/multi-repo.md ("Clone and path input"): an `https://` URL, an `ssh://` URL or an scp-style
- * `user@host:path`. Text the person typed or pasted is untrusted, and the service checks it again: a source that starts with `-`
- * (Git reads it as an option), `ext::`, `fd::`, `file://`, a local path (so also `owner/name`), a newline or other control
- * character, or a user name and password in the address is refused here and there.
- */
-export function checkCloneSource(text: string): { ok: true; source: string } | { ok: false; reason: string } {
-  const source = text.trim();
-  if (source === "") return { ok: false, reason: "Enter a Git URL." };
-  // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f\s]/.test(source)) return { ok: false, reason: "The address cannot hold spaces or control characters." };
-  if (source.startsWith("-")) return { ok: false, reason: "The address cannot start with a dash." };
-  const url = /^(https|ssh):\/\/([^/@]*@)?[^/@\s]+\/?[^\s]*$/.exec(source);
-  if (url) {
-    const userinfo = url[2]?.slice(0, -1) ?? "";
-    return userinfo.includes(":") ? { ok: false, reason: "The address cannot hold a user name and password." } : { ok: true, source };
-  }
-  if (/^[A-Za-z0-9_][\w.-]*@[A-Za-z0-9][\w.-]*:[^\s:-][^\s]*$/.test(source)) return { ok: true, source };
-  return { ok: false, reason: "Use a https or ssh address, or user@host:path." };
-}
 
 /** The name of a new folder (`create`): letters, digits, dash, underscore and dot, no leading dot or dash, no `..`, no separator and no drive prefix. */
 export const isFolderName = (text: string) => /^[A-Za-z0-9_][\w.-]*$/.test(text) && !text.includes("..");

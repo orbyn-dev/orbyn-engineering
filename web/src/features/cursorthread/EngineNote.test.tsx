@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCursorThreadMock } from "../../../mock/cursorThread";
 import { CREW_ROLE_TOOLTIP, CrewRoleNote, crewRoleLabel } from "./CrewRole";
-import { cursorThreadApi, setCursorThreadApi } from "./api";
+import { setCursorThreadApi } from "./api";
 import { EngineNote } from "./EngineNote";
 
 afterEach(() => setCursorThreadApi(null));
@@ -23,6 +23,7 @@ describe("the Engine row of Details", () => {
     expect(screen.getByText("Engine")).toBeVisible();
     expect(screen.getByText("Claude Code")).toBeVisible();
     expect(screen.getByText("Opus 5.5")).toBeVisible();
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, 10));
     expect(screen.queryByText(/does not ask/)).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
@@ -31,29 +32,37 @@ describe("the Engine row of Details", () => {
   it("adds the notice only for an engine that has one and only once it has been answered", async () => {
     setCursorThreadApi(createCursorThreadMock({ acknowledged: false }));
     const before = render(<EngineNote projectId="p" engine="cursor" engineName="Cursor" />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, 10));
     expect(screen.getByText("Cursor")).toBeVisible();
     expect(screen.queryByText(/does not ask/)).toBeNull();
     before.unmount();
     setCursorThreadApi(null);
     render(<EngineNote projectId="p" engine="cursor" engineName="Cursor" />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((done) => setTimeout(done, 10));
     expect(screen.getByText("Engine")).toBeVisible();
     expect(screen.queryByText(/does not ask/)).toBeNull();
   });
 
+  it("uses Orbyn's own reason for another engine the service has a notice for", async () => {
+    setCursorThreadApi(createCursorThreadMock({ acknowledged: true, engines: ["kiro"] }));
+    render(<EngineNote projectId="p" engine="kiro" engineName="Kiro" />);
+    expect(await screen.findByText("Orbyn cannot ask before Kiro acts.")).toBeVisible();
+    expect(screen.queryByText(/sandbox/i)).toBeNull();
+  });
+
+  it("lets the safety sentence wrap and keeps its full text as the title", async () => {
+    setCursorThreadApi(createCursorThreadMock({ acknowledged: true, engines: ["kiro"] }));
+    render(<EngineNote projectId="p" engine="kiro" engineName="Kiro" />);
+    const note = await screen.findByText("Orbyn cannot ask before Kiro acts.");
+    expect(note).toHaveClass("wrap");
+    expect(note).toHaveAttribute("title", "Orbyn cannot ask before Kiro acts.");
+  });
+
   it("draws an engine's name as plain text", () => {
     render(<EngineNote projectId="p" engine="x" engineName="<b>Bold</b>" modelName="<i>m</i>" />);
     expect(document.querySelector("b, i")).toBeNull();
-  });
-});
-
-describe("the default client", () => {
-  it("sends nothing for the unmerged routes: the notice reads none and each write says it is not offered", async () => {
-    const api = cursorThreadApi();
-    expect(await api.notice("p", "cursor")).toBeNull();
-    await expect(api.acknowledge("p", "cursor")).rejects.toThrow("does not offer");
-    await expect(api.sendWithoutApprovals("t1", { prompt: "x" })).rejects.toThrow("does not offer");
   });
 });
 
@@ -71,8 +80,9 @@ describe("Reviewer only", () => {
   });
 
   it("falls back to Crew's own words when the service sends no reason", () => {
+    expect(CREW_ROLE_TOOLTIP).toBe("Orbyn cannot ask before it acts");
     render(<CrewRoleNote engine={{ crew_role: "reviewer_only", crew_role_reason: null }} />);
-    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", CREW_ROLE_TOOLTIP);
+    expect(screen.getByText("Reviewer only").closest(".ct-role")).toHaveAttribute("title", "Orbyn cannot ask before it acts");
   });
 
   it("draws nothing for any, and the reason is plain text", () => {

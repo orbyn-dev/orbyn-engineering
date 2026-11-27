@@ -6,10 +6,12 @@ use serde_json::{Value, json};
 use crate::agents::driver::EngineEvent;
 use crate::util::new_id;
 
-/// Maps `session/update` payloads. Chunks of one kind form one message, which
-/// closes when another kind of update arrives.
+/// Maps `session/update` payloads. Text and reasoning chunks each form one
+/// message, kept open side by side: a thought chunk leaves the text message open
+/// and an assistant chunk leaves the reasoning message open. A role change, a
+/// tool call, or `close` ends both.
 #[derive(Default)]
-pub(super) struct UpdateMapper {
+pub(crate) struct UpdateMapper {
     text: Option<String>,
     text_role: Option<String>,
     historical_id: Option<u64>,
@@ -18,7 +20,7 @@ pub(super) struct UpdateMapper {
 }
 
 impl UpdateMapper {
-    pub(super) fn historical() -> Self {
+    pub(crate) fn historical() -> Self {
         Self {
             historical_id: Some(0),
             ..Self::default()
@@ -32,7 +34,7 @@ impl UpdateMapper {
             new_id()
         }
     }
-    pub(super) fn on_update(&mut self, update: &Value) -> Vec<EngineEvent> {
+    pub(crate) fn on_update(&mut self, update: &Value) -> Vec<EngineEvent> {
         let mut events = Vec::new();
         match update.get("sessionUpdate").and_then(Value::as_str) {
             Some("agent_message_chunk" | "user_message_chunk") => {
@@ -43,11 +45,12 @@ impl UpdateMapper {
                 } else {
                     "assistant"
                 };
-                if self.text_role.as_deref() != Some(role) {
+                if self.text_role.as_deref().is_some_and(|open| open != role) {
+                    // A different speaker starts a new round: neither message spans it.
                     self.close_text(&mut events);
+                    self.close_reasoning(&mut events);
                 }
                 self.text_role = Some(role.to_owned());
-                self.close_reasoning(&mut events);
                 let delta = chunk_text(update);
                 let id = match &self.text {
                     Some(id) => id.clone(),
@@ -76,7 +79,7 @@ impl UpdateMapper {
                 );
             }
             Some("agent_thought_chunk") => {
-                self.close_text(&mut events);
+                // Thinking runs alongside an answer that is still being written.
                 let delta = chunk_text(update);
                 let id = match &self.reasoning {
                     Some(id) => id.clone(),
@@ -211,7 +214,7 @@ impl UpdateMapper {
         }
     }
 
-    pub(super) fn close(&mut self) -> Vec<EngineEvent> {
+    pub(crate) fn close(&mut self) -> Vec<EngineEvent> {
         let mut events = Vec::new();
         self.close_text(&mut events);
         self.close_reasoning(&mut events);

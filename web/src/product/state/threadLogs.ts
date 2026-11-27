@@ -5,7 +5,7 @@ import { followThread, type StreamStatus } from "../../api/sse";
 import type { WireThreadEvent } from "../../api/types";
 import { applyEvents, emptyLog } from "../timeline/projection";
 import type { ThreadLog } from "../timeline/types";
-import { useWorkspace } from "./workspace";
+import { engineById, useWorkspace } from "./workspace";
 import { useUi } from "./ui";
 import { permissionToasts } from "./healthToasts";
 import { applySteerEvents } from "./steerMarks";
@@ -55,7 +55,10 @@ export const useThreadLogs = create<ThreadLogState>((set, get) => ({
   queueVersion: {},
   ingest(threadId, events) {
     const log = get().logs[threadId] ?? emptyLog;
-    const next = applyEvents(threadId, log, events);
+    const workspace = useWorkspace.getState();
+    const thread = workspace.threads[threadId];
+    const engineName = thread ? engineById(workspace.engines.data, thread.engine)?.name ?? null : null;
+    const next = applyEvents(threadId, log, events, engineName);
     if (next === log) return;
     const previousSeq = log.lastSeq;
     const fresh = events.filter((event) => event.seq > previousSeq);

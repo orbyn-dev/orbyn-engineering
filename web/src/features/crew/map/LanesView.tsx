@@ -121,7 +121,7 @@ function CrewLanes({ crew }: { crew: string }) {
                 </span>
               </div>
               <div className="mp-legend">
-                <span>“live” means handed to a turn in progress (never for an engine that can’t be steered mid-turn); “next turn” means queued, or sent with the next prompt; “tool result” means a held message returned in the receiver’s next Crew tool result; “held” means no running turn took it, so it waits for the next prompt or tool call; “failed” means delivery failed; no delivery is shown when there is no delivery row or the receivers disagree</span>
+                <span>“live” means handed to a turn in progress or to a waiting crew_ask call; “next turn” means queued, or sent with the next prompt; “tool result” means a held message returned in the receiver’s next Crew tool result; “held” means no running turn took it, so it waits for the next prompt or tool call; “failed” means delivery failed; no delivery is shown when there is no delivery row or the receivers disagree</span>
               </div>
             </section>
           ) : null}

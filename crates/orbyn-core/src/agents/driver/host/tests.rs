@@ -2,14 +2,16 @@
 //! misbehaves on purpose) and the engine host's own `fake` family. They need `node`; without
 //! it a test says so loudly and returns, it never passes silently.
 
+mod acp;
 mod asks;
 mod control;
+mod cursor;
 mod pool;
 mod real;
 mod runs;
 mod secrets;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,12 +41,39 @@ pub(super) fn fast() -> Timings {
     }
 }
 
-fn node() -> Option<PathBuf> {
-    let found = crate::host::process::resolve("node").map(|command| command.program);
+/// What a host test does when node is missing: skip, or fail when the run says node must be there.
+/// The build box sets `ORBYN_REQUIRE_NODE=1`, so a missing node there is a red run, not a quiet pass.
+fn node_or_skip(found: Option<PathBuf>, required: bool) -> Option<PathBuf> {
     if found.is_none() {
+        assert!(
+            !required,
+            "ORBYN_REQUIRE_NODE=1 and node was not found, so no engine host process can run here"
+        );
         eprintln!("SKIPPED: node was not found, so no engine host process can run here");
     }
     found
+}
+
+fn node() -> Option<PathBuf> {
+    let found = crate::host::process::resolve("node").map(|command| command.program);
+    node_or_skip(
+        found,
+        std::env::var("ORBYN_REQUIRE_NODE").is_ok_and(|v| v == "1"),
+    )
+}
+
+#[test]
+#[should_panic(expected = "ORBYN_REQUIRE_NODE=1")]
+fn a_missing_node_fails_the_run_when_the_run_requires_it() {
+    node_or_skip(None, true);
+}
+
+#[test]
+fn a_missing_node_skips_when_it_is_not_required_and_a_found_one_is_used() {
+    assert_eq!(node_or_skip(None, false), None);
+    let found = PathBuf::from("/usr/bin/node");
+    assert_eq!(node_or_skip(Some(found.clone()), true), Some(found.clone()));
+    assert_eq!(node_or_skip(Some(found.clone()), false), Some(found));
 }
 
 /// A pool over the stand-in, with its request log in a private folder.
@@ -80,11 +109,35 @@ pub(super) fn driver(pool: &Arc<Pool>) -> HostDriver {
     )
 }
 
+/// A host driver whose Claude program is `node`, so a test of the real `claude` family
+/// never needs the person's engine binary. The stand-in is the host either way.
+pub(super) fn driver_on_node(pool: &Arc<Pool>, node: &Path) -> HostDriver {
+    HostDriver::new(
+        Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1))),
+        pool.clone(),
+        node.to_string_lossy().into_owned(),
+    )
+}
+
 pub(super) fn standin(env: &[(&str, &str)], timings: Timings) -> Option<Rig> {
     standin_with(env, timings, None)
 }
 
 pub(super) fn standin_with(
+    env: &[(&str, &str)],
+    timings: Timings,
+    secrets: Option<SecretSource>,
+) -> Option<Rig> {
+    standin_family_with("fake", env, timings, secrets)
+}
+
+/// The stand-in as another family, so its script can be the family it stands in for.
+pub(super) fn standin_family(family: &str, env: &[(&str, &str)], timings: Timings) -> Option<Rig> {
+    standin_family_with(family, env, timings, None)
+}
+
+fn standin_family_with(
+    family: &str,
     env: &[(&str, &str)],
     timings: Timings,
     secrets: Option<SecretSource>,
@@ -97,6 +150,7 @@ pub(super) fn standin_with(
         .iter()
         .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
         .collect();
+    vars.push(("STANDIN_FAMILY".into(), family.to_owned()));
     vars.push((
         "STANDIN_LOG".into(),
         dir.path()
@@ -111,7 +165,7 @@ pub(super) fn standin_with(
         instance: "test".into(),
     };
     Some(Rig {
-        pool: Pool::new("fake", spec, timings, secrets),
+        pool: Pool::new(family, spec, timings, secrets),
         dir,
     })
 }

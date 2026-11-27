@@ -5,6 +5,7 @@ use serde_json::json;
 use super::*;
 use crate::agents::driver::host::connection::{ClosedReason, RunFrame};
 use crate::agents::driver::host::frames::PROTOCOL;
+use crate::error::CoreError;
 
 #[tokio::test]
 async fn a_host_that_says_hello_and_ready_is_running() {
@@ -19,6 +20,21 @@ async fn a_host_that_says_hello_and_ready_is_running() {
     assert!(connection.has_capability("steer"));
     assert!(!connection.has_capability("fork"));
     assert_eq!(status.restart_count, 0);
+    assert!(status.since.is_some());
+    assert_eq!(
+        status.sdk,
+        Some(crate::agents::driver::host::HostSdk {
+            name: "standin".into(),
+            version: "0".into(),
+        })
+    );
+    assert_eq!(
+        status.capabilities,
+        Some(vec!["steer".into(), "stopTask".into(), "background".into()])
+    );
+    assert!(status.pooled);
+    assert!(!status.sdk_missing);
+    assert!(!status.has_driver);
 }
 
 #[tokio::test]
@@ -77,6 +93,27 @@ async fn a_hello_timeout_counts_as_a_crash() {
 }
 
 #[tokio::test]
+async fn a_restarting_host_reports_the_try_the_limit_and_the_wait() {
+    let timings = Timings {
+        backoff_base: Duration::from_secs(30),
+        backoff_cap: Duration::from_secs(30),
+        ..fast()
+    };
+    let Some(rig) = standin(&[("STANDIN_EXIT_BEFORE_HELLO", "1")], timings) else {
+        return;
+    };
+    assert!(rig.pool.acquire().await.is_err());
+    let restart = rig.pool.status().await.restart.expect("a restart waits");
+    assert_eq!((restart.attempt, restart.limit), (1, 5));
+    assert!(
+        matches!(restart.next_try_seconds, Some(1..=30)),
+        "{:?}",
+        restart.next_try_seconds
+    );
+    rig.pool.shutdown().await;
+}
+
+#[tokio::test]
 async fn five_restarts_in_five_minutes_make_the_family_unavailable_until_asked() {
     let Some(rig) = standin(&[("STANDIN_EXIT_BEFORE_HELLO", "1")], fast()) else {
         return;
@@ -90,6 +127,7 @@ async fn five_restarts_in_five_minutes_make_the_family_unavailable_until_asked()
     .await;
     let status = rig.pool.status().await;
     assert_eq!(status.restart_count, 5);
+    assert_eq!(status.stops_in_window, Some(5));
     let (crash, _) = status.last_crash.unwrap();
     assert_eq!(crash.exit.unwrap().code, Some(1));
     // the host's last words are kept, with the credential-looking line gone
@@ -301,10 +339,14 @@ async fn shutting_down_closes_the_host() {
 }
 
 #[test]
-fn the_flag_off_and_an_empty_host_path_keep_the_rust_drivers() {
+fn claude_uses_the_host_by_default_and_only_a_zero_flag_or_a_missing_host_keeps_the_rust_driver() {
     assert!(HostConfig::from_env(None, Some("1")).is_none());
     assert!(HostConfig::from_env(Some("".into()), Some("1")).is_none());
-    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), None).unwrap();
+    for on in [None, Some(""), Some("1"), Some("true")] {
+        let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), on).unwrap();
+        assert!(config.claude, "flag {on:?} is on");
+    }
+    let config = HostConfig::from_env(Some("/x/orbyn-engine-host".into()), Some("0")).unwrap();
     assert!(!config.claude);
     let hub = HostHub::new(&config);
     let inner: Arc<dyn crate::agents::driver::EngineDriver> =
@@ -314,8 +356,102 @@ fn the_flag_off_and_an_empty_host_path_keep_the_rust_drivers() {
         Arc::ptr_eq(&wrapped, &inner),
         "a flag-off family is not wrapped"
     );
-    let flag = HostConfig::from_env(Some("/x/h".into()), Some("true")).unwrap();
-    assert!(!flag.claude, "the host wants exactly 1");
+}
+
+fn test_pool() -> Arc<Pool> {
+    Pool::new(
+        "claude",
+        HostSpec {
+            program: "/nonexistent/orbyn-engine-host".into(),
+            args: Vec::new(),
+            env: Vec::new(),
+            instance: "test".into(),
+        },
+        Timings::default(),
+        None,
+    )
+}
+
+const HEAD: &str = "b2b2b2b2-1111-4222-8333-444455556666";
+
+#[test]
+fn a_rewind_point_is_remembered_once_for_the_engine_session_it_was_noted_for() {
+    let pool = test_pool();
+    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
+    // Nothing ages a point while the thread stays idle: no clock or TTL exists.
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        Some(HEAD.to_owned())
+    );
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        None,
+        "an open consumes it"
+    );
+
+    pool.note_resume_at("claude", "session-1", HEAD).unwrap();
+    assert_eq!(
+        pool.take_resume_at("claude", "session-2"),
+        None,
+        "another session never takes it"
+    );
+    assert_eq!(
+        pool.take_resume_at("another-engine", "session-1"),
+        None,
+        "another engine never takes it"
+    );
+    assert_eq!(
+        pool.take_resume_at("claude", "session-1"),
+        Some(HEAD.to_owned())
+    );
+
+    // An empty id is not a rewind point.
+    assert!(matches!(
+        pool.note_resume_at("claude", "", HEAD),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", ""),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", "not-a-uuid"),
+        Err(CoreError::Invalid(_))
+    ));
+    assert_eq!(pool.take_resume_at("claude", ""), None);
+    assert_eq!(pool.take_resume_at("claude", "session-1"), None);
+}
+
+#[test]
+fn a_rewind_point_refuses_a_poisoned_store() {
+    let pool = test_pool();
+    pool.poison_resume_at();
+    assert!(matches!(
+        pool.note_resume_at("claude", "session-1", HEAD),
+        Err(CoreError::Internal(_))
+    ));
+}
+
+#[test]
+fn a_changed_thread_session_drops_its_waiting_rewind_point() {
+    let pool = test_pool();
+    pool.note_session("claude", "thread-1", "old-session");
+    pool.note_resume_at("claude", "old-session", HEAD).unwrap();
+    pool.note_session("claude", "thread-1", "old-session");
+    assert_eq!(
+        pool.take_resume_at("claude", "old-session"),
+        Some(HEAD.to_owned()),
+        "the session did not change"
+    );
+
+    pool.note_session("claude", "thread-1", "old-session");
+    pool.note_resume_at("claude", "old-session", HEAD).unwrap();
+    pool.note_session("claude", "thread-1", "new-session");
+    assert_eq!(
+        pool.take_resume_at("claude", "old-session"),
+        None,
+        "the thread's session changed"
+    );
 }
 
 #[test]
@@ -327,7 +463,7 @@ fn cursor_runs_on_the_host_only_behind_its_own_flag_and_offers_one_mode() {
     let known = known_engine("cursor").unwrap();
     let rust: Arc<dyn crate::agents::driver::EngineDriver> =
         Arc::new(AcpDriver::known(known.as_custom(), known));
-    // The Claude flag alone leaves Cursor exactly as it was.
+    // The Claude flag alone (on by default) leaves Cursor exactly as it was.
     let claude_only = HostConfig::from_env(Some("/x/h".into()), Some("1")).unwrap();
     assert!(!claude_only.cursor);
     let hub = HostHub::new(&claude_only);
@@ -343,7 +479,7 @@ fn cursor_runs_on_the_host_only_behind_its_own_flag_and_offers_one_mode() {
             .with_cursor(Some("true"))
             .cursor
     );
-    let on = HostConfig::from_env(Some("/x/h".into()), None)
+    let on = HostConfig::from_env(Some("/x/h".into()), Some("0"))
         .unwrap()
         .with_cursor(Some("1"));
     assert!(on.cursor && !on.claude);

@@ -37,9 +37,14 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/run-now"),
+    ("POST", "/api/crew/background/runs/{id}/acknowledge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
+    ("POST", "/api/crew/tasks/{id}/checks/{check}/decide"),
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
+    ("POST", "/api/crew/needs-you/dismiss"),
+    ("POST", "/api/crew/needs-you/notify"),
+    ("POST", "/api/crew/lead/{thread_id}/close"),
     ("POST", "/api/crew/guard/targets/add"),
     ("POST", "/api/crew/guard/targets/{id}/remove"),
     ("POST", "/api/crew/escapes/mark"),
@@ -51,6 +56,17 @@ pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("POST", "/api/crew/escapes/{id}/check/retry"),
     ("POST", "/api/crew/escapes/{id}/check/withdraw"),
     ("POST", "/api/crew/escapes/{id}/check/approve"),
+    ("POST", "/api/crew/lessons"),
+    ("PATCH", "/api/crew/lessons/{id}"),
+    ("DELETE", "/api/crew/lessons/{id}"),
+    ("POST", "/api/crew/lessons/{id}/disable"),
+    ("POST", "/api/crew/lessons/{id}/enable"),
+    ("POST", "/api/crew/lessons/{id}/undo"),
+    ("POST", "/api/crew/lessons/{id}/promote"),
+    ("POST", "/api/crew/lessons/{id}/demote"),
+    ("PUT", "/api/crew/lessons/settings"),
+    ("POST", "/api/crew/skill-proposals/{id}/approve"),
+    ("POST", "/api/crew/skill-proposals/{id}/dismiss"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
@@ -86,26 +102,40 @@ pub const READS: &[(&str, &str)] = &[
     ("GET", "/api/crew/stops"),
     ("GET", "/api/crew/trust"),
     ("GET", "/api/crew/background"),
+    ("GET", "/api/crew/background/runs/{run_id}"),
     ("GET", "/api/crew/background/{id}"),
     ("GET", "/api/crew/background/{id}/runs"),
+    ("GET", "/api/crew/background/{id}/watch"),
+    ("GET", "/api/crew/background/{id}/watch/changes"),
     ("GET", "/api/crew/guard/targets"),
     ("GET", "/api/crew/guard/test"),
     ("GET", "/api/crew/classes"),
     ("GET", "/api/crew/classes/test"),
+    ("GET", "/api/crew/dashboard"),
     ("GET", "/api/crew/projects/{id}/pinned-ref"),
     ("GET", "/api/crew/projects/{id}/worker-provider"),
     ("GET", "/api/crew/route/{id}"),
     ("GET", "/api/crew/escapes"),
     ("GET", "/api/crew/escapes/thresholds"),
     ("GET", "/api/crew/escapes/possible"),
+    ("GET", "/api/crew/escapes/counts"),
     ("GET", "/api/crew/escapes/{id}"),
+    ("GET", "/api/crew/lessons"),
+    ("GET", "/api/crew/lessons/{id}"),
+    ("GET", "/api/crew/skill-proposals"),
     ("GET", "/api/crew/flow/board"),
+    ("GET", "/api/crew/needs-you"),
+    ("GET", "/api/crew/lead/{thread_id}/live"),
     ("GET", "/api/crew/flow/crews"),
     ("GET", "/api/crew/flow/facts"),
     ("GET", "/api/crew/flow/map"),
     ("GET", "/api/crew/flow/messages"),
     ("GET", "/api/crew/flow/tasks"),
     ("GET", "/api/crew/flow/tasks/{id}"),
+    ("GET", "/api/crew/flow/tasks/{id}/artifacts"),
+    ("GET", "/api/crew/flow/tasks/{id}/lanes"),
+    ("GET", "/api/crew/flow/tasks/{id}/run"),
+    ("GET", "/api/crew/tasks/{id}/samples"),
 ];
 
 const PREFIX: &str = "/api/crew";
@@ -133,15 +163,72 @@ pub fn crew_change(text: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The read paths that a state-changing route shares: lessons read and write one path (the list, and one lesson's
+    /// edit and delete). The marker is by path and ignores the method, so it refuses the shared path whole: an agent may
+    /// not send a person's write, and the read costs the conservative answer.
+    fn shared_with_a_change(route: &str) -> bool {
+        STATE_CHANGING
+            .iter()
+            .any(|(_, change)| pattern_matches(change, route))
+    }
+
     #[test]
     fn every_listed_change_is_refused_and_every_read_is_not() {
         for (_, route) in STATE_CHANGING {
             assert!(changes_crew_state(&route.replace("{id}", "t-1")), "{route}");
         }
         for (_, route) in READS {
+            // A read that shares its path with a write is refused whole by the path-only marker; the dedicated test
+            // below pins that trade and the paths it covers.
+            if shared_with_a_change(route) {
+                continue;
+            }
             assert!(
                 !changes_crew_state(&route.replace("{id}", "t-1")),
                 "{route}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_read_that_shares_a_person_writes_path_is_refused_whole() {
+        for path in ["/api/crew/lessons", "/api/crew/lessons/les_one"] {
+            assert!(changes_crew_state(path), "{path}");
+            assert!(crew_change(&format!("curl {path}")), "{path}");
+        }
+        assert!(READS.contains(&("GET", "/api/crew/lessons")));
+        assert!(READS.contains(&("GET", "/api/crew/lessons/{id}")));
+        assert!(STATE_CHANGING.contains(&("POST", "/api/crew/lessons")));
+        assert!(STATE_CHANGING.contains(&("PATCH", "/api/crew/lessons/{id}")));
+        assert!(STATE_CHANGING.contains(&("DELETE", "/api/crew/lessons/{id}")));
+        // The rest of the lesson paths are changes only.
+        for path in [
+            "/api/crew/lessons/les_one/disable",
+            "/api/crew/lessons/les_one/enable",
+            "/api/crew/lessons/les_one/undo",
+            "/api/crew/lessons/les_one/promote",
+            "/api/crew/lessons/les_one/demote",
+            "/api/crew/lessons/settings",
+        ] {
+            assert!(changes_crew_state(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn the_skill_proposal_read_has_no_write_on_its_path_and_is_not_refused() {
+        assert!(!changes_crew_state("/api/crew/skill-proposals"));
+        assert!(!crew_change(
+            "curl http://127.0.0.1:9/api/crew/skill-proposals"
+        ));
+        assert!(READS.contains(&("GET", "/api/crew/skill-proposals")));
+        for path in [
+            "/api/crew/skill-proposals/prop_1/approve",
+            "/api/crew/skill-proposals/prop_1/dismiss",
+        ] {
+            assert!(changes_crew_state(path), "{path}");
+            assert!(
+                crew_change(&format!("curl -X POST http://127.0.0.1:9{path} -d '{{}}'")),
+                "{path}"
             );
         }
     }

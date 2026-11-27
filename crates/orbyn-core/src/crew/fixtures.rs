@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde_json::json;
 
-use crate::store::{ForgeMerge, ForgePhase, MergeEntry, MergeRecord};
+use crate::store::{ForgeMerge, ForgePhase, LessonEvidence, MergeEntry, MergeRecord};
 
 /// A merge that reached `branch` in `repo`, with `text` in each free-text field.
 pub fn merge_record(task: &str, repo: &str, branch: &str, text: &str) -> MergeRecord {
@@ -144,6 +144,40 @@ pub fn add_project(core: &crate::Core, path: &str) -> String {
             scratch: false,
         })
         .unwrap()
+        .id
+}
+
+/// Three active escape lessons under `area`, each carrying `evidence`, then one open proposal through the core's own
+/// maker. Returns the proposal's id; its generated skill name is `crew-escape-<area>`. The dev-only seed uses the same
+/// store writer (`Store::write_escape_lessons`).
+pub fn skill_proposal(core: &crate::Core, project: &str, area: &str, evidence: &[&str]) -> String {
+    let evidence: Vec<LessonEvidence> = evidence
+        .iter()
+        .map(|id| LessonEvidence {
+            kind: "escape".to_owned(),
+            id: (*id).to_owned(),
+        })
+        .collect();
+    let lessons: Vec<(String, Vec<LessonEvidence>)> = [
+        "The first escape.",
+        "The second escape.",
+        "The third escape.",
+    ]
+    .into_iter()
+    .map(|text| (text.to_owned(), evidence.clone()))
+    .collect();
+    let written = core
+        .store
+        .write_escape_lessons(project, area, &lessons, None)
+        .expect("three escape lessons with no fingerprint are written");
+    core.learn_skill_proposals(project);
+    let sources: Vec<String> = written.into_iter().map(|lesson| lesson.id).collect();
+    core.store
+        .skill_proposals(project)
+        .unwrap()
+        .into_iter()
+        .find(|proposal| sources.iter().any(|id| proposal.lessons.contains(id)))
+        .expect("the group made one proposal")
         .id
 }
 

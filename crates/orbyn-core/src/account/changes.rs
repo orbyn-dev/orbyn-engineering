@@ -7,7 +7,7 @@
 //! state-changing path is still refused, and a path under `/api/account/` that this module does
 //! not know is treated as changing state until someone lists it as a read.
 
-/// Every route under `/api/account` that changes state, as `(method, path)`. A `{id}` segment matches any one segment.
+/// Every route under `/api/account` that changes state, as `(method, path)`. A `{name}` segment matches any one segment.
 pub const STATE_CHANGING: &[(&str, &str)] = &[
     ("DELETE", "/api/account/devices/{id}"),
     ("POST", "/api/account/approvals/{id}/approve"),
@@ -55,7 +55,8 @@ fn matches(pattern: &str, path: &str) -> bool {
         && pattern
             .iter()
             .zip(&path)
-            .all(|(want, got)| *want == "{id}" || want == got)
+            // A `{name}` segment is a placeholder: the route table spells the same parameter `{id}` and `{thread_id}`.
+            .all(|(want, got)| (want.starts_with('{') && want.ends_with('}')) || want == got)
 }
 
 /// `text` with the percent-encoding of letters, digits and `-._~` undone.
@@ -148,7 +149,9 @@ pub fn paths_with_prefix(text: &str, prefix: &str) -> Vec<String> {
     found
 }
 
-/// A `{id}` segment of a route pattern matches any one segment of a path.
+/// A `{name}` segment of a route pattern matches any one segment of a path. The crew and redaction route lists are
+/// checked through this matcher too, and the protocol spells the same parameter `{id}` there and `{thread_id}` in the
+/// route table, so the placeholder is the segment's shape, not its name.
 pub fn pattern_matches(pattern: &str, path: &str) -> bool {
     matches(pattern, path)
 }
@@ -166,6 +169,18 @@ mod tests {
         for (_, route) in READS {
             assert!(!changes_account_state(route), "a read");
         }
+    }
+
+    #[test]
+    fn a_named_placeholder_matches_a_concrete_segment() {
+        // The crew and redaction lists are checked with this matcher, and their routes name `{thread_id}` where the
+        // account lists name `{id}`; both must match a concrete segment (the route-table test builds one).
+        assert!(pattern_matches("{thread_id}", "thread-1"));
+        assert!(pattern_matches(
+            "/api/crew/lead/{thread_id}/close",
+            "/api/crew/lead/thread-1/close"
+        ));
+        assert!(!pattern_matches("{thread_id}", "thread-1/extra"));
     }
 
     #[test]

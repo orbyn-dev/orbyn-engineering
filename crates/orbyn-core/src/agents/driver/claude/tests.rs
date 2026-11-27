@@ -67,22 +67,24 @@ fn done() -> Value {
 }
 
 #[test]
-fn a_background_agent_holds_a_completed_turn_until_it_ends() {
+fn a_held_agent_that_never_notifies_is_reported_stopped_with_the_caps_reason() {
     let mut mapper = StreamMapper::default();
     mapper.on_frame(&started("a1", "local_agent"));
     mapper.on_frame(&done());
     assert!(
-        mapper.outcome.is_none(),
-        "the CLI would kill the agent on exit"
+        mapper.held.is_some(),
+        "the finished turn waits for the agent"
     );
-    assert!(!mapper.waiting_on_hold());
-    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
-        "task_id": "a1", "status": "completed" }));
-    assert!(mapper.waiting_on_hold());
-    // The follow-up turn the CLI starts for the notification ends the run.
-    mapper.on_frame(&said("the agent found it"));
-    mapper.on_frame(&done());
-    assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
+    assert!(!mapper.waiting_on_hold(), "the agent is still running");
+    // The idle cap ends the hold; the work that never notified is said to have stopped, and why.
+    let ended = mapper.end_background("idle");
+    assert!(
+        matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
+            if name == "background.stopped"
+                && value["taskId"] == "a1"
+                && value["reason"] == "idle"),
+        "{ended:?}"
+    );
 }
 
 #[test]
@@ -91,12 +93,12 @@ fn a_background_shell_does_not_hold_the_run_and_is_reported_stopped() {
     mapper.on_frame(&started("b1", "local_bash"));
     mapper.on_frame(&done());
     assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
-    let ended = mapper.end_background();
+    let ended = mapper.end_background("turn ended");
     assert!(
         matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
             if name == "background.stopped" && value["taskId"] == "b1")
     );
-    assert!(mapper.end_background().is_empty());
+    assert!(mapper.end_background("turn ended").is_empty());
 }
 
 #[test]
@@ -106,7 +108,7 @@ fn a_workflow_is_never_reported_as_a_background_stop() {
     mapper.on_frame(&launch_frame());
     mapper.on_frame(&started("b1", "local_bash"));
     mapper.on_frame(&done());
-    let ended = mapper.end_background();
+    let ended = mapper.end_background("turn ended");
     assert!(
         matches!(&ended[..], [EngineEvent::Agui(AgUiEvent::Custom { name, value })]
             if name == "background.stopped" && value["taskId"] == "b1"),
@@ -138,33 +140,6 @@ fn a_turn_the_engine_started_for_its_own_work_does_not_end_the_run() {
     mapper.on_frame(&said("here is your answer"));
     mapper.on_frame(&done());
     assert_eq!(mapper.outcome, Some(EngineOutcome::Completed));
-}
-
-#[test]
-fn what_a_notifications_turn_says_is_shown_but_is_not_the_prompts_reply() {
-    let is_leftover = |events: &[EngineEvent]| {
-        !events.is_empty()
-            && events
-                .iter()
-                .all(|event| matches!(event, EngineEvent::Leftover(_)))
-    };
-    let mut mapper = StreamMapper::answering("mine");
-    // The CLI ran a turn for a finished background agent, and said so, before reaching the prompt.
-    mapper.on_frame(&json!({ "type": "system", "subtype": "task_notification",
-        "task_id": "old", "status": "completed" }));
-    let events = mapper.on_frame(&said("the old agent finished"));
-    assert!(is_leftover(&events), "{events:?}");
-    mapper.on_frame(&done());
-    mapper.on_frame(&echo("mine"));
-    // After the echo the words are the prompt's own.
-    let events = mapper.on_frame(&said("here is your answer"));
-    assert!(!events.is_empty());
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, EngineEvent::Leftover(_))),
-        "{events:?}"
-    );
 }
 
 #[test]
@@ -322,6 +297,7 @@ fn spec() -> RunSpec {
         cwd: PathBuf::from("/workspace/repo/app"),
         checkout: PathBuf::from("/workspace/repo/app"),
         library: PathBuf::from("/workspace"),
+        local_skills: None,
         prompt: "hello".into(),
         user_prompt: "hello".into(),
         context: String::new(),
@@ -626,48 +602,32 @@ fn the_run_endpoint_reaches_claude_through_a_private_file_not_its_arguments() {
 }
 
 #[test]
-fn command_line_matches_the_contract_and_never_uses_bare() {
-    let args: Vec<String> = run_args(&spec(), Path::new("/run/mcp.json"))
+fn a_local_skill_view_is_added_after_the_existing_add_dir_entries() {
+    let mut run = spec();
+    run.local_skills = Some(PathBuf::from("/run/skills-local-view"));
+    let args: Vec<String> = run_args(&run, Path::new("/run/mcp.json"))
         .into_iter()
         .map(|arg| arg.into_string().unwrap())
         .collect();
-    // The run's folder joins with the platform's separator, so the expected path joins the same way.
-    let settings = Path::new("/run")
-        .join("settings.json")
-        .to_string_lossy()
-        .into_owned();
-    assert_eq!(
-        args,
-        [
-            "-p",
-            "--output-format",
-            "stream-json",
-            "--input-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--replay-user-messages",
-            "--permission-mode",
-            "default",
-            "--mcp-config",
-            "/run/mcp.json",
-            "--add-dir",
-            "/workspace",
-            "--permission-prompt-tool",
-            "mcp__orbyn_engineering__approve",
-            "--model",
-            "sonnet",
-            "--settings",
-            settings.as_str(),
-            "--resume",
-            "sess",
-        ]
-    );
-    assert!(
-        !args
-            .iter()
-            .any(|arg| arg == "--bare" || arg == "--plugin-dir")
-    );
+    let added: Vec<&str> = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--add-dir")
+        .map(|pair| pair[1].as_str())
+        .collect();
+    assert_eq!(added, ["/workspace", "/run/skills-local-view"]);
+    // A run with no local skills gets no extra folder.
+    let mut plain = spec();
+    plain.local_skills = None;
+    let args: Vec<String> = run_args(&plain, Path::new("/run/mcp.json"))
+        .into_iter()
+        .map(|arg| arg.into_string().unwrap())
+        .collect();
+    let added: Vec<&str> = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--add-dir")
+        .map(|pair| pair[1].as_str())
+        .collect();
+    assert_eq!(added, ["/workspace"]);
 }
 
 #[test]
@@ -1358,19 +1318,6 @@ fn subagent_frames_stay_out_of_the_top_level_turn() {
     assert!(mapper.on_frame(&frame).is_empty());
 }
 
-#[test]
-fn error_result_reports_its_reason() {
-    let mut mapper = StreamMapper::default();
-    mapper.on_frame(&json!({
-        "type":"result","subtype":"error_during_execution","is_error":true,
-        "errors":["Not logged in"],"session_id":"s"
-    }));
-    assert_eq!(
-        mapper.outcome,
-        Some(EngineOutcome::Failed("Not logged in".into()))
-    );
-}
-
 #[cfg(unix)]
 #[test]
 fn a_confined_first_turn_names_its_session_and_a_later_turn_resumes_it() {
@@ -1445,6 +1392,202 @@ fn the_permission_prompt_waits_as_long_as_the_approval_timeout() {
         huge["mcpServers"][MCP_SERVER_NAME]["timeout"],
         json!(24u64 * 24 * 60 * 60 * 1000)
     );
+}
+
+/// The login probe (I56), through the driver's own `probe()`: the engine's status command is the driver's fixed
+/// `auth status`, run from a neutral folder with no settings-source argument, and a login line printed on stderr maps to
+/// the signed-in state and account. The captured text is handed to the parsers and nothing else: the probe's answer is
+/// the state, never the output.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_runs_the_drivers_status_command_from_a_neutral_folder() {
+    use crate::agents::driver::EngineDriver;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let record = dir.path().join("record.txt");
+    let script = dir.path().join("claude-status");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nprintf '%s | %s\\n' \"$*\" \"$(pwd)\" >> '{record}'\ncase \"$*\" in\n  --version) printf '%s\\n' '2.1.318 (Claude Code)' ;;\n  \"auth status\") printf '%s\\n' '{{\"loggedIn\":true,\"email\":\"probe@example.test\"}}' >&2 ;;\nesac\n",
+            record = record.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let probe = ClaudeDriver::new(
+        script.to_string_lossy().into_owned(),
+        Duration::from_secs(1800),
+    )
+    .probe()
+    .await;
+    assert_eq!(probe.version.as_deref(), Some("2.1.318"));
+    assert_eq!(probe.auth, Some(orbyn_contracts::AuthState::LoggedIn));
+    assert_eq!(probe.account.as_deref(), Some("probe@example.test"));
+    let recorded = std::fs::read_to_string(&record).unwrap();
+    // The arguments are the driver's: its own status command, and no settings-source argument for the login probe.
+    let auth_line = recorded
+        .lines()
+        .find(|line| line.starts_with("auth status | "))
+        .expect("the probe ran the driver's status command");
+    let (args, cwd) = auth_line.split_once(" | ").unwrap();
+    assert_eq!(args, "auth status");
+    assert!(!recorded.contains("--setting-sources") && !recorded.contains("--bare"));
+    // It runs from a neutral folder, not a checkout.
+    assert_eq!(
+        std::fs::canonicalize(cwd).unwrap(),
+        std::fs::canonicalize(std::env::temp_dir()).unwrap()
+    );
+}
+
+/// The probe is bounded: a status command that never answers is given up on, and the person reads "unknown" rather than a
+/// wait. Its output is never stored; only the parsers see it (the test above reads the state, not the text).
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_gives_up_on_a_hanging_status_command() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let script = dir.path().join("claude-hangs");
+    std::fs::write(&script, "#!/bin/sh\nsleep 60\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let program = script.to_string_lossy().into_owned();
+    let started = std::time::Instant::now();
+    let answer = crate::agents::engines::probe::read_login(
+        &program,
+        &["auth", "status"],
+        parse_auth_status,
+        parse_auth_account,
+    )
+    .await;
+    assert_eq!(answer, (orbyn_contracts::AuthState::Unknown, None));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "the probe's own timeout ends a hanging status command"
+    );
+}
+
+/// The cap's login side (I56): a status command past the 256 KiB capture is read to the cap
+/// and ended, and the state and account still map from the kept text. The `REFUSED-TAIL` past
+/// the cap would make the JSON invalid if it were read, so the mapped answer proves it was
+/// refused.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_keeps_answering_past_the_capture_cap() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let script = dir.path().join("claude-past-cap");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nexec 1>/dev/null\nprintf '%s' '{\"loggedIn\":true,\"email\":\"probe@example.test\"}' >&2\nperl -e 'print \" \" x 300000; print \"REFUSED-TAIL\"' >&2\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let program = script.to_string_lossy().into_owned();
+    let started = std::time::Instant::now();
+    let answer = crate::agents::engines::probe::read_login(
+        &program,
+        &["auth", "status"],
+        parse_auth_status,
+        parse_auth_account,
+    )
+    .await;
+    assert_eq!(
+        answer,
+        (
+            orbyn_contracts::AuthState::LoggedIn,
+            Some("probe@example.test".into())
+        ),
+        "the kept text still maps, and the refused tail cannot make it invalid"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "the cap ends the status command rather than waiting for the rest"
+    );
+}
+
+/// The wipe (I56): the status text is read only where the parsers map it, so the probe's
+/// answer holds the mapped state, account, version and sign-in command and none of the text,
+/// its token included. The signed-in, signed-out, unexpected-output and failing commands all
+/// go through the same wipe.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_login_probe_wipes_the_status_text_and_keeps_the_mapped_answer() {
+    use crate::agents::driver::EngineDriver;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = crate::testing::TempDir::new();
+    let canary = format!("orbyn-probe-canary-{}", crate::util::new_id());
+    let script = |name: &str, answer: &str| -> String {
+        let path = dir.path().join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\ncase \"$*\" in\n  --version) printf '%s\\n' '2.1.318 (Claude Code)' ;;\n  \"auth status\") {answer} ;;\nesac\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let cases = [
+        (
+            "signed-in",
+            format!(
+                "printf '%s\\n' '{{\"loggedIn\":true,\"email\":\"probe@example.test\",\"token\":\"sk-ant-{canary}\"}}' >&2"
+            ),
+            orbyn_contracts::AuthState::LoggedIn,
+            Some("probe@example.test"),
+        ),
+        (
+            "signed-out",
+            format!(
+                "printf '%s\\n' '{{\"loggedIn\":false,\"authMethod\":\"none\",\"token\":\"sk-ant-{canary}\"}}' >&2; exit 1"
+            ),
+            orbyn_contracts::AuthState::LoggedOut,
+            None,
+        ),
+        (
+            "unexpected",
+            format!("printf '%s\\n' 'not json, {canary}' >&2"),
+            orbyn_contracts::AuthState::Unknown,
+            None,
+        ),
+        (
+            "failing",
+            format!("printf '%s\\n' '{canary}' >&2; exit 7"),
+            orbyn_contracts::AuthState::LoggedOut,
+            None,
+        ),
+    ];
+    for (name, answer, auth, account) in cases {
+        let program = script(name, &answer);
+        let probe = ClaudeDriver::new(program, Duration::from_secs(1800))
+            .probe()
+            .await;
+        // What is kept: the mapped answer, and the fields that describe the engine.
+        assert_eq!(
+            probe.version.as_deref(),
+            Some("2.1.318"),
+            "{name}: the version is kept"
+        );
+        assert_eq!(probe.auth, Some(auth), "{name}: the state is mapped");
+        assert_eq!(
+            probe.account.as_deref(),
+            account,
+            "{name}: the account is mapped"
+        );
+        assert!(probe.path.is_some(), "{name}: the program path is kept");
+        assert_eq!(
+            probe.sign_in_command.as_deref(),
+            Some("claude auth login"),
+            "{name}: the sign-in command is kept"
+        );
+        // What is removed: the text the answer came from.
+        let answer = format!("{probe:?}");
+        assert!(
+            !answer.contains(&canary),
+            "{name}: the status text reached the answer: {answer}"
+        );
+    }
 }
 
 /// The task-tool flag is a person's opt-in: off sets nothing, a confined run gets

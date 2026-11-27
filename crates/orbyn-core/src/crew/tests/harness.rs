@@ -26,6 +26,12 @@ use crate::testing::{TempDir, run_git};
 use crate::tools::mcp::McpBinding;
 use crate::{CoreConfig, store::CrewTask};
 
+/// How long [`World::until`] waits before it panics. It is not one of the production budgets: a test's wait must
+/// survive a shared machine, which the archived full-suite log showed tens of times slower than idle. Three
+/// minutes is far past any loaded start and short enough that a deadlocked test still fails in the run. A test
+/// that polls the store in its own loop borrows it, so no wait in this module is decided by the run's length.
+pub(crate) const WAIT_LIMIT: Duration = Duration::from_secs(3 * 60);
+
 /// A run and the restriction it was started under: `(thread, rules)`.
 pub type Confined = (String, Option<crate::host::confine::Confinement>);
 
@@ -73,6 +79,9 @@ pub struct Fake {
     family: String,
     /// Takes input while a turn runs, as Claude and Codex do; false is an engine that does not.
     steerable: bool,
+    /// Takes this many steers per run, then reports every later one as refused (SteerFailed);
+    /// `None` takes every steer, as an engine that accepts input does.
+    refuses_after: Option<usize>,
     /// Lists a lead-tier model as well, so a review role can be routed to it.
     tiered: bool,
     /// What was handed to a running turn's input: `(thread, text)`.
@@ -253,6 +262,8 @@ impl EngineDriver for Fake {
         let answers = self.answers.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let stop = cancel.clone();
+        let refuses_after = self.refuses_after;
+        let refusal_events = events.clone();
         let task = tokio::spawn(async move {
             let outcome = match turn {
                 None => EngineOutcome::Completed,
@@ -304,9 +315,27 @@ impl EngineDriver for Fake {
         let input = self.steerable.then(|| {
             let (send, mut receive) = mpsc::unbounded_channel::<SteerMessage>();
             let (steered, thread) = (self.steered.clone(), spec_thread);
+            let events = refusal_events;
             tokio::spawn(async move {
+                let mut accepted = 0;
                 while let Some(steer) = receive.recv().await {
-                    steered.lock().unwrap().push((thread.clone(), steer.prompt));
+                    steered
+                        .lock()
+                        .unwrap()
+                        .push((thread.clone(), steer.prompt.clone()));
+                    let refuse = match refuses_after {
+                        None => false,
+                        Some(after) if accepted < after => {
+                            accepted += 1;
+                            false
+                        }
+                        Some(_) => true,
+                    };
+                    // An engine that cannot take the text reports the refusal back, as a failed
+                    // Codex turn/steer and a rejected host steering request do.
+                    if refuse {
+                        let _ = events.send(EngineEvent::SteerFailed(steer)).await;
+                    }
                 }
             });
             send
@@ -370,6 +399,36 @@ pub async fn world_with(preview: bool, script: Script, engines: &[(&str, bool)])
     world_tiered(preview, script, engines, false).await
 }
 
+/// `world_with`, where every engine refuses the steers it is handed (SteerFailed), as an engine
+/// whose turn cannot be steered does.
+pub async fn world_refusing_steers(
+    preview: bool,
+    script: Script,
+    engines: &[(&str, bool)],
+) -> World {
+    world_refusing_steers_after(preview, script, engines, 0).await
+}
+
+/// `world_with`, where every engine takes its first `accepted` steers and refuses every later one
+/// (SteerFailed), as an engine answers the steer that reaches its running turn.
+pub async fn world_refusing_steers_after(
+    preview: bool,
+    script: Script,
+    engines: &[(&str, bool)],
+    accepted: usize,
+) -> World {
+    world_full(
+        preview,
+        script,
+        engines,
+        WorldKnobs {
+            refuses_after: Some(accepted),
+            ..WorldKnobs::default()
+        },
+    )
+    .await
+}
+
 /// `world_with`, with an explicit ACP lead assignment pinned to each fake's default
 /// model. Builder admission remains; a nondefault model is not promoted by that assignment.
 pub async fn world_tiered(
@@ -378,7 +437,16 @@ pub async fn world_tiered(
     engines: &[(&str, bool)],
     tiered: bool,
 ) -> World {
-    world_full(preview, script, engines, tiered, false, Vec::new(), None).await
+    world_full(
+        preview,
+        script,
+        engines,
+        WorldKnobs {
+            tiered,
+            ..WorldKnobs::default()
+        },
+    )
+    .await
 }
 
 pub async fn world_publication(script: Script, timeout: Option<std::time::Duration>) -> World {
@@ -386,10 +454,11 @@ pub async fn world_publication(script: Script, timeout: Option<std::time::Durati
         true,
         script,
         &[("alpha", false), ("beta", false)],
-        true,
-        false,
-        Vec::new(),
-        timeout,
+        WorldKnobs {
+            tiered: true,
+            approval_timeout: timeout,
+            ..WorldKnobs::default()
+        },
     )
     .await
 }
@@ -401,10 +470,10 @@ pub async fn world_confined(script: Script) -> World {
         true,
         script,
         &[("alpha", false)],
-        false,
-        true,
-        Vec::new(),
-        None,
+        WorldKnobs {
+            confine: true,
+            ..WorldKnobs::default()
+        },
     )
     .await
 }
@@ -412,7 +481,16 @@ pub async fn world_confined(script: Script) -> World {
 #[cfg(target_os = "macos")]
 /// `world_confined`, with these fake engines (an id ending in `codex` is of the Codex family).
 pub async fn world_confined_with(script: Script, engines: &[(&str, bool)]) -> World {
-    world_full(true, script, engines, false, true, Vec::new(), None).await
+    world_full(
+        true,
+        script,
+        engines,
+        WorldKnobs {
+            confine: true,
+            ..WorldKnobs::default()
+        },
+    )
+    .await
 }
 
 pub async fn world_forge(script: Script) -> World {
@@ -420,10 +498,10 @@ pub async fn world_forge(script: Script) -> World {
         true,
         script,
         &[("alpha", false)],
-        false,
-        false,
-        vec!["ci".into()],
-        None,
+        WorldKnobs {
+            merge_checks: vec!["ci".into()],
+            ..WorldKnobs::default()
+        },
     )
     .await
 }
@@ -433,23 +511,38 @@ pub async fn world_forge_review(script: Script) -> World {
         true,
         script,
         &[("alpha", false), ("beta", false)],
-        true,
-        false,
-        vec!["ci".into()],
-        None,
+        WorldKnobs {
+            tiered: true,
+            merge_checks: vec!["ci".into()],
+            ..WorldKnobs::default()
+        },
     )
     .await
+}
+
+/// The rarely changed parts of a test world, so a new one adds a field here and no argument to every call.
+#[derive(Default)]
+struct WorldKnobs {
+    tiered: bool,
+    confine: bool,
+    merge_checks: Vec<String>,
+    approval_timeout: Option<std::time::Duration>,
+    refuses_after: Option<usize>,
 }
 
 async fn world_full(
     preview: bool,
     script: Script,
     engines: &[(&str, bool)],
-    tiered: bool,
-    confine: bool,
-    merge_checks: Vec<String>,
-    approval_timeout: Option<std::time::Duration>,
+    knobs: WorldKnobs,
 ) -> World {
+    let WorldKnobs {
+        tiered,
+        confine,
+        merge_checks,
+        approval_timeout,
+        refuses_after,
+    } = knobs;
     let dir = TempDir::new();
     let library = crate::testing::library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
@@ -511,6 +604,7 @@ async fn world_full(
             // An id that ends in `codex` is a Codex engine, so the run-start refusal for that family applies to it.
             family: if id.ends_with("codex") { "codex" } else { id }.to_owned(),
             steerable: *steerable,
+            refuses_after,
             tiered,
             steered: steered.clone(),
             core: cell.clone(),
@@ -560,6 +654,7 @@ async fn world_full(
             base_branch: None,
             effort: None,
             options: BTreeMap::new(),
+            branch_name_seed: None,
         })
         .await
         .unwrap();
@@ -654,15 +749,18 @@ impl World {
         self.core.store.crew_task(id).unwrap().unwrap()
     }
 
-    /// Waits (bounded) for `done`, which reads the world.
+    /// Waits for `done`, which reads the world, on a clock this test owns rather than a production budget: a machine
+    /// shared with other builds can be tens of times slower than an idle one, and a start that takes 20 seconds there is
+    /// not a bug in the test. The panic says how long it waited, so a real hang still fails by name.
     pub async fn until(&self, what: &str, mut done: impl FnMut(&World) -> bool) {
-        for _ in 0..3000 {
-            if done(self) {
-                return;
-            }
+        let give_up = std::time::Instant::now() + WAIT_LIMIT;
+        while !done(self) {
+            assert!(
+                std::time::Instant::now() < give_up,
+                "never happened in {WAIT_LIMIT:?}: {what}"
+            );
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        panic!("never happened: {what}");
     }
 
     pub async fn until_state(&self, id: &str, state: &str) {
@@ -689,8 +787,102 @@ impl World {
             .worker_thread_id
             .unwrap()
     }
+
+    /// A real restart: closes this core and opens a new one on the same data folder. Fake engines
+    /// are not registered again, since a stored record and its replay only need the core.
+    pub async fn restart(self) -> World {
+        let World {
+            _dir,
+            core,
+            lead,
+            repo,
+            prompts,
+            answers,
+            steered,
+            confines,
+            crew_tasks,
+            approval_turns,
+            approval_specs,
+            ..
+        } = self;
+        let config = core.config.clone();
+        // A process that dies takes its live scripts with it.
+        core.code_runs.forget_all();
+        core.shutdown().await;
+        // An aborted script drops its hold on the core when the runtime next polls it. That is a
+        // scheduling moment, not a product budget: wait on the harness clock, so a loaded runtime
+        // polling a moment later cannot fail the restart (#1063, tdd 3.7).
+        let until = std::time::Instant::now() + WAIT_LIMIT;
+        while Arc::strong_count(&core) > 1 && std::time::Instant::now() < until {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let old = Arc::downgrade(&core);
+        drop(core);
+        assert!(old.upgrade().is_none(), "the old core is gone");
+        let core = Arc::new(Core::open(config).expect("the restarted core opens"));
+        let lead_token = bind(&core, &lead, "run-lead");
+        World {
+            approval_turns,
+            approval_specs,
+            _dir,
+            core,
+            repo,
+            lead,
+            lead_token,
+            prompts,
+            answers,
+            steered,
+            confines,
+            crew_tasks,
+        }
+    }
 }
 
+/// Makes a running worker's run look like another process's, so the service cannot confirm its stop and a cancel fails closed.
+/// Returns the epoch to put back with [`give_back_worker_run`].
+pub fn take_worker_run(w: &World, task: &str) -> String {
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+    let run_id = w
+        .core
+        .store
+        .thread(&w.worker(task))
+        .unwrap()
+        .active_run
+        .unwrap()
+        .id;
+    let own: String = db
+        .query_row(
+            "SELECT owner_epoch FROM runs WHERE id = ?1",
+            [&run_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE runs SET owner_epoch = 'another-process' WHERE id = ?1",
+        [&run_id],
+    )
+    .unwrap();
+    own
+}
+
+/// Puts back the epoch [`take_worker_run`] saved, once the stop may be confirmed again.
+pub fn give_back_worker_run(w: &World, task: &str, epoch: &str) {
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    let run_id = w
+        .core
+        .store
+        .thread(&w.worker(task))
+        .unwrap()
+        .active_run
+        .unwrap()
+        .id;
+    db.execute(
+        "UPDATE runs SET owner_epoch = ?2 WHERE id = ?1",
+        rusqlite::params![run_id, epoch],
+    )
+    .unwrap();
+}
 /// A brief draft that writes under `src/`, and a key whose checks keep to it. The command
 /// check's text is what the leak tests look for.
 pub const KEY_MARKER: &str = "orbyn-key-marker-77";
@@ -719,8 +911,8 @@ pub fn key() -> Value {
             { "id": "chk-run", "kind": "command",
               "params": { "run": format!("echo {KEY_MARKER}") },
               "proves": "The command exits 0." },
-            { "id": "chk-probe", "kind": "http_probe",
-              "params": { "url": "http://127.0.0.1:9/health", "expect_status": 200 },
+            { "id": "chk-probe", "kind": "preview",
+              "params": { "url": "http://127.0.0.1:9/health" },
               "proves": "The service answers." }
         ],
         "protected_paths": ["tests/**"]

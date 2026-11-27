@@ -96,6 +96,17 @@ fn deny_picks_reject_and_missing_option_never_allows() {
 }
 
 #[test]
+fn an_allow_never_becomes_a_permanent_grant() {
+    // The agent offers only "always": Orbyn's one-time allow is not that, so the request is
+    // answered cancelled instead of remembered for good.
+    let only_always = json!({ "options": [{ "optionId": "y-always", "kind": "allow_always" }] });
+    assert_eq!(
+        permission_outcome(&only_always, &Verdict::Allow, false),
+        json!({ "outcome": "cancelled" })
+    );
+}
+
+#[test]
 fn cancellation_answers_cancelled() {
     assert_eq!(
         permission_outcome(&options(), &Verdict::Allow, true),
@@ -104,14 +115,275 @@ fn cancellation_answers_cancelled() {
 }
 
 #[test]
-fn chunks_form_one_message_until_the_kind_changes() {
+fn text_and_thought_chunks_form_one_message_each_until_the_tool_call() {
     let mut mapper = UpdateMapper::default();
     let chunk = json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": "a" } });
+    let thought = json!({ "sessionUpdate": "agent_thought_chunk", "content": { "type": "text", "text": "b" } });
     assert_eq!(mapper.on_update(&chunk).len(), 2);
+    assert_eq!(mapper.on_update(&thought).len(), 2);
     assert_eq!(mapper.on_update(&chunk).len(), 1);
     let tool = json!({ "sessionUpdate": "tool_call", "toolCallId": "c", "title": "ls" });
-    assert_eq!(mapper.on_update(&tool).len(), 2);
+    assert_eq!(mapper.on_update(&tool).len(), 3);
     assert_eq!(mapper.close().len(), 1);
+}
+
+fn chunk(kind: &str, text: &str) -> Value {
+    json!({ "sessionUpdate": kind, "content": { "type": "text", "text": text } })
+}
+
+fn mapped(mapper: &mut UpdateMapper, updates: &[Value]) -> Vec<EngineEvent> {
+    updates
+        .iter()
+        .flat_map(|update| mapper.on_update(update))
+        .collect()
+}
+
+/// `(kind, message id, role)` for every message opened, in order.
+fn message_starts(events: &[EngineEvent]) -> Vec<(&'static str, String, String)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::Agui(AgUiEvent::TextMessageStart { message_id, role }) => {
+                Some(("text", message_id.clone(), role.clone()))
+            }
+            EngineEvent::Agui(AgUiEvent::ReasoningMessageStart { message_id, role }) => {
+                Some(("reasoning", message_id.clone(), role.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// `(kind, message id, delta)` for every chunk, in order.
+fn message_contents(events: &[EngineEvent]) -> Vec<(&'static str, String, String)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::Agui(AgUiEvent::TextMessageContent { message_id, delta }) => {
+                Some(("text", message_id.clone(), delta.clone()))
+            }
+            EngineEvent::Agui(AgUiEvent::ReasoningMessageContent { message_id, delta }) => {
+                Some(("reasoning", message_id.clone(), delta.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// `(kind, message id)` for every message closed, in order.
+fn message_ends(events: &[EngineEvent]) -> Vec<(&'static str, String)> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::Agui(AgUiEvent::TextMessageEnd { message_id }) => {
+                Some(("text", message_id.clone()))
+            }
+            EngineEvent::Agui(AgUiEvent::ReasoningMessageEnd { message_id }) => {
+                Some(("reasoning", message_id.clone()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn interleaved_thought_and_message_chunks_keep_both_messages_open() {
+    let mut mapper = UpdateMapper::default();
+    let events = mapped(
+        &mut mapper,
+        &[
+            chunk("agent_thought_chunk", "t1"),
+            chunk("agent_message_chunk", "a1"),
+            chunk("agent_thought_chunk", "t2"),
+            chunk("agent_message_chunk", "a2"),
+        ],
+    );
+    let starts = message_starts(&events);
+    assert_eq!(starts.len(), 2, "{events:?}");
+    let reasoning = starts.iter().find(|start| start.0 == "reasoning").unwrap();
+    let text = starts.iter().find(|start| start.0 == "text").unwrap();
+    assert_eq!(reasoning.2, "reasoning");
+    assert_eq!(text.2, "assistant");
+    assert_ne!(reasoning.1, text.1);
+    assert_eq!(
+        message_contents(&events),
+        vec![
+            ("reasoning", reasoning.1.clone(), "t1".to_owned()),
+            ("text", text.1.clone(), "a1".to_owned()),
+            ("reasoning", reasoning.1.clone(), "t2".to_owned()),
+            ("text", text.1.clone(), "a2".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert!(
+        message_ends(&events).is_empty(),
+        "no message may end before close(): {events:?}"
+    );
+    let closed = mapper.close();
+    assert_eq!(
+        message_ends(&closed),
+        vec![("text", text.1.clone()), ("reasoning", reasoning.1.clone()),],
+        "{closed:?}"
+    );
+}
+
+#[test]
+fn a_tool_call_between_chunks_splits_each_kind() {
+    let mut mapper = UpdateMapper::default();
+    let events = mapped(
+        &mut mapper,
+        &[
+            chunk("agent_thought_chunk", "t1"),
+            chunk("agent_message_chunk", "a1"),
+            json!({ "sessionUpdate": "tool_call", "toolCallId": "c", "title": "ls" }),
+            chunk("agent_thought_chunk", "t2"),
+            chunk("agent_message_chunk", "a2"),
+        ],
+    );
+    let starts = message_starts(&events);
+    assert_eq!(starts.len(), 4, "{events:?}");
+    assert_eq!(
+        starts.iter().map(|start| start.0).collect::<Vec<_>>(),
+        ["reasoning", "text", "reasoning", "text"],
+        "{events:?}"
+    );
+    assert_ne!(starts[0].1, starts[2].1);
+    assert_ne!(starts[1].1, starts[3].1);
+    assert_eq!(
+        message_contents(&events),
+        vec![
+            ("reasoning", starts[0].1.clone(), "t1".to_owned()),
+            ("text", starts[1].1.clone(), "a1".to_owned()),
+            ("reasoning", starts[2].1.clone(), "t2".to_owned()),
+            ("text", starts[3].1.clone(), "a2".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        message_ends(&events),
+        vec![
+            ("text", starts[1].1.clone()),
+            ("reasoning", starts[0].1.clone()),
+        ],
+        "the tool call closes the first pair: {events:?}"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            EngineEvent::Agui(AgUiEvent::ToolCallStart { tool_call_id, .. }) if tool_call_id == "c"
+        )),
+        "{events:?}"
+    );
+    let closed = mapper.close();
+    let mut ends = message_ends(&events);
+    ends.extend(message_ends(&closed));
+    assert_eq!(
+        ends,
+        vec![
+            ("text", starts[1].1.clone()),
+            ("reasoning", starts[0].1.clone()),
+            ("text", starts[3].1.clone()),
+            ("reasoning", starts[2].1.clone()),
+        ],
+        "{events:?} {closed:?}"
+    );
+}
+
+#[test]
+fn the_historical_mapper_keeps_interleaved_messages_open_too() {
+    let updates = [
+        chunk("agent_thought_chunk", "t1"),
+        chunk("agent_message_chunk", "a1"),
+        chunk("agent_thought_chunk", "t2"),
+        chunk("agent_message_chunk", "a2"),
+    ];
+    let mut historical = UpdateMapper::historical();
+    let mut events = mapped(&mut historical, &updates);
+    assert!(
+        message_ends(&events).is_empty(),
+        "no message may end before close(): {events:?}"
+    );
+    events.extend(historical.close());
+    assert_eq!(
+        message_starts(&events),
+        vec![
+            (
+                "reasoning",
+                "acp-history-1".to_owned(),
+                "reasoning".to_owned()
+            ),
+            ("text", "acp-history-2".to_owned(), "assistant".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        message_contents(&events),
+        vec![
+            ("reasoning", "acp-history-1".to_owned(), "t1".to_owned()),
+            ("text", "acp-history-2".to_owned(), "a1".to_owned()),
+            ("reasoning", "acp-history-1".to_owned(), "t2".to_owned()),
+            ("text", "acp-history-2".to_owned(), "a2".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        message_ends(&events),
+        vec![
+            ("text", "acp-history-2".to_owned()),
+            ("reasoning", "acp-history-1".to_owned()),
+        ],
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_user_chunk_between_assistant_chunks_splits_the_text_message() {
+    let mut mapper = UpdateMapper::default();
+    let events = mapped(
+        &mut mapper,
+        &[
+            chunk("agent_message_chunk", "a1"),
+            chunk("user_message_chunk", "u1"),
+            chunk("agent_message_chunk", "a2"),
+        ],
+    );
+    let starts = message_starts(&events);
+    assert_eq!(starts.len(), 3, "{events:?}");
+    assert_eq!(
+        starts.iter().map(|start| start.0).collect::<Vec<_>>(),
+        ["text", "text", "text"],
+        "{events:?}"
+    );
+    assert_eq!(
+        starts
+            .iter()
+            .map(|start| start.2.as_str())
+            .collect::<Vec<_>>(),
+        ["assistant", "user", "assistant"],
+        "{events:?}"
+    );
+    assert_ne!(starts[0].1, starts[1].1);
+    assert_ne!(starts[0].1, starts[2].1);
+    assert_eq!(
+        message_contents(&events),
+        vec![
+            ("text", starts[0].1.clone(), "a1".to_owned()),
+            ("text", starts[1].1.clone(), "u1".to_owned()),
+            ("text", starts[2].1.clone(), "a2".to_owned()),
+        ],
+        "{events:?}"
+    );
+    assert_eq!(
+        message_ends(&events),
+        vec![("text", starts[0].1.clone()), ("text", starts[1].1.clone()),],
+        "{events:?}"
+    );
+    let closed = mapper.close();
+    assert_eq!(
+        message_ends(&closed),
+        vec![("text", starts[2].1.clone())],
+        "{closed:?}"
+    );
 }
 
 #[test]
@@ -210,6 +482,22 @@ fn a_handshake_records_and_clears_the_engine_sign_in() {
     assert_eq!(known_sign_in("sign-in-slot-test").as_deref(), Some("agent"));
     slot.record(&json!({"authMethods": []}));
     assert_eq!(known_sign_in("sign-in-slot-test"), None);
+}
+
+#[test]
+fn a_sign_in_needed_is_the_structured_code_not_the_words() {
+    let failure = |code: Option<i64>, message: &str| {
+        super::StartFailure::agent(
+            crate::agents::driver::rpc::RpcCallError {
+                code,
+                error: CoreError::EngineUnavailable(message.into()),
+            },
+            "the agent did not answer its handshake",
+        )
+    };
+    assert!(failure(Some(-32000), "Unknown session").auth_required);
+    assert!(!failure(Some(-32002), "Authentication required").auth_required);
+    assert!(!failure(None, "Authentication required").auth_required);
 }
 
 #[test]
@@ -335,6 +623,7 @@ async fn a_program_that_is_another_cli_is_never_launched() {
         cwd: dir.path().to_path_buf(),
         checkout: dir.path().to_path_buf(),
         library: dir.path().to_path_buf(),
+        local_skills: None,
         prompt: "secret prompt".into(),
         user_prompt: "secret prompt".into(),
         context: String::new(),
@@ -368,7 +657,7 @@ fn a_launch_names_the_other_cli_it_refuses() {
         path: path.clone(),
     };
     let driver = grok_driver("grok");
-    let text = driver.refusal(&other).unwrap().to_string();
+    let text = super::refusal(driver.known, &other).unwrap().to_string();
     assert!(text.contains("grok-cli/dist/index.js"), "{text}");
     assert!(text.contains("another program"), "{text}");
     let real = ResolvedCommand {
@@ -376,13 +665,13 @@ fn a_launch_names_the_other_cli_it_refuses() {
         prefix: Vec::new(),
         path: "/usr/local/bin/grok".into(),
     };
-    assert!(driver.refusal(&real).is_none());
+    assert!(super::refusal(driver.known, &real).is_none());
     let own = AcpDriver::new(
         crate::agents::engines::known::known_engine("grok")
             .unwrap()
             .as_custom(),
     );
-    assert!(own.refusal(&other).is_none());
+    assert!(super::refusal(own.known, &other).is_none());
 }
 
 #[test]
@@ -393,6 +682,42 @@ fn a_move_is_checked_at_every_location() {
     let (kind, _, _) = classify(&params);
     assert_eq!(kind, ActionKind::FileChange);
     assert_eq!(gate_paths(&params, kind), ["src/a", "/Users/x/.ssh/config"]);
+}
+
+#[test]
+fn a_move_destination_only_in_raw_input_is_checked_too() {
+    for raw in [
+        json!({ "destination": "/Users/x/.ssh/config" }),
+        json!({ "filePath": "/Users/x/.ssh/config" }),
+        json!({ "path": "/Users/x/.ssh/config" }),
+    ] {
+        let params = json!({ "toolCall": { "title": "Move file", "kind": "move",
+            "locations": [{ "path": "src/a" }], "rawInput": raw }});
+        let (kind, _, _) = classify(&params);
+        assert_eq!(
+            gate_paths(&params, kind),
+            ["src/a", "/Users/x/.ssh/config"],
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn a_file_change_named_only_in_raw_input_is_gated_on_that_path() {
+    let params = json!({ "toolCall": { "title": "Edit", "kind": "edit",
+        "rawInput": { "filePath": "src/a" } }});
+    let (kind, _, _) = classify(&params);
+    assert_eq!(kind, ActionKind::FileChange);
+    assert_eq!(gate_paths(&params, kind), ["src/a"]);
+}
+
+#[test]
+fn a_repeated_path_is_gated_once() {
+    let params = json!({ "toolCall": { "title": "Edit", "kind": "edit",
+        "locations": [{ "path": "src/a" }],
+        "rawInput": { "path": "src/a", "destination": "src/b" } }});
+    let (kind, _, _) = classify(&params);
+    assert_eq!(gate_paths(&params, kind), ["src/a", "src/b"]);
 }
 
 #[test]
@@ -415,4 +740,26 @@ fn reads_and_fetches_keep_their_gate_paths() {
     let read = json!({ "toolCall": { "title": "Read", "kind": "read", "locations": [{ "path": "/etc/hosts" }] }});
     let (kind, _, _) = classify(&read);
     assert!(gate_paths(&read, kind).is_empty());
+}
+
+#[test]
+fn an_engine_that_cannot_ask_offers_no_approvals_and_nothing_else() {
+    use crate::agents::driver::EngineDriver;
+    use crate::agents::engines::known::KNOWN_ENGINES;
+    for known in KNOWN_ENGINES {
+        let modes = super::AcpDriver::known(known.as_custom(), known)
+            .descriptor()
+            .capabilities
+            .permission_modes;
+        if known.asks {
+            assert!(modes.len() > 1, "{}", known.id);
+        } else {
+            assert_eq!(
+                modes,
+                vec![orbyn_contracts::PermissionMode::NoApprovals],
+                "{}",
+                known.id
+            );
+        }
+    }
 }

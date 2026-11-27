@@ -1,7 +1,7 @@
 /**
- * MOCKS of the photo-conversion and transcript routes of docs/attachments-transcripts.md (provisional), for tests and the dev-only
+ * MOCKS of the photo-conversion route and the composer's transcript attach route of docs/attachments-transcripts.md (provisional), for tests and the dev-only
  * preview (`#/preview/attachments`), which installs them through `setPhotoConversionApi` and `setTranscriptsApi`. The app's own
- * default is no client at all: nothing here ships. The mocks refuse what the doc says the service refuses, picked by a word in the
+ * defaults are the real clients; nothing here ships. The mocks refuse what the doc says the service refuses, picked by a word in the
  * file name so a person (or a test) can reach every frame: "damaged" and "huge" for a photo; "newer" and "notes" for a transcript.
  * Titles and counts are made up from the name.
  */

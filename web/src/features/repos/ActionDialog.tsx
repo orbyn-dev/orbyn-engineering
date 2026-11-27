@@ -8,13 +8,15 @@ import { Dialog } from "../../ui/Dialog";
  * renders, `busy` blocks Escape, Cancel and the button while it runs, and a failure keeps the dialog open and says why.
  * Nothing runs on open, and nothing runs unless the person presses the confirm button.
  */
-export function ActionDialog({ title, confirmLabel, cancelLabel = "Cancel", tone = "primary", disabled, cancelFocus, onConfirm, onClose, children }: {
+export function ActionDialog({ title, confirmLabel, cancelLabel = "Cancel", tone = "primary", disabled, cancelFocus, confirmHidden, onConfirm, onClose, children }: {
   title: ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
   tone?: ButtonTone;
   disabled?: boolean;
   cancelFocus?: boolean;
+  /** The write is not this page's to make (a `Person` route with no person key): the dialog says why and offers only the way out. */
+  confirmHidden?: boolean;
   onConfirm(): Promise<void>;
   onClose(): void;
   children: ReactNode;
@@ -44,7 +46,7 @@ export function ActionDialog({ title, confirmLabel, cancelLabel = "Cancel", tone
       className="repos-dialog"
       footer={<>
         <Button onClick={onClose} disabled={busy} data-dialog-focus={cancelFocus || undefined}>{cancelLabel}</Button>
-        <Button tone={tone} busy={busy} disabled={disabled} onClick={() => void confirm()}>{confirmLabel}</Button>
+        {confirmHidden ? null : <Button tone={tone} busy={busy} disabled={disabled} onClick={() => void confirm()}>{confirmLabel}</Button>}
       </>}
     >
       {children}

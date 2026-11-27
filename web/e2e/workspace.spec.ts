@@ -541,7 +541,7 @@ test("the tab menu closes the others or all of them, announces it, and Close all
   await openTabs(page, ["Changes", "Browser", "Tools"]);
   await page.getByRole("tab", { name: "Browser" }).click();
   await page.getByRole("button", { name: "Tab menu" }).click();
-  await expect(page.getByRole("menuitem")).toHaveText(["Close tab", "Close other tabs", "Close all tabs", "Maximise panel"]);
+  await expect(page.getByRole("menuitem")).toHaveText([/^Close tab/, "Close other tabs", "Close all tabs", "Maximise panel"]);
   await page.getByRole("menuitem", { name: "Close other tabs" }).click();
   await expect(page.locator(".ctx-tabs").getByRole("tab")).toHaveCount(1);
   await expect(page.getByRole("tab", { name: "Browser" })).toBeFocused();

@@ -5,7 +5,12 @@
 mod account_sync;
 mod agent_projects;
 mod approvals;
+#[cfg(test)]
+mod attachment_sources_tests;
 mod automations;
+mod billed_events;
+#[cfg(test)]
+mod billed_events_tests;
 mod catalog;
 mod changes;
 mod checkpoints;
@@ -43,13 +48,30 @@ mod crew_escape_scan_tests;
 mod crew_escapes;
 #[cfg(test)]
 mod crew_escapes_tests;
+mod crew_eval_samples;
+#[cfg(test)]
+mod crew_eval_samples_tests;
 mod crew_flow;
+#[cfg(test)]
+mod crew_formats_tests;
 mod crew_guard;
+mod crew_lessons;
+#[cfg(test)]
+mod crew_lessons_tests;
 mod crew_merge_corrections;
 mod crew_merge_forge;
+mod crew_skill_proposals;
+#[cfg(test)]
+mod crew_skill_proposals_tests;
 pub(crate) use crew_merge_corrections::ForgeCorrection;
+#[cfg(test)]
+mod code_run_waits_tests;
 pub(crate) mod code_runs;
+mod crew_manual_checks;
+#[cfg(test)]
+mod crew_manual_checks_tests;
 mod crew_merges;
+mod crew_needs_you;
 mod crew_paused_starts;
 #[cfg(test)]
 mod crew_paused_starts_tests;
@@ -60,6 +82,7 @@ mod crew_provenance;
 #[cfg(test)]
 mod crew_provenance_tests;
 mod crew_rerun;
+mod crew_resume;
 mod crew_review;
 mod crew_review_controls;
 #[cfg(test)]
@@ -74,12 +97,17 @@ mod crew_worker_provider;
 mod hub;
 mod installs;
 mod issues;
+pub(crate) mod project_issue_trackers;
 pub(crate) mod project_repos;
 mod thread_import;
 pub(crate) mod thread_repos;
 pub use issues::TrackerConnection;
 pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
 mod migrations;
+/// The ordered schema list, so an edge test can build a database at a chosen older version from
+/// the same list a start applies. Test support only: nothing in a normal build reads it.
+#[cfg(feature = "test-support")]
+pub use migrations::MIGRATIONS;
 mod native_sessions;
 #[cfg(test)]
 mod plan_mode_reset_tests;
@@ -109,14 +137,16 @@ mod setup;
 mod tests;
 mod threads;
 
+pub use billed_events::{BilledEvent, BilledTotal, Recorded, parse_billed_events};
 pub use changes::{KeptChange, Snapshot};
 pub use crew::{CrewPinnedRef, CrewTask};
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};
 pub use crew_autonomy_person::{PersonWrite, Seen};
 pub use crew_autopilot::{AutopilotEvent, EVENT_KINDS};
 pub use crew_background::{
-    BackgroundReviewRow, BackgroundRow, BackgroundRunRow, NewBackground,
-    PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX, RunEnd, Unwound,
+    BackgroundReviewRow, BackgroundRow, BackgroundRunRow, NewBackground, NewWatchChange,
+    PER_PROJECT_MAX as BACKGROUND_PER_PROJECT_MAX, RunEnd, Unwound, WATCHES_PER_PROJECT_MAX,
+    WatchChangeRow, WatchRaisedRow, WatchStateRow,
 };
 pub use crew_backtest::{
     BacktestLaneRow, BacktestResultRow, BacktestRunRow, BacktestState, LaneState,
@@ -131,18 +161,28 @@ pub use crew_escape_scan::{EscapesAdded, PossibleEscape};
 pub use crew_escapes::{
     ESCAPES_PER_PROJECT_MAX, EVENTS_PER_ESCAPE_MAX, EscapeEventRecord, EscapeRecord, EscapeTally,
 };
+pub use crew_eval_samples::CrewEvalSample;
 #[cfg(test)]
 pub(crate) use crew_flow::last_events_sql;
-pub use crew_flow::{DELIVERY_WINDOW, MESSAGE_WINDOW, MemberTimes};
+pub use crew_flow::{DELIVERY_WINDOW, LIVE_WORKERS_MAX, LiveWorker, MESSAGE_WINDOW, MemberTimes};
 pub use crew_guard::ENTRIES_MAX as GUARD_ENTRIES_MAX;
+pub use crew_lessons::{CrewLesson, EVIDENCE_MAX, LessonEvidence, NewCrewLesson, UNDO_SECS};
+pub use crew_manual_checks::{ManualCheck, ManualCheckState, NOTE_MAX as MANUAL_CHECK_NOTE_MAX};
 pub use crew_merge_forge::{ForgeMerge, ForgePhase, ForgeResolution};
 pub use crew_merges::{MergeEntry, MergeRecord, MergeStateMove, OPEN_MERGE_STATES};
+pub use crew_needs_you::{NeedsYouDismissal, NeedsYouTask};
 pub use crew_paused_starts::{PAUSED_STARTS_PER_PROJECT, PausedStartRow};
 pub use crew_provenance::StoredHunk;
+pub use crew_resume::ResumeOutcome;
+pub(crate) use crew_resume::{Lane, lane};
 pub use crew_review::{CrewFix, CrewReview, FindingRepro, StoredFinding};
 pub(crate) use crew_review_controls::{ReviewConsent, ReviewControl};
 pub(crate) use crew_review_publications::{Publication, PublicationState};
 pub use crew_runs::CrewRun;
+pub use crew_skill_proposals::{
+    CrewSkillProposal, NewCrewSkillProposal, PROPOSAL_TEXT_MAX, ReadyLessonGroup,
+    proposal_group_key,
+};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};

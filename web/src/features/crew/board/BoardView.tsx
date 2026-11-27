@@ -1,22 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import type { FlowCard } from "../../../generated/FlowCard";
 import type { FlowColumnId } from "../../../generated/FlowColumnId";
+import { useConnection } from "../../../product/state/connection";
 import { ErrorState, Empty, Loading } from "../../../product/ui/states";
 import { Button } from "../../../ui/controls";
+import { RESUMED_CARD, wasResumed } from "../flow/live/model";
+import { WORKER_MAY_RUN } from "../needsyou/assemble";
 import { useCrewPreview } from "../autopilot/approvals/useCrew";
 import { useFlowCrews } from "../flow/live/useFlow";
 import { useTaskWrite, WriteStatus } from "../writes/TaskWrite";
+import { runWrite } from "../writes/store";
 import { CardMenu } from "./CardMenu";
 import { useBoardFocus } from "./focus";
-import { ago, checksLine, COLUMNS, modelLine, moreOf, type ColumnSpec } from "./model";
+import { ago, checksLine, COLUMNS, modelLine, moreOf, waitingLine, workingLine, type ColumnSpec } from "./model";
 import { useBoard } from "./useBoard";
 import { useNarrow } from "./useWidth";
 import "./board.css";
 
 /**
  * The Board tab of the Crew view on the board route. Nothing is drawn while Crew Preview is off (a service with it off answers 404,
- * and so does one with no Crew routes: both read as off, and no other route is read). Reads only: nothing here cancels, re-runs,
- * reassigns or moves a card (Crew moves cards, never the person). The service's own text is drawn as plain text.
+ * and so does one with no Crew routes: both read as off, and no other route is read). The writes are the person's own: a card's
+ * Stop again, and its menu's Cancel and Re-run checks. Nothing here reassigns or moves a card (Crew moves cards, never the person).
+ * The service's own text is drawn as plain text.
  */
 export function BoardView() {
   // A request the Board never consumed must not wait for a later visit. React's dev double-mount runs this cleanup too, so
@@ -157,6 +162,9 @@ function CrewBoard({ crew }: { crew: string }) {
                         <Card key={card.id} card={card} onChanged={() => void first.reload()} />
                       ))}
                     </ul>
+                    {spec.id === "needs_you" && count === 0 ? (
+                      <div className="bd-empty">Nothing waits for you. The Inbox, the Review queue and the sidebar say the same.</div>
+                    ) : null}
                     {nextOf(spec.id) !== null ? (
                       <Button small busy={busy[spec.id]} onClick={() => void showMore(spec.id)}>
                         +{moreOf(count, cards.length)} more
@@ -176,12 +184,21 @@ function CrewBoard({ crew }: { crew: string }) {
 
 function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
   const write = useTaskWrite({ id: card.id, name: card.name, allowCancel: card.can_cancel, allowRerun: card.can_rerun, onDone: onChanged });
+  const remote = useConnection((state) => state.remote);
   // A task refused at its start waits for no decision: it says so, and is not drawn as one that does.
-  const needs = card.state === "needs_person" && !card.could_not_start;
+  // A task whose worker could not be stopped is cancelled and final: it says so instead of carrying a question's amber line, and
+  // keeps the Needs you card's amber ground.
+  const stuck = card.needs_you === "could_not_stop";
+  // The one needs-you field names a waiting card wherever its run state sits (a merge that waits belongs to a passed task); a
+  // dismissed field leaves the task reading needs_person. A stop kind (trip wire, worker stopped twice) is not a wait.
+  const needs = !stuck && !card.could_not_start && (card.state === "needs_person" || card.needs_you === "task_needs_person" || card.needs_you === "merge_waiting" || card.needs_you === "manual_check");
+  const waiting = needs ? waitingLine(card) : null;
+  const working = needs || stuck || card.could_not_start ? null : workingLine(card.working);
   const checks = checksLine(card);
   const model = modelLine(card);
+  const stopOff = remote ? "Not available from another computer" : write.op?.phase === "busy" ? "Waiting for the answer" : null;
   return (
-    <li className="bd-card" data-needs={needs || undefined} data-task={card.id} tabIndex={-1}>
+    <li className="bd-card" data-needs={needs || stuck || undefined} data-task={card.id} tabIndex={-1}>
       <div className="bd-k">
         <b>{card.kind || "task"}</b>
         <span>updated {ago(card.updated_at)}</span>
@@ -194,8 +211,33 @@ function Card({ card, onChanged }: { card: FlowCard; onChanged(): void }) {
       </div>
       {card.owner ? <div className="bd-ln">owner {card.owner}</div> : null}
       {checks ? <div className="bd-ln">{checks}</div> : null}
+      {wasResumed(card) ? <div className="bd-ln bd-resumed">↻ {RESUMED_CARD}</div> : null}
       {card.could_not_start ? <div className="bd-ln"><b>Could not start</b> · {card.reason ?? "The worker never ran."}</div> : null}
-      {needs && card.reason ? <div className="bd-ln bd-amber">{card.reason}</div> : null}
+      {stuck ? (
+        <>
+          <div className="bd-ln bd-amber"><b>Could not stop</b> · {card.reason?.trim() || WORKER_MAY_RUN}</div>
+          <div className="bd-ln">
+            <Button
+              small
+              tone="primary"
+              aria-label={`Stop again: ${card.name}`}
+              title={stopOff ?? undefined}
+              disabled={stopOff !== null}
+              onClick={() => void runWrite("cancel", card.id, "", onChanged)}
+            >
+              Stop again
+            </Button>
+          </div>
+        </>
+      ) : null}
+      {working ? <div className="bd-ln bd-working">{working}</div> : null}
+      {waiting ? (
+        <div className="bd-ln bd-amber">
+          {waiting.lead ? <b>{waiting.lead}</b> : null}
+          {waiting.lead && waiting.text ? " · " : null}
+          {waiting.text}
+        </div>
+      ) : null}
       <WriteStatus id={card.id} op={write.op} />
       {write.dialog}
     </li>

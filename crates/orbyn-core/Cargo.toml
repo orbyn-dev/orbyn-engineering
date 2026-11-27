@@ -33,9 +33,9 @@ ed25519-dalek.workspace = true
 futures-util.workspace = true
 getrandom.workspace = true
 icu_properties = "=2.4.0"
-ignore = "=0.4.34"
+ignore = "=0.4.35"
 notify = "=8.2.2"
-image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
+image.workspace = true
 portable-pty.workspace = true
 regex.workspace = true
 regex-syntax.workspace = true
@@ -68,7 +68,8 @@ security-framework = { version = "=3.7.0", optional = true }
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+# `Win32_UI_Shell` and `Win32_System_Com` resolve the account's own profile folder (util::account_home).
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_System_Com"] }
 
 [dev-dependencies]
 orbyn-core = { path = ".", features = ["engine-client"] }

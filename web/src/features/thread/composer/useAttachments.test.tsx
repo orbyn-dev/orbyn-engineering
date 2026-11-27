@@ -17,13 +17,39 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it("uploads a HEIC photo as it always did when no conversion client is installed", async () => {
-  const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({ id: "a", name: "IMG_1.HEIC" } as never);
+it("uploads an ordinary small image as it always did, without asking the conversion client", async () => {
+  const convert = vi.fn();
+  setPhotoConversionApi({ convert });
+  const upload = vi.spyOn(api, "uploadAttachment").mockResolvedValue({ id: "a", name: "shot.png" } as never);
   const { result } = renderHook(() => useAttachments(thread, vi.fn()));
-  act(() => result.current.upload([sized("IMG_1.HEIC", "image/heic", 5)]));
+  act(() => result.current.upload([sized("shot.png", "image/png", 5)]));
   await waitFor(() => expect(result.current.attachments[0]?.id).toBe("a"));
   expect(upload).toHaveBeenCalledTimes(1);
+  expect(upload.mock.calls[0]?.[1].name).toBe("shot.png");
+  expect(convert).not.toHaveBeenCalled();
   expect(result.current.attachments[0]?.conversion).toBeUndefined();
+});
+
+it("sends only the flagged files to conversion and uploads the rest as before", async () => {
+  const convert = vi.fn(async (_id: string, file: File) => ({
+    id: `p-${file.name}`, name: file.name, size: 1, original_name: file.name, original_size: 1, action: "converted" as const,
+  }));
+  setPhotoConversionApi({ convert });
+  const upload = vi.spyOn(api, "uploadAttachment").mockImplementation(async (_id, file) => ({
+    id: `a-${file.name}`, name: file.name,
+  }) as never);
+  const { result } = renderHook(() => useAttachments(thread, vi.fn()));
+  act(() => result.current.upload([
+    sized("small.png", "image/png", 5),
+    sized("small.jpg", "image/jpeg", 5),
+    sized("IMG_1.HEIC", "image/heic", 5),
+    sized("IMG_2.heif", "image/heif", 5),
+    sized("IMG_3.webp", "image/webp", 5),
+    sized("big.png", "image/png", MAX_IMAGE_BYTES + 1),
+  ]));
+  await waitFor(() => expect(result.current.uploading).toBe(false));
+  expect(convert.mock.calls.map(([, file]) => file.name)).toEqual(["IMG_1.HEIC", "IMG_2.heif", "IMG_3.webp", "big.png"]);
+  expect(upload.mock.calls.map(([, file]) => file.name)).toEqual(["small.png", "small.jpg"]);
 });
 
 it("converts a HEIC photo through the client, holds send while it works and shows the new name and size", async () => {
@@ -52,16 +78,36 @@ it("says shrinking for an oversized PNG and what it came to", async () => {
 });
 
 it.each([
-  ["unreadable_image", "Couldn’t convert this photo. It may be damaged."],
-  ["still_too_large", "Still over 10 MiB after shrinking. Pick a smaller photo."],
-])("fails a photo with %s in one sentence, and retries it", async (code, sentence) => {
-  const convert = vi.fn().mockRejectedValueOnce(new ApiFailure(code, "server words", 422)).mockResolvedValueOnce({
-    id: "p", name: "a.jpg", size: 1, original_name: "a.HEIC", original_size: 2, action: "converted" });
+  {
+    code: "unreadable_image", status: 422, message: "server words", sentence: "Couldn’t convert this photo. It may be damaged.",
+    name: "a.HEIC", type: "image/heic", size: 2,
+  },
+  {
+    code: "still_too_large", status: 422, message: "server words", sentence: "Still over 10 MiB after shrinking. Pick a smaller photo.",
+    name: "a.png", type: "image/png", size: MAX_IMAGE_BYTES + 1,
+  },
+  {
+    code: "unsupported_type", status: 415, message: "HEIC photos cannot be converted yet. Save it as JPEG or PNG first.",
+    sentence: "HEIC photos cannot be converted yet. Save it as JPEG or PNG first.",
+    name: "a.webp", type: "image/webp", size: 2,
+  },
+  {
+    code: "file_too_large", status: 413, message: "This file is too large to open here: 60000000 bytes, over the 52428800 byte limit.",
+    sentence: "This file is too large to open here: 60000000 bytes, over the 52428800 byte limit.",
+    name: "a.png", type: "image/png", size: MAX_IMAGE_BYTES * 5,
+  },
+])("fails a photo with $code in one sentence, holds send and retries it", async ({ code, status, message, sentence, name, type, size }) => {
+  const convert = vi.fn()
+    .mockRejectedValueOnce(new ApiFailure(code, message, status))
+    .mockResolvedValueOnce({ id: "p", name: "a.jpg", size: 1, original_name: "a.HEIC", original_size: 2, action: "converted" });
   setPhotoConversionApi({ convert });
+  const upload = vi.spyOn(api, "uploadAttachment");
   const { result } = renderHook(() => useAttachments(thread, vi.fn()));
-  act(() => result.current.upload([sized("a.HEIC", "image/heic", 2)]));
+  act(() => result.current.upload([sized(name, type, size)]));
   await waitFor(() => expect(result.current.attachments[0]?.failure).toBe(sentence));
+  expect(result.current.attachments[0]?.conversion?.phase).toBe("failed");
   expect(result.current.uploading).toBe(true);
+  expect(upload).not.toHaveBeenCalled();
   act(() => result.current.startUpload(result.current.attachments[0]!));
   await waitFor(() => expect(result.current.attachments[0]?.id).toBe("p"));
   expect(result.current.attachments[0]?.failure).toBeNull();

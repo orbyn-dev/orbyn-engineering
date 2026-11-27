@@ -8,7 +8,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
-use orbyn_contracts::{KeybindingRule, OtlpCheck, ServerInfo, ServerSettings, SetPreferences};
+use orbyn_contracts::{
+    KeybindingReset, KeybindingRule, OtlpCheck, ServerInfo, ServerSettings, SetPreferences,
+};
 
 use crate::http::{ApiJson, ApiResult, AppState, LOCAL_USER};
 
@@ -25,6 +27,7 @@ pub fn routes() -> Router<AppState> {
             put(set_project_preferences),
         )
         .route("/api/keybindings", get(keybindings).post(save_keybinding))
+        .route("/api/keybindings/reset", post(reset_keybinding))
         .route("/api/diagnostics", get(diagnostics))
         .route("/api/diagnostics/host", get(host_resources))
         .route("/api/diagnostics/processes/history", get(process_history))
@@ -122,6 +125,17 @@ async fn save_keybinding(
     ApiJson(body): ApiJson<KeybindingRule>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(state.core.save_keybinding(&body)?))
+}
+
+async fn reset_keybinding(
+    State(state): State<AppState>,
+    ApiJson(body): ApiJson<KeybindingReset>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(
+        state
+            .core
+            .reset_keybinding(&body.command, body.when.as_deref())?,
+    ))
 }
 
 async fn diagnostics(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {

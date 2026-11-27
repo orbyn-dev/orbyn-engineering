@@ -19,6 +19,8 @@ How a release is built today. Nothing here publishes: a person reviews and promo
 
 A local build is ad-hoc signed the same way by `scripts/sign-adhoc-macos.sh` (run it after `npm run build` in `desktop/`; it signs the whole `.app` with `-`, no hardened runtime, and verifies it). Without it a local bundle fails `codesign --verify --deep --strict` ("code has no resources but signature indicates they must be present"), because Tauri does not sign a bundle when it has no identity.
 
+`scripts/sign-macos-release.sh` is the per-binary release signer (the host with `engine-host/entitlements.plist`, everything else with none); no release job runs it yet.
+
 In both macOS cases `codesign --verify --deep --strict` runs on the `.app` and the dmg's `.app`, and a failure fails the job.
 
 There is no Apple Developer account, so no Developer ID and no notarization. Expect a Gatekeeper block on a downloaded Mac build and SmartScreen on the Windows installer. Tester steps: [first run on an unsigned build](setup.md#first-run-on-an-unsigned-build).
@@ -41,6 +43,19 @@ artifact with a higher version and force a downgrade. Two consequences for relea
   in the signature's trusted comment. Re-sign and re-publish anything signed before that.
 - A release whose signature carries no version, or another version, is refused: the shell reports
   `app_update_failed` and never offers the download as ready.
+
+## Release notes
+
+The notes are written when a release is made. Two account changes the next one has to say, so they
+reach people who already have a build:
+
+- **No last seen.** Device rows do not say when a device was last seen, and `AccountDevice` has no
+  `last_seen`: the Engine's `Device` has none, so nothing is stored, synced or shown for it
+  ([account.md](account.md)).
+- **Sign-up makes no live account before the emailed code, and never replaces one.** The password step
+  only asks for one; the emailed code is what makes the account, and a sign-up for an address that
+  already has an account ends as a wrong code, with that account untouched
+  ([the threat model](account-threat-model.md)).
 
 ## Not yet verified on a real machine
 

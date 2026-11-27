@@ -1,11 +1,16 @@
 import { Plus, Workflow } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toFailure } from "../../../../lib/useAsync";
 import { Button } from "../../../../ui/controls";
 import { Empty, ErrorState, Loading } from "../../../../product/ui/states";
+import { navigate } from "../../../../product/state/route";
+import { useVisibleProjects } from "../../../../product/state/workspace";
 import { useRepo } from "./AutonomyAreas";
 import { BackgroundCreate } from "./BackgroundCreate";
 import { backgroundView, type BackgroundCrew, type BackgroundRun, type BackgroundView } from "./backgroundModel";
+import { RunPanel } from "./RunPanel";
+import { useWatchFocus } from "./watchFocus";
+import { WatchPanel } from "./WatchPanel";
 
 export type { BackgroundCrew, BackgroundRun, BackgroundView } from "./backgroundModel";
 import { crewApi } from "./api";
@@ -22,19 +27,30 @@ const templateName = (id: TemplateId) => TEMPLATES.find((one) => one.id === id)?
 export const statusTone = (status: string): "am" | "dim" => (status.startsWith("Stopped") || status === "Needs review" ? "am" : "dim");
 const hasMode = (rows: { mode: Mode | null }[]) => rows.length > 0 && rows.every((row) => row.mode !== null);
 
-function CrewRows({ crews, onToggle, busy }: { crews: BackgroundCrew[]; onToggle?(crew: BackgroundCrew, enabled: boolean): void; busy?: ReadonlySet<string> }) {
+function CrewRows({ crews, onToggle, onOpenWatch, busy }: { crews: BackgroundCrew[]; onToggle?(crew: BackgroundCrew, enabled: boolean): void; onOpenWatch?(crew: BackgroundCrew): void; busy?: ReadonlySet<string> }) {
   const mode = hasMode(crews);
   return (
     <div className={mode ? "ap-bg ap-bg-crews" : "ap-bg ap-bg-solo ap-bg-crews"} role="table" aria-label="Background crews">
       <div className="ap-bg-row ap-head" role="row">
-        {["Crew", "Starts when", "Last run", "State", "Switch", ...(mode ? ["Autopilot"] : [])].map((name) => <span key={name} role="columnheader">{name}</span>)}
+        {["Crew", "Starts when", "Last run or check", "State", "Switch", ...(mode ? ["Autopilot"] : [])].map((name) => <span key={name} role="columnheader">{name}</span>)}
       </div>
       {crews.map((crew) => (
         <div key={crew.id} className="ap-bg-row" role="row">
-          <span role="cell"><b>{crew.name}</b><small>Template: {templateName(crew.template)}</small></span>
+          <span role="cell">
+            {crew.watch ? (
+              <button type="button" className="ap-watch-name" aria-label={`Open the ${crew.name} watch`} onClick={() => onOpenWatch?.(crew)}>
+                <b>{crew.name}</b>
+                <small>{crew.watch.subLine}</small>
+              </button>
+            ) : (
+              <><b>{crew.name}</b><small>Template: {templateName(crew.template)}</small></>
+            )}
+          </span>
           <span role="cell" className="ap-clip">{crew.startsWhen}</span>
           <span role="cell" className="ap-clip">{crew.lastRun ?? "Never run"}</span>
-          <span role="cell">{crew.status ? <Chip tone={statusTone(crew.status)}>{crew.status}</Chip> : null}</span>
+          <span role="cell">
+            {crew.watch ? <Chip tone={crew.watch.chip.tone}>{crew.watch.chip.text}</Chip> : crew.status ? <Chip tone={statusTone(crew.status)}>{crew.status}</Chip> : null}
+          </span>
           <span role="cell">
             {/* aria-disabled, not disabled: the switch keeps focus while its write is in flight. */}
             <button type="button" role="switch" aria-checked={crew.enabled} aria-label={`${crew.name} on`} className="ap-switch" disabled={!onToggle} aria-disabled={busy?.has(crew.id) || undefined} onClick={() => { if (!busy?.has(crew.id)) onToggle?.(crew, !crew.enabled); }}>
@@ -80,8 +96,8 @@ function Runs({ runs }: { runs: BackgroundRun[] }) {
           <div key={run.id} className="ap-bg-row" role="row">
             <span role="cell"><b>{run.name}</b><small>Template: {templateName(run.template)}</small></span>
             <span role="cell" className="ap-clip">{run.startedBy}</span>
-            <span role="cell" className="ap-clip">{run.result}</span>
-            <span role="cell">{run.state ? <Chip tone={run.state === "Stopped" ? "am" : run.state === "Failed" ? "no" : run.state === "Merged" ? "ok" : run.state === "Needs review" ? "plain" : "dim"}>{run.reason ? `${run.state} · ${run.reason}` : run.state}</Chip> : null}</span>
+            {run.note ? <span role="cell">{run.result ? <>{run.result}<br /></> : null}<small className="ap-muted">{run.note}</small></span> : <span role="cell" className="ap-clip">{run.result}</span>}
+            <span role="cell">{run.state ? <Chip tone={run.state === "Stopped" || run.state === "Not started" ? "am" : run.state === "Failed" ? "no" : run.state === "Merged" ? "ok" : run.state === "Needs review" ? "plain" : "dim"}>{run.reason ? `${run.state} · ${run.reason}` : run.state}</Chip> : null}</span>
             {mode && run.mode ? <span role="cell"><Chip tone="plain">{MODE_COPY[run.mode].name}</Chip></span> : null}
           </div>
         ))}
@@ -93,7 +109,7 @@ function Runs({ runs }: { runs: BackgroundRun[] }) {
 function Templates({ onUse }: { onUse?(template: TemplateId): void }) {
   return (
     <section className="ap-block" id="ap-templates" aria-label="Templates">
-      <header className="ap-set-head"><h3>Templates</h3><Chip tone="plain">Preview</Chip><Chip tone="plain">Triggers not built yet</Chip></header>
+      <header className="ap-set-head"><h3>Templates</h3><Chip tone="plain">Preview</Chip></header>
       <div className="ap-templates">
         {TEMPLATES.map((template) => (
           <article key={template.id} className="ap-box" aria-label={template.name}>
@@ -111,7 +127,7 @@ function Templates({ onUse }: { onUse?(template: TemplateId): void }) {
 function Triggers({ configured }: { configured?: Partial<Record<TriggerId, string>> }) {
   return (
     <section className="ap-block" aria-label="Triggers">
-      <header className="ap-set-head"><h3>Triggers</h3><Chip tone="plain">Preview</Chip><Chip tone="plain">Not built yet</Chip></header>
+      <header className="ap-set-head"><h3>Triggers</h3><Chip tone="plain">Preview</Chip></header>
       <div className="ap-bg ap-trig" role="table" aria-label="Triggers">
         <div className="ap-bg-row ap-head" role="row">
           {["Starts when", "Configured as", "How repeats are handled"].map((name) => <span key={name} role="columnheader">{name}</span>)}
@@ -142,11 +158,16 @@ interface PageProps {
   /** Opens the create dialog; without it the page draws its button disabled. */
   onCreate?(): void;
   onUseTemplate?(template: TemplateId): void;
+  /** Opens one watch's page; a watch whose read answered only. */
+  onOpenWatch?(crew: BackgroundCrew): void;
 }
 
-export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice, onCreate, onUseTemplate }: PageProps) {
+export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice, onCreate, onUseTemplate, onOpenWatch }: PageProps) {
   const templates = useRef<HTMLDivElement>(null);
   const none = view.crews.length === 0;
+  // Watches in this list: the frame's count line, its note, and (after a create) the baseline note for the one just made.
+  const watches = view.crews.filter((crew) => crew.watch);
+  const notChecked = watches.find((crew) => crew.watch?.chip.text === "Not checked yet");
   return (
     <section className="ap-page" aria-label="Background crews">
       {noRepo ? (
@@ -155,7 +176,7 @@ export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice,
         </Empty>
       ) : none ? (
         <Empty title="No background crews yet">
-          <p>A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and waits for your review. Triggers are not built yet.</p>
+          <p>A background crew starts when something happens in the repo, like CI failing or a dependency update, runs the whole flow, and waits for your review.</p>
           <Button small onClick={() => templates.current?.scrollIntoView?.({ block: "start" })}>See the templates</Button>
         </Empty>
       ) : (
@@ -165,12 +186,26 @@ export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice,
             {repo ? <span className="ap-muted ap-repo">{repo}</span> : null}
             <Chip tone="plain">Preview</Chip>
             <Chip tone="plain">This device</Chip>
-            <Chip tone="plain">Triggers not built yet</Chip>
             <span className="ap-spacer" />
             <Button small tone="primary" icon={<Plus size={14} aria-hidden />} disabled={!onCreate} onClick={onCreate}>New background crew</Button>
           </header>
           {notice ? <p className="ap-muted" role="status">{notice}</p> : null}
-          <CrewRows crews={view.crews} onToggle={onToggle} busy={busy} />
+          <CrewRows crews={view.crews} onToggle={onToggle} onOpenWatch={onOpenWatch} busy={busy} />
+          {watches.length ? (
+            <>
+              <p className="ap-bg-note">{watches.length} of 10 watches in this project.</p>
+              <section className="ap-box" aria-label="A watch makes no model call">
+                <h4>A watch makes no model call</h4>
+                <p>A watch runs its command on a schedule and does nothing while the result stays the same. It acts once each time the result changes from passing to failing: it raises a row in Needs you, or starts its crew’s template. Three checks in a row that could not run raise one row, not one each.</p>
+              </section>
+              {notChecked ? (
+                <section className="ap-box" aria-label="The first check is a baseline">
+                  <h4>The first check is a baseline</h4>
+                  <p>When you turn {notChecked.name} on, its first check is recorded and never raises, even if it fails. The row then reads Passing or Failing.</p>
+                </section>
+              ) : null}
+            </>
+          ) : null}
           {hasMode(view.crews) ? null : <p className="ap-bg-note">Per-crew Autopilot is Planned.</p>}
           <section className="ap-box">
             <h4>Each run has a budget</h4>
@@ -188,20 +223,37 @@ export function BackgroundPageView({ view, onToggle, busy, repo, noRepo, notice,
 /** Background crews of the repo the page is about, read from the Crew routes. Without a git project nothing is read or listed. */
 export function BackgroundTab() {
   const repo = useRepo();
+  const visible = useVisibleProjects();
+  // A watch asked for from another project (a Needs you row) opens on that project; the pick outlives the one-shot ask.
+  const asked = useWatchFocus((state) => state.project);
+  const [picked, setPicked] = useState<string | null>(asked);
+  if (asked && asked !== picked) setPicked(asked);
   if (repo === "loading") return <Loading label="Reading background crews" rows={4} />;
   if (!repo) return <BackgroundPageView view={{ crews: [], runs: [] }} noRepo />;
-  return <Background project={repo.id} repo={repo.name} />;
+  const chosen = picked ? visible?.find((one) => one.id === picked && one.is_git) : undefined;
+  // Keyed by project: a run or watch page opened in one project never shows over another.
+  return <Background key={chosen?.id ?? repo.id} project={chosen?.id ?? repo.id} repo={chosen?.name ?? repo.name} />;
 }
 
 function Background({ project, repo }: { project: string; repo: string }) {
   const read = useBackground(project);
   const [creating, setCreating] = useState<{ template?: TemplateId } | null>(null);
+  const [openWatch, setOpenWatch] = useState<string | null>(null);
+  const [openRun, setOpenRun] = useState<string | null>(null);
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [refused, setRefused] = useState<string | null>(null);
+  // A Needs you row (or another screen) asked for one watch: open it once the crews are read, then clear the ask.
+  const asked = useWatchFocus((state) => state.id);
+  useEffect(() => {
+    if (!asked) return;
+    setOpenWatch(asked);
+    useWatchFocus.getState().clear();
+  }, [asked]);
   if (read.status === "loading") return <Loading label="Reading background crews" rows={4} />;
   if (!read.data) return <ErrorState title="Can’t read background crews" failure={read.error!} onRetry={() => void read.reload()} />;
   const view = backgroundView(read.data, new Date());
-  const toggle = (crew: BackgroundCrew, enabled: boolean) => {
+  /** A switch writes for the crew by id; a watch's own page uses the same one. */
+  const toggle = (crew: Pick<BackgroundCrew, "id" | "name" | "enabled">, enabled: boolean) => {
     const mark = (on: boolean) => setBusy((now) => { const next = new Set(now); if (on) next.add(crew.id); else next.delete(crew.id); return next; });
     mark(true);
     setRefused(null);
@@ -210,11 +262,54 @@ function Background({ project, repo }: { project: string; repo: string }) {
       .finally(() => mark(false));
   };
   const more = read.data.total > read.data.crews.length;
-  return (
+  // The open watch's page: only a watch whose own read answered draws one, and a crew gone from a later read falls back to the list.
+  const opened = openWatch ? read.data.crews.find((one) => one.id === openWatch) : undefined;
+  const openedWatch = opened ? read.data.watches?.[opened.id] : undefined;
+  // "Open the run" opens the newest run of the watch's own runs read: the banner names the change that started it, and no run
+  // id travels with a change row. A watch whose runs read holds none draws no button.
+  const startedRun = opened ? read.data.runs[opened.id]?.[0] : undefined;
+  const shared = (
     <>
       {refused ? <p className="ap-error" role="alert">{refused}</p> : null}
       {/* A read that failed after one that worked keeps the crews on screen and says so. */}
       {read.status === "error" ? <ErrorState compact title="Can’t refresh background crews" failure={read.error} onRetry={() => void read.reload()} /> : null}
+    </>
+  );
+  // The run's own page replaces the list like the watch page does; its back control returns to Recent runs.
+  if (openRun) {
+    return (
+      <>
+        {shared}
+        <RunPanel
+          runId={openRun}
+          onBack={() => {
+            setOpenRun(null);
+            setOpenWatch(null);
+          }}
+        />
+      </>
+    );
+  }
+  if (opened && openedWatch) {
+    return (
+      <>
+        {shared}
+        <WatchPanel
+          crew={opened}
+          watch={openedWatch}
+          repo={repo}
+          busy={busy.has(opened.id)}
+          onBack={() => setOpenWatch(null)}
+          onToggle={toggle}
+          onOpenNeeds={() => navigate({ name: "crew", tab: "inbox" })}
+          onOpenRun={startedRun ? () => setOpenRun(startedRun.id) : undefined}
+        />
+      </>
+    );
+  }
+  return (
+    <>
+      {shared}
       <BackgroundPageView
         view={view}
         repo={repo}
@@ -223,6 +318,7 @@ function Background({ project, repo }: { project: string; repo: string }) {
         busy={busy}
         onCreate={() => setCreating({})}
         onUseTemplate={(template) => setCreating({ template })}
+        onOpenWatch={(crew) => setOpenWatch(crew.id)}
       />
       {creating ? <BackgroundCreate project={project} template={creating.template} onClose={() => setCreating(null)} onCreated={() => void read.reload()} /> : null}
     </>

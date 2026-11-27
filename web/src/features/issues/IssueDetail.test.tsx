@@ -20,7 +20,7 @@ afterEach(() => { setIssuesApi(null); window.location.hash = ""; vi.restoreAllMo
 
 const at = (hash: string) => { window.location.hash = hash; render(<IssuesPage />); };
 
-it("shows the title, state, tracker, facts, body and comments as written, read only", async () => {
+it("shows the title, state, tracker, facts, body and comments as written", async () => {
   setIssuesApi(createIssuesMock());
   at("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
   expect(await screen.findByRole("heading", { name: "Login sends people back to /home" })).toBeVisible();
@@ -31,7 +31,6 @@ it("shows the title, state, tracker, facts, body and comments as written, read o
   expect(within(facts).getByText("riley", { selector: "dd" })).toBeVisible();
   expect(within(facts).getByText("auth")).toBeVisible();
   expect(screen.getByText("Reproduced. The redirect reads", { exact: false })).toBeVisible();
-  expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.getByRole("link", { name: "Open on GitHub" })).toHaveAttribute("href", "https://github.com/orbyn-dev/orbyn-engineering/issues/412");
   expect(screen.getByRole("link", { name: "Back to Issues" })).toHaveAttribute("href", "#/issues");
 });
@@ -214,6 +213,34 @@ it("draws no Closed row for an open issue even when the tracker sends a date", a
   expect(within(facts).queryByText("Closed", { selector: "dt" })).toBeNull();
 });
 
+// ---- the tracker host ----
+
+it("shows the host the tracker reports in the Facts, as text", async () => {
+  setIssuesApi(createIssuesMock({ trackers: [{ tracker: "github", connected: true, scope: "orbyn-dev/orbyn-engineering", host: "https://github.example.com" }] }));
+  at(ISSUE);
+  const facts = await screen.findByRole("group", { name: "Facts" });
+  expect(within(facts).getByText("Host", { selector: "dt" }).nextElementSibling).toHaveTextContent("https://github.example.com");
+  expect(within(facts).queryByRole("link", { name: /github\.example\.com/ })).toBeNull();
+});
+
+it("draws no Host row when the tracker reports no host", async () => {
+  setIssuesApi(createIssuesMock());
+  at(ISSUE);
+  const facts = await screen.findByRole("group", { name: "Facts" });
+  expect(within(facts).queryByText("Host", { selector: "dt" })).toBeNull();
+});
+
+it("draws another tracker's host, between Tracker and Author", async () => {
+  // The rows are the mock's: Linear reports its fixed API host, so a tracker other than GitHub exercises the row.
+  setIssuesApi(createIssuesMock());
+  at("#/issues/linear/Orbyn%20team/ORB-87");
+  const facts = await screen.findByRole("group", { name: "Facts" });
+  expect(within(facts).getByText("Host", { selector: "dt" }).nextElementSibling).toHaveTextContent("https://api.linear.app");
+  const terms = [...facts.querySelectorAll("dt")].map((term) => term.textContent);
+  expect(terms.indexOf("Host")).toBe(terms.indexOf("Tracker") + 1);
+  expect(terms.indexOf("Author")).toBe(terms.indexOf("Host") + 1);
+});
+
 it("lists the linked pull requests the tracker reports: state, title, number, repository and whether it closes the issue", async () => {
   const merged = { ...PR, number: 131, title: "Keep the next parameter when signing in", state: "merged", closes_issue: false } as const;
   const draft = { ...PR, number: 150, title: "Try cookies", repository: "orbyn-planner", is_draft: true, closes_issue: false } as const;
@@ -249,12 +276,12 @@ it("keeps the tracker's order for linked pull requests", async () => {
   expect(within(card).getAllByRole("listitem").map((item) => item.querySelector("a")!.textContent?.slice(0, 1))).toEqual(["C", "A", "B"]);
 });
 
-it("says no pull request is linked when the tracker reports none", async () => {
+it("draws no Linked pull requests card when the tracker reports none", async () => {
   setIssuesApi(createIssuesMock());
   at(ISSUE);
-  const card = await screen.findByRole("group", { name: "Linked pull requests" });
-  expect(within(card).getByText("No pull request is linked to this issue.")).toBeVisible();
-  expect(within(card).queryByRole("list")).toBeNull();
+  await screen.findByRole("group", { name: "Facts" });
+  expect(screen.queryByRole("group", { name: "Linked pull requests" })).toBeNull();
+  expect(screen.queryByText("No pull request is linked to this issue.")).toBeNull();
 });
 
 it("draws a pull request's words as text and opens only a plain https address", async () => {
@@ -307,7 +334,7 @@ it("shows the description, labels and assignees controls as Planned while the se
     expect(button.parentElement).toHaveTextContent("Planned");
     await user.click(button);
   }
-  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
   expect(screen.queryByRole("menu")).toBeNull();
   expect(mock.writes).toEqual([]);
 });

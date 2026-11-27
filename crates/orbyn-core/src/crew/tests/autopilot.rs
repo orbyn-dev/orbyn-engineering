@@ -1,17 +1,34 @@
 //! Autopilot through a real `Core` and the real gate, with scripted approvers: slice 4f's approval chain, two
 //! keys and trip wires. The worker never ends its turn, so each test plays its requests.
 
-use orbyn_contracts::{ActionKind, CreatePolicyRule, PolicyEffect, ResultState, StopReason};
+use orbyn_contracts::{
+    ActionKind, CreatePolicyRule, CrewPathPattern, ErrorCode, LeaseMode, PolicyEffect, ResultState,
+    StopReason,
+};
 
 use super::autopilot_support::{
     Scripted, approvers, ask, events, kinds, request, running, scope, words,
 };
-use super::harness::KEY_MARKER;
+use super::harness::{KEY_MARKER, World};
 
 /// A secret-shaped value for the redaction test, named by label in every message.
 const SECRET: &str = "abcdefgh12345678";
 use crate::crew::{Answer, Mode, ModeScope};
 use crate::governance::approvals::{Review, Verdict};
+
+/// The body of the one event of `kind` a task recorded. The read filters by kind, so a test names the event
+/// it means instead of reading a place in the list; none or several fails here with the rows attached.
+fn one_event_body(w: &World, task: &str, kind: &str) -> serde_json::Value {
+    let rows = events(w, task, kind);
+    match rows.as_slice() {
+        [row] => row.body.clone(),
+        [] => panic!("no {kind} event: {rows:?}"),
+        rows => panic!(
+            "{} {kind} events where one is expected: {rows:?}",
+            rows.len()
+        ),
+    }
+}
 
 #[tokio::test]
 async fn a_hard_denied_action_is_never_approved_even_if_the_lead_says_yes() {
@@ -87,19 +104,58 @@ async fn the_lead_decides_an_ordinary_action_with_a_reason_and_sees_only_a_summa
     assert_eq!(verdict, Verdict::Allow);
     let seen = lead.seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
+    let summary = seen.first().expect("the lead saw one summary");
     assert_eq!(
         (
-            seen[0].kind.as_str(),
-            seen[0].target.as_str(),
-            seen[0].tier.as_str()
+            summary.kind.as_str(),
+            summary.target.as_str(),
+            summary.tier.as_str()
         ),
         ("command", "cargo fmt", "low")
     );
-    assert_eq!(seen[0].brief, "Add a parse_duration function.");
-    let allowed = events(&w, &id, "allowed");
-    assert_eq!(allowed.len(), 1);
-    assert_eq!(allowed[0].body["decided_by"], "lead");
-    assert_eq!(allowed[0].body["lead"]["reason"], "Fits the brief.");
+    assert_eq!(summary.brief, "Add a parse_duration function.");
+    let allowed = one_event_body(&w, &id, "allowed");
+    assert_eq!(allowed["decided_by"], "lead");
+    assert_eq!(allowed["lead"]["reason"], "Fits the brief.");
+}
+
+#[tokio::test]
+async fn a_ledger_row_says_the_task_title_and_the_engine_and_model_that_asked() {
+    let (w, id) = running().await;
+    // The always-denied list refuses before any approver, and the row it leaves still says who asked.
+    request(&w, &id, ActionKind::Command, "rm -rf ~/projects").await;
+    let denied = one_event_body(&w, &id, "denied");
+    let run = w.core.store.crew_run(&id).unwrap().unwrap();
+    let lead = w.core.store.thread(&run.lead_thread_id).unwrap();
+    assert_eq!(
+        denied["title"], lead.title,
+        "the row did not name the task it was for"
+    );
+    assert_eq!(denied["action"]["asker_engine"], "alpha");
+    let worker = w.core.store.thread(&w.worker(&id)).unwrap();
+    match &worker.model {
+        Some(model) => assert_eq!(denied["action"]["asker_model"], serde_json::json!(model)),
+        None => assert!(
+            denied["action"].get("asker_model").is_none(),
+            "a thread with no model recorded still named one"
+        ),
+    }
+    // What the person reads says the same three things; the mapping, not only the stored row, carries them.
+    let log = w
+        .core
+        .autopilot_log(
+            Some(&id),
+            None,
+            crate::crew::Page {
+                limit: 50,
+                offset: 0,
+            },
+        )
+        .unwrap();
+    let row = log.rows.iter().find(|r| r.kind == "denied").unwrap();
+    assert_eq!(row.title.as_deref(), Some(lead.title.as_str()));
+    assert_eq!(row.asker_engine.as_deref(), Some("alpha"));
+    assert_eq!(row.asker_model.as_deref(), worker.model.as_deref());
 }
 
 #[tokio::test]
@@ -117,7 +173,7 @@ async fn two_keys_that_disagree_give_denied_and_the_disagreement_is_logged() {
     assert_eq!((lead.calls(), second.calls()), (1, 1));
     // The denied command is also held for the person, who may approve it once (`autopilot_held`).
     assert_eq!(kinds(&w, &id), ["held", "disagreement", "denied"]);
-    let row = &events(&w, &id, "disagreement")[0].body;
+    let row = one_event_body(&w, &id, "disagreement");
     assert_eq!(row["lead"]["approve"], true);
     assert_eq!(row["second"]["engine"], "beta");
     assert_eq!(row["second"]["answer"]["approve"], false);
@@ -135,7 +191,7 @@ async fn two_keys_that_agree_allow_and_the_second_key_must_be_on_another_vendor(
         request(&w, &id, ActionKind::Command, "npm install left-pad").await,
         Verdict::Allow
     );
-    assert_eq!(events(&w, &id, "allowed")[0].body["decided_by"], "two_keys");
+    assert_eq!(one_event_body(&w, &id, "allowed")["decided_by"], "two_keys");
 
     // The same vendor is no second key: under Full the action is denied, and the person is told why.
     let (w, id) = running().await;
@@ -149,7 +205,7 @@ async fn two_keys_that_agree_allow_and_the_second_key_must_be_on_another_vendor(
     );
     assert_eq!(same.calls(), 0);
     assert_eq!(
-        events(&w, &id, "denied")[0].body["needs_second_engine"],
+        one_event_body(&w, &id, "denied")["needs_second_engine"],
         true
     );
 }
@@ -478,7 +534,7 @@ async fn three_denials_in_a_row_stop_the_task() {
         (result.state, result.stop_reason, result.r#final),
         (ResultState::Stopped, Some(StopReason::TooManyDenials), true)
     );
-    assert_eq!(events(&w, &id, "tripwire")[0].body["in_a_row"], 3);
+    assert_eq!(one_event_body(&w, &id, "tripwire")["in_a_row"], 3);
     // The run has ended: a later request is refused.
     assert!(words(&request(&w, &id, ActionKind::Command, "ls").await).contains("ended"));
 }
@@ -509,7 +565,7 @@ async fn an_approval_resets_the_row_but_twenty_denials_in_a_run_stop_the_task() 
     }
     let task = w.task(&id);
     assert_eq!(task.stop_reason.as_deref(), Some("too_many_denials"));
-    let wire = &events(&w, &id, "tripwire")[0].body;
+    let wire = one_event_body(&w, &id, "tripwire");
     assert_eq!(
         (wire["in_a_row"].as_u64(), wire["in_a_run"].as_u64()),
         (Some(2), Some(20))
@@ -536,7 +592,7 @@ async fn text_that_looks_like_injected_instructions_stops_the_task_and_the_ledge
         ("stopped", Some("injection_suspected"))
     );
     assert_eq!(lead.calls(), 0);
-    let row = &events(&w, &id, "tripwire")[0].body;
+    let row = one_event_body(&w, &id, "tripwire");
     assert_eq!(row["class"], "ignore instructions");
     assert!(
         !row.to_string().contains("deploy"),
@@ -608,7 +664,7 @@ async fn a_read_between_denials_does_not_break_the_run_of_three() {
         "the verdict did not hold the expected words"
     );
     assert_eq!(w.task(&id).stop_reason.as_deref(), Some("too_many_denials"));
-    assert_eq!(events(&w, &id, "tripwire")[0].body["in_a_row"], 3);
+    assert_eq!(one_event_body(&w, &id, "tripwire")["in_a_row"], 3);
 }
 
 #[tokio::test]
@@ -641,13 +697,15 @@ async fn under_off_a_person_is_asked_even_for_a_read_and_the_threads_accepting_m
             .store
             .list_approvals(Some(orbyn_contracts::ApprovalState::Pending))
             .unwrap();
+        assert_eq!(pending.len(), 1, "one approval waits for the worker");
+        let approval = pending.first().expect("the worker's pending request");
         assert!(
-            pending[0].summary.contains("A request"),
+            approval.summary.contains("A request"),
             "the approval is the worker's request"
         );
         w.core
             .gate
-            .decide(&pending[0].id, allow, false, "test")
+            .decide(&approval.id, allow, false, "test")
             .unwrap();
         let verdict = waiting.await.unwrap();
         assert_eq!(
@@ -673,6 +731,7 @@ fn production(w: &super::harness::World, id: &str) -> crate::governance::approva
             checkout: w.repo.clone(),
             engine_cwd: w.repo.clone(),
             excluded: Vec::new(),
+            data_dir: None,
         }),
         ..scope(w, id)
     }
@@ -861,4 +920,188 @@ async fn a_lease_check_that_cannot_read_the_task_refuses() {
         &ask(ActionKind::FileChange, "src/new.txt", &["src/new.txt"]),
     );
     assert!(refused.is_some(), "a failed read let the write through");
+}
+
+/// #439, before the report: a worker's write to a protected path is refused at the gate, before the
+/// write and before its report, so it never reaches the store or the ledger as an accepted change.
+/// The refusal is recorded as a denial like any other, so it counts toward the trip wires, and the
+/// worker's turn goes on until they stop the task.
+#[tokio::test]
+async fn a_protected_path_write_is_refused_at_the_gate_before_the_report() {
+    let (w, id) = running().await;
+    let worker = w.worker(&id);
+    // The brief reaches the worker when its first turn starts; wait for it, so the count below is
+    // about the refusal and not about a start still in flight.
+    w.until("the worker is sent its brief", |w| {
+        !w.sent_to(&worker).is_empty()
+    })
+    .await;
+    let member = w.core.store.crew_run(&id).unwrap().unwrap().member;
+    let patterns = w
+        .core
+        .store
+        .crew_answer_key(&id)
+        .unwrap()
+        .unwrap()
+        .protected_paths;
+    let protected = "tests/check.rs";
+    let started = w
+        .core
+        .store
+        .crew_run(&id)
+        .unwrap()
+        .unwrap()
+        .protected
+        .expect("the task's start recorded the protected files");
+    // The request under test writes nothing: the checkout holds exactly what the task started with,
+    // so no protected change can reach the verifier after a report.
+    let unchanged = || {
+        serde_json::to_string(&crate::crew::protect::snapshot(&w.repo, &patterns)).unwrap()
+            == started
+    };
+    assert!(unchanged(), "the checkout differed from the start already");
+
+    // The lease reads the protected path first too (H11 before the brief's files, H10). The gate
+    // never gets that far: its always-denied list refuses a protected path even earlier.
+    let pattern = CrewPathPattern::new(protected).expect("a path pattern");
+    assert_eq!(
+        w.core
+            .crew_check_lease(&id, &member, &pattern, LeaseMode::Write)
+            .unwrap_err()
+            .code,
+        ErrorCode::ProtectedPathConflict,
+        "the lease read the brief's files before the protected path"
+    );
+    let refused = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(ActionKind::FileChange, protected, &[protected]),
+        )
+        .await;
+    assert!(matches!(refused, Verdict::Deny(_)), "{}", words(&refused));
+    assert!(
+        words(&refused).contains("N7"),
+        "the protected-path rule did not refuse first: {}",
+        words(&refused)
+    );
+    assert!(
+        !words(&refused).contains(OUTSIDE_THE_LEASE),
+        "the lease's refusal was reached before the protected-path rule: {}",
+        words(&refused)
+    );
+
+    // Nothing was written, and the store and the ledger hold the refusal, never an accepted change.
+    assert!(
+        !w.repo.join(protected).exists(),
+        "the refused write reached the checkout"
+    );
+    assert!(unchanged(), "a protected file changed before the report");
+    assert!(
+        events(&w, &id, "allowed").is_empty(),
+        "the refused write was recorded as allowed"
+    );
+    assert_eq!(kinds(&w, &id), ["denied"]);
+    let row = one_event_body(&w, &id, "denied");
+    assert_eq!(row["action"]["kind"], "file_change");
+    assert_eq!(row["action"]["target"], protected);
+    assert_eq!(row["decided_by"], "hard_rule");
+    assert_eq!(row["rule"], "N7");
+    let audit = w.core.store.list_audit(Some(worker.as_str()), 20).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|event| event.action == "action.deny" && event.target == protected),
+        "the store did not record the refusal"
+    );
+    assert!(
+        !audit
+            .iter()
+            .any(|event| event.action == "action.allow" && event.target == protected),
+        "the store recorded the write as accepted"
+    );
+
+    // The refusal came before the report: no attempt, no check and no report was stored yet.
+    assert!(
+        w.core.store.crew_reports(&id).unwrap().is_empty(),
+        "a report was stored before the write was refused"
+    );
+    assert!(
+        w.core.store.crew_results(&id).unwrap().is_empty(),
+        "an attempt was stored before the report"
+    );
+    assert!(
+        w.core.store.crew_evidence(&id).unwrap().is_empty(),
+        "a check ran before the report"
+    );
+    // One refusal leaves the worker's turn and its lease as they were: nothing stopped.
+    assert_eq!(w.task(&id).state, "running");
+    assert_eq!(w.task(&id).stop_reason, None);
+    assert_eq!(
+        w.sent_to(&worker).len(),
+        1,
+        "the refusal ended the turn or queued a retry"
+    );
+    assert!(
+        w.core
+            .crew_check_lease(
+                &id,
+                &member,
+                &CrewPathPattern::new("src/new.txt").unwrap(),
+                LeaseMode::Write
+            )
+            .is_ok(),
+        "one refusal ended the worker's lease"
+    );
+
+    // The same refusal on the run's real write scope, where the gate sees an absolute path, and
+    // then the third in a row: as any denial, they count toward the trip wires.
+    let second = w
+        .core
+        .gate
+        .request(
+            &production(&w, &id),
+            ask(ActionKind::FileChange, protected, &[protected]),
+        )
+        .await;
+    assert!(
+        words(&second).contains("N7"),
+        "the protected-path rule did not refuse on the run's write scope: {}",
+        words(&second)
+    );
+    assert_eq!(w.task(&id).state, "running");
+    let third = w
+        .core
+        .gate
+        .request(
+            &scope(&w, &id),
+            ask(
+                ActionKind::FileChange,
+                "tests/check2.rs",
+                &["tests/check2.rs"],
+            ),
+        )
+        .await;
+    assert!(
+        words(&third).contains("too many denials"),
+        "{}",
+        words(&third)
+    );
+    assert_eq!(w.task(&id).state, "stopped");
+    assert_eq!(w.task(&id).stop_reason.as_deref(), Some("too_many_denials"));
+    let tripwire = one_event_body(&w, &id, "tripwire");
+    assert_eq!(tripwire["wire"], "denials");
+    assert_eq!(tripwire["in_a_row"], 3);
+    let denied = events(&w, &id, "denied");
+    assert_eq!(denied.len(), 3);
+    for event in &denied {
+        assert_eq!(event.body["decided_by"], "hard_rule");
+        assert_eq!(event.body["rule"], "N7");
+    }
+    assert!(
+        events(&w, &id, "allowed").is_empty(),
+        "a refused protected write was accepted"
+    );
+    assert!(unchanged(), "a refused write reached the checkout");
 }

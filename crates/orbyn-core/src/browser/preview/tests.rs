@@ -1,5 +1,7 @@
+use crate::app::{Core, CoreConfig};
 use crate::browser::preview_bridge::Bridge;
 use crate::governance::computer::cdp::{BrowserSession, LaunchOptions};
+use crate::testing::TempDir;
 use crate::util::new_id;
 use orbyn_contracts::PreviewRecordingOptions;
 use serde_json::{Value, json};
@@ -34,6 +36,63 @@ mod capture_tests;
 #[path = "recording_capture_tests.rs"]
 mod recording_capture_tests;
 
+#[test]
+fn browser_profile_rename_counts_unicode_characters_after_trimming() {
+    let dir = TempDir::new();
+    let core = Core::open(CoreConfig::new(
+        dir.path().join("data"),
+        "http://127.0.0.1:1".into(),
+    ))
+    .unwrap();
+    let profile = core.create_browser_profile("Work").unwrap();
+    let boundary = "🦀".repeat(64);
+    let padded = format!("\u{2003}{boundary}\u{3000}");
+    assert_eq!(
+        core.rename_browser_profile(&profile.id, &padded)
+            .unwrap()
+            .name,
+        boundary
+    );
+
+    let too_long = format!("{boundary}🦀");
+    for invalid in [too_long.as_str(), "\u{2003}\u{3000}"] {
+        assert!(
+            matches!(
+                core.rename_browser_profile(&profile.id, invalid),
+                Err(CoreError::Invalid(_))
+            ),
+            "accepted {invalid:?}"
+        );
+        assert_eq!(core.browser_profiles().unwrap()[0].name, boundary);
+    }
+}
+
+#[test]
+fn browser_profile_rename_persists_the_selected_id_after_reopening_core() {
+    let dir = TempDir::new();
+    let open = || {
+        Core::open(CoreConfig::new(
+            dir.path().join("data"),
+            "http://127.0.0.1:1".into(),
+        ))
+        .unwrap()
+    };
+    let core = open();
+    let first = core.create_browser_profile("Work").unwrap();
+    let second = core.create_browser_profile("Work").unwrap();
+    core.rename_browser_profile(&second.id, "R").unwrap();
+    drop(core);
+
+    let profiles = open().browser_profiles().unwrap();
+    assert_eq!(
+        profiles
+            .iter()
+            .map(|profile| (profile.id.as_str(), profile.name.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(first.id.as_str(), "Work"), (second.id.as_str(), "R")]
+    );
+}
+
 fn fixture_tab(session: BrowserSession, control: &str) -> Arc<Tab> {
     let (frames, _) = broadcast::channel(8);
     let (pointers, _) = broadcast::channel(16);
@@ -64,6 +123,15 @@ fn fixture_tab(session: BrowserSession, control: &str) -> Arc<Tab> {
         bridge: Mutex::new(Bridge::default()),
         files: PathBuf::new(),
     })
+}
+
+/// A tab holding `profile`, for a test that needs a profile in use without launching a browser.
+pub(super) async fn fixture_profile_tab(profile: &str) -> Arc<Tab> {
+    let (session, server) = fixture_session(true).await;
+    let tab = fixture_tab(session, "none");
+    lock(&tab.info).profile = Some(profile.to_owned());
+    drop(server);
+    tab
 }
 
 async fn fixture_session(
@@ -924,4 +992,34 @@ fn the_page_expressions_quote_what_they_carry() {
         scroll_expression(None).contains("const selector = null;"),
         "the page is the target when no selector is named"
     );
+}
+
+/// Creates, renames and deletes that overlap each save the whole profile list; none may save a stale one over another's change.
+#[test]
+fn overlapping_profile_changes_lose_no_update() {
+    use crate::testing::TempDir;
+    let dir = TempDir::new();
+    let mut config = crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    let core = Arc::new(crate::app::Core::open(config).unwrap());
+    let first = core.create_browser_profile("Seed").unwrap();
+    let workers: Vec<_> = (0..8)
+        .map(|n| {
+            let core = core.clone();
+            let seed = first.id.clone();
+            std::thread::spawn(move || {
+                for round in 0..10 {
+                    core.create_browser_profile(&format!("p{n}-{round}"))
+                        .unwrap();
+                    core.rename_browser_profile(&seed, &format!("Seed {n}-{round}"))
+                        .unwrap();
+                }
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    let all = core.browser_profiles().unwrap();
+    assert_eq!(all.len(), 1 + 8 * 10, "a create was lost: {all:?}");
 }

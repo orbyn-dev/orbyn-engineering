@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -81,6 +83,8 @@ describe("the reviewer backtest on the real 4n routes", () => {
     answers.estimate = { status: 200, body: estimate({ running: "run-live" }) };
     render(<LiveBacktest view="estimate" />);
     expect(await screen.findByText(/A backtest is running/)).toBeInTheDocument();
+    expect(screen.getByText(/Only one runs at a time: it finishes by itself\./)).toBeVisible();
+    expect(screen.queryByText(/stops it on its report/i)).toBeNull();
     expect(screen.getByRole("button", { name: "Open the running backtest" })).toBeEnabled();
   });
 
@@ -104,6 +108,50 @@ describe("the reviewer backtest on the real 4n routes", () => {
     expect(screen.getByText("2 unresolved")).toBeInTheDocument();
     expect(screen.getByText("1.28M tokens")).toBeInTheDocument();
     expect(calls.some(({ url }) => url === "/api/crew/backtest/run-4n/report")).toBe(true);
+  });
+
+  it("labels the stacked narrow report: the run card first, then a card per lane", async () => {
+    openReport();
+    expect(await screen.findByText("Outcomes")).toBeInTheDocument();
+    expect(screen.getByText("Lanes that scored")).toBeInTheDocument();
+    expect(screen.getByText("What it used")).toBeInTheDocument();
+    expect(screen.getByText("Escapes caught: 6 of 9 · recall 66%")).toBeInTheDocument();
+    expect(screen.getByText("Findings raised: 21 · 2 unresolved")).toBeInTheDocument();
+    expect(screen.getByText("Matched an escape: 6 of 21 · precision 28%")).toBeInTheDocument();
+  });
+
+  it("keeps every stacked lane cell's column heading in the narrowed table", async () => {
+    openReport();
+    await screen.findByText("correctness · claude · sonnet-5-5");
+    const table = document.querySelector<HTMLElement>(".cx-bt-report .cx-aptb");
+    expect(table).not.toBeNull();
+    const headings = [...table!.querySelectorAll(":scope > .cx-h")].map((cell) => cell.textContent);
+    expect(headings).toEqual(["Lane", "Escapes it would have caught", "Findings raised", "Findings that matched an escape"]);
+    // Each score cell repeats its header's words in a label the narrow layout shows and the wide one hides.
+    const labels = [...table!.querySelectorAll(".cx-bt-narrow")].map((label) => label.textContent ?? "");
+    expect(labels).toEqual([
+      "Escapes caught: 6 of 9 · recall 66%",
+      "Findings raised: 21 · 2 unresolved",
+      "Matched an escape: 6 of 21 · precision 28%",
+    ]);
+    // The wide layout's own figures stay for the wide table, and are what the narrow breakpoint hides.
+    expect(table!.querySelectorAll(".cx-bt-wide")).toHaveLength(6);
+  });
+
+  it("hides the header row and shows those labels only in the narrow container", () => {
+    // jsdom runs no container query: the rule that keeps each stacked cell's heading is read from its source.
+    const css = readFileSync(join(process.cwd(), "src", "features", "crew", "backtest", "live", "backtest-live.css"), "utf8");
+    const [wide = "", narrow = ""] = css.split("@container (max-width: 640px)");
+    expect(wide).toMatch(/\.cx-t14pg \.cx-aptb \.cx-bt-narrow \{\s*display: none;/);
+    expect(narrow).toMatch(/\.cx-bt-report \.cx-aptb > div\.cx-h \{\s*display: none;/);
+    expect(narrow).toMatch(/\.cx-bt-report \.cx-aptb \.cx-bt-wide \{\s*display: none;/);
+    expect(narrow).toMatch(/\.cx-bt-report \.cx-aptb \.cx-bt-narrow \{\s*display: block;/);
+  });
+
+  it("keeps the replay count Planned, never a number", async () => {
+    openReport();
+    expect(await screen.findByText("The report route does not serve how many pull requests each lane replayed.")).toBeInTheDocument();
+    expect(screen.queryByText(/pull requests replayed/i)).toBeNull();
   });
 
   it("shows Not measured where the escape log cannot score a lane, never a zero rate", async () => {

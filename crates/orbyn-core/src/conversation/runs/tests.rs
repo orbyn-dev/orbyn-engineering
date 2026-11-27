@@ -2,6 +2,7 @@
 //! Wire-format behavior is covered against the fake engine in `orbynd/tests`.
 
 mod follow_ups;
+mod snapshot;
 #[cfg(unix)]
 mod update;
 
@@ -235,6 +236,7 @@ async fn fixture_steering(
             base_branch: None,
             effort: None,
             options: std::collections::BTreeMap::new(),
+            branch_name_seed: None,
         })
         .await
         .unwrap();
@@ -641,6 +643,68 @@ async fn engine_exit_during_approval_fails_the_run_and_expires() {
         f.core.store.approval(&approval.id).unwrap().state,
         ApprovalState::Expired
     );
+}
+
+#[tokio::test]
+async fn a_stopped_host_fails_the_run_with_its_stable_code() {
+    let script: Script = Arc::new(|_, events, _| {
+        tokio::spawn(async move {
+            let _ = events
+                .send(EngineEvent::Finished(
+                    crate::agents::driver::host::host_stopped(),
+                ))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Failed);
+    let stored = f.core.store.run(&run.id).unwrap();
+    assert_eq!(
+        stored.error.as_deref(),
+        Some(crate::agents::driver::host::HOST_STOPPED)
+    );
+    let events = f.core.store.events_after(&f.thread, 0, 100).unwrap();
+    let (message, code) = events
+        .iter()
+        .find_map(|event| match &event.event {
+            AgUiEvent::RunError { message, code } => Some((message, code)),
+            _ => None,
+        })
+        .expect("a run error event");
+    assert_eq!(message, crate::agents::driver::host::HOST_STOPPED);
+    assert_eq!(code.as_deref(), Some("engine_host_stopped"));
+    assert!(!events.iter().any(
+        |event| matches!(&event.event, AgUiEvent::Custom { name, .. } if name == "engine.sign_in_required")
+    ));
+}
+
+#[tokio::test]
+async fn a_plain_failure_keeps_the_plain_code() {
+    let script: Script = Arc::new(|_, events, _| {
+        tokio::spawn(async move {
+            // A plain failure that happens to use the host-stopped sentence is still
+            // not a host stop: the code comes from the outcome, never the words.
+            let _ = events
+                .send(EngineEvent::Finished(EngineOutcome::Failed(
+                    crate::agents::driver::host::HOST_STOPPED.into(),
+                )))
+                .await;
+        })
+    });
+    let f = fixture(script).await;
+    let run = f.core.runs.admit(&f.thread, "go", "t").unwrap();
+    assert_eq!(until_terminal(&f.core, &run.id).await, RunState::Failed);
+    let events = f.core.store.events_after(&f.thread, 0, 100).unwrap();
+    let (message, code) = events
+        .iter()
+        .find_map(|event| match &event.event {
+            AgUiEvent::RunError { message, code } => Some((message, code)),
+            _ => None,
+        })
+        .expect("a run error event");
+    assert_eq!(message, crate::agents::driver::host::HOST_STOPPED);
+    assert_eq!(code.as_deref(), Some("engine_failed"));
 }
 
 #[tokio::test]

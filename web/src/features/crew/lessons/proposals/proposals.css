@@ -1,0 +1,75 @@
+/* The skill proposals (KC9): the card on the Lessons page, its lesson rows and the review page's box. Design values are
+   mapped to the app tokens the neighbouring Crew screens use: sunken = the design's raise, borderStrong = line2,
+   textSoft and muted = the two quiet text levels, blueSoft and blue = the Proposed chip. */
+
+.cx-apchip.cx-proposed { background: var(--color-blueSoft); color: var(--color-blue); }
+.cx-cwbn.cx-green { background: var(--color-greenSoft); }
+
+.cx-ppcard {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--color-sunken);
+  box-shadow: inset 0 0 0 1px var(--color-borderStrong);
+  min-width: 0;
+}
+.cx-pphead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cx-pphead h6 { margin: 0; font-size: 12px; font-weight: 500; color: var(--color-text); }
+.cx-ppwhen { margin-left: auto; color: var(--color-muted); font-size: 11.5px; }
+.cx-ppname { font-family: var(--font-mono); font-size: 14px; font-weight: 500; color: var(--color-text); overflow-wrap: anywhere; }
+.cx-ppdesc { color: var(--color-text); font-size: 13px; line-height: 1.5; }
+.cx-ppfkv { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 10px; font-size: 12px; color: var(--color-muted); }
+.cx-ppfkv > span { color: var(--color-textSoft); }
+.cx-ppfkv b { font-weight: 400; color: var(--color-text); overflow-wrap: anywhere; }
+.cx-ppbased { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.cx-pptoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.cx-pptoggle span { text-decoration: underline; text-underline-offset: 2px; }
+.cx-pptoggle:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.cx-pprows { display: flex; flex-direction: column; }
+.cx-pprow { display: flex; gap: 10px; align-items: flex-start; padding: 7px 0; min-width: 0; }
+.cx-pprow + .cx-pprow { border-top: 1px solid var(--color-border); }
+.cx-pprowtext { flex: 1; min-width: 0; color: var(--color-text); font-size: 12px; line-height: 1.45; }
+.cx-pprowtext small { display: block; color: var(--color-muted); font-size: 11.5px; margin-top: 2px; }
+.cx-pppreview { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.cx-pplabel { color: var(--color-muted); font-size: 11.5px; }
+.cx-pptext {
+  margin: 0;
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  box-shadow: inset 0 0 0 1px transparent;
+  max-height: 200px;
+  overflow: auto;
+}
+.cx-pptext.cx-input { background: var(--color-sunken); box-shadow: inset 0 0 0 1px var(--color-borderStrong); width: 100%; box-sizing: border-box; resize: vertical; min-height: 240px; max-height: none; }
+.cx-pptext.cx-input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; }
+.cx-pptext.cx-invalid { box-shadow: inset 0 0 0 1px var(--color-danger); }
+.cx-pptext.cx-readonly { box-shadow: inset 0 0 0 1px var(--color-borderStrong); }
+.cx-ppnotes { display: flex; flex-direction: column; gap: 3px; color: var(--color-muted); font-size: 12px; line-height: 1.5; }
+.cx-ppacts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
+.cx-ppacts .cx-ppdismiss { margin-left: auto; }
+.cx-ppfoot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cx-ppfoot .cx-hint { color: var(--color-muted); font-size: 12px; flex: 1; min-width: 200px; }
+.cx-ppfoot .cx-acts { margin-left: auto; display: flex; gap: 8px; flex-wrap: nowrap; }
+.cx-pplead { font-weight: 500; }
+.cx-ppfkv b.cx-ppbasedline { font-weight: 500; }

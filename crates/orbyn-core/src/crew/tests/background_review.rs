@@ -1,14 +1,14 @@
 //! Background runs in the Review queue (docs/crew/background-engine-start.md, section 4, PR 4): a run that stops without a
 //! merge stays on its own row, and the queue that lists merges now joins those rows too, with the run's state, why it stopped
-//! and what it spent. A real `Core`, fake engines and real git. The person's answer to a background run has no route yet, so
-//! these tests read the join only. The wire queue pages the runs with the merges' window and counts them all.
+//! and what it spent. A real `Core`, fake engines and real git. The person's answer is the acknowledgement, which settles the
+//! wait and leaves the queue. The wire queue pages the runs with the merges' window and counts them all.
 
 use std::sync::Arc;
 
 use orbyn_contracts as wire;
 use serde_json::json;
 
-use super::harness::{Script, Turn, World, report, world};
+use super::harness::{Script, Turn, World, brief, key, report, world};
 use crate::crew::Page;
 use crate::error::CoreError;
 
@@ -19,7 +19,7 @@ fn project(w: &World) -> String {
 }
 
 /// A stored crew, on or off.
-fn crew_with(w: &World, name: &str, turns: u32, minutes: u32, on: bool) -> String {
+async fn crew_with(w: &World, name: &str, turns: u32, minutes: u32, on: bool) -> String {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
         "project_id": project(w), "name": name, "template": "fix_failing_ci",
         "trigger": { "kind": "ci_failure", "branch": "main" },
@@ -27,7 +27,7 @@ fn crew_with(w: &World, name: &str, turns: u32, minutes: u32, on: bool) -> Strin
         "daily": { "runs": 100, "turns": 1000 }, "utc_offset_minutes": 600
     }))
     .unwrap();
-    let crew = w.core.background_create(&body).unwrap();
+    let crew = w.core.background_create(&body).await.unwrap();
     if on {
         w.core.background_set_enabled(&crew.id, true).unwrap();
     }
@@ -50,9 +50,13 @@ fn outside() -> Script {
     })
 }
 
+/// The crew's one run: each test starts that crew's run once before reading it, so the count says the row is the one
+/// they mean and the read's position never picks another.
 fn run_of(w: &World, crew: &str) -> wire::BackgroundRun {
     let page = Page::new(None, None).unwrap();
-    w.core.background_runs(crew, page).unwrap().runs.remove(0)
+    let mut runs = w.core.background_runs(crew, page).unwrap().runs;
+    assert_eq!(runs.len(), 1, "the crew has one run: {runs:?}");
+    runs.pop().expect("the crew's run")
 }
 
 async fn until_run(w: &World, crew: &str, state: wire::BackgroundRunState) -> wire::BackgroundRun {
@@ -67,17 +71,41 @@ fn queue(w: &World) -> crate::crew::ReviewQueue {
     w.core.crew_review_queue(NOW).unwrap()
 }
 
+/// A crew's run, started here and waited for until it reaches the review: the id is the row the test reads, so no read
+/// has to take the first run by position.
+async fn run_to_review(w: &World, crew: &str) -> String {
+    let run = w.core.crew_background_run_now(crew, "user").await.unwrap();
+    until_run(w, crew, wire::BackgroundRunState::NeedsReview).await;
+    run.id
+}
+
+/// The wire queue's background run with this id, found by id so a second waiting run cannot stand in for it.
+fn wire_run<'a>(
+    queue: &'a wire::AutopilotReviewQueue,
+    run: &str,
+) -> &'a wire::AutopilotBackgroundReviewItem {
+    queue
+        .background_runs
+        .iter()
+        .find(|item| item.run_id == run)
+        .expect("the wire queue has the background run with that id")
+}
+
 #[tokio::test]
 async fn a_run_that_finished_with_work_waits_in_the_review_queue() {
     let w = world(true, good()).await;
-    let id = crew_with(&w, "Fix CI", 10, 30, true);
+    let id = crew_with(&w, "Fix CI", 10, 30, true).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let done = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
 
     let queue = queue(&w);
     assert!(queue.merges.is_empty(), "no merge was made");
-    assert_eq!(queue.background.len(), 1);
-    let item = &queue.background[0];
+    assert_eq!(queue.background.len(), 1, "the one run waits");
+    let item = queue
+        .background
+        .iter()
+        .find(|item| item.run_id == run.id)
+        .expect("the queue lists the run that finished");
     assert_eq!(
         (item.run_id.as_str(), item.crew_id.as_str()),
         (run.id.as_str(), id.as_str())
@@ -104,7 +132,7 @@ async fn a_run_that_finished_with_work_waits_in_the_review_queue() {
 #[tokio::test]
 async fn a_run_stopped_for_its_budget_waits_with_its_reason_and_spend() {
     let w = world(true, outside()).await;
-    let id = crew_with(&w, "One turn", 1, 30, true);
+    let id = crew_with(&w, "One turn", 1, 30, true).await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
     assert_eq!(
@@ -113,8 +141,12 @@ async fn a_run_stopped_for_its_budget_waits_with_its_reason_and_spend() {
     );
 
     let queue = queue(&w);
-    assert_eq!(queue.background.len(), 1);
-    let item = &queue.background[0];
+    assert_eq!(queue.background.len(), 1, "the one stopped run waits");
+    let item = queue
+        .background
+        .iter()
+        .find(|item| item.run_id == stopped.id)
+        .expect("the queue lists the run that stopped");
     assert_eq!(item.state, "stopped");
     assert_eq!(item.stop_reason.as_deref(), Some("budget"));
     assert_eq!(
@@ -127,7 +159,7 @@ async fn a_run_stopped_for_its_budget_waits_with_its_reason_and_spend() {
 #[tokio::test]
 async fn a_run_stopped_by_a_failure_still_waits_for_a_person() {
     let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
-    let id = crew_with(&w, "Silent", 10, 30, true);
+    let id = crew_with(&w, "Silent", 10, 30, true).await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
     assert_eq!(
@@ -140,19 +172,21 @@ async fn a_run_stopped_by_a_failure_still_waits_for_a_person() {
     );
 
     let queue = queue(&w);
-    assert_eq!(queue.background.len(), 1);
-    assert_eq!(queue.background[0].state, "stopped");
-    assert_eq!(
-        queue.background[0].stop_reason.as_deref(),
-        Some("engine_error")
-    );
-    assert_eq!(queue.background[0].review_reason, None);
+    assert_eq!(queue.background.len(), 1, "the stopped run is listed");
+    let item = queue
+        .background
+        .iter()
+        .find(|item| item.run_id == stopped.id)
+        .expect("the queue lists the stopped run");
+    assert_eq!(item.state, "stopped");
+    assert_eq!(item.stop_reason.as_deref(), Some("engine_error"));
+    assert_eq!(item.review_reason, None);
 }
 
 #[tokio::test]
 async fn a_running_run_is_not_in_the_review_queue() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew_with(&w, "Running", 10, 30, true);
+    let id = crew_with(&w, "Running", 10, 30, true).await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(
         run_of(&w, &id).state,
@@ -165,7 +199,7 @@ async fn a_running_run_is_not_in_the_review_queue() {
 #[tokio::test]
 async fn a_run_stopped_by_the_person_switch_needs_no_answer() {
     let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
-    let id = crew_with(&w, "Switched off", 10, 30, true);
+    let id = crew_with(&w, "Switched off", 10, 30, true).await;
     w.core.crew_background_run_now(&id, "user").await.unwrap();
     w.core.background_set_enabled(&id, false).unwrap();
     let stopped = run_of(&w, &id);
@@ -183,14 +217,14 @@ async fn a_run_stopped_by_the_person_switch_needs_no_answer() {
 #[tokio::test]
 async fn background_runs_join_the_queue_oldest_first() {
     let w = world(true, good()).await;
-    let first_crew = crew_with(&w, "First", 10, 30, true);
+    let first_crew = crew_with(&w, "First", 10, 30, true).await;
     let first = w
         .core
         .crew_background_run_now(&first_crew, "user")
         .await
         .unwrap();
     until_run(&w, &first_crew, wire::BackgroundRunState::NeedsReview).await;
-    let second_crew = crew_with(&w, "Second", 10, 30, true);
+    let second_crew = crew_with(&w, "Second", 10, 30, true).await;
     let second = w
         .core
         .crew_background_run_now(&second_crew, "user")
@@ -210,7 +244,7 @@ async fn background_runs_join_the_queue_oldest_first() {
 #[tokio::test]
 async fn the_wire_queue_carries_the_background_run_without_a_merge_or_a_risk() {
     let w = world(true, good()).await;
-    let id = crew_with(&w, "Fix CI", 10, 30, true);
+    let id = crew_with(&w, "Fix CI", 10, 30, true).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
 
@@ -218,8 +252,8 @@ async fn the_wire_queue_carries_the_background_run_without_a_merge_or_a_risk() {
     let queue = w.core.autopilot_review_queue(NOW, page).unwrap();
     assert!(queue.items.is_empty(), "a background run has no merge");
     assert_eq!(queue.total, 0);
-    assert_eq!(queue.background_runs.len(), 1);
-    let item = &queue.background_runs[0];
+    assert_eq!(queue.background_runs.len(), 1, "the one run is listed");
+    let item = wire_run(&queue, &run.id);
     assert_eq!(
         (
             item.run_id.as_str(),
@@ -254,16 +288,151 @@ async fn the_wire_queue_is_not_found_with_the_preview_off() {
     assert!(matches!(error, CoreError::NotFound(_)), "{error}");
 }
 
+/// The person's acknowledgement is the answer to a waiting review: the wait clears under one write, the crew reads idle and the
+/// same crew starts again, while the run keeps its state, its spend and why it waited.
+#[tokio::test]
+async fn acknowledging_a_waiting_review_settles_it_and_the_crew_may_run_again() {
+    let w = world(true, good()).await;
+    let id = crew_with(&w, "Fix CI", 10, 30, true).await;
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    let waiting = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    assert!(waiting.review_waiting);
+    let before = w.core.background_get(&id).unwrap();
+    assert_eq!(
+        (before.state, before.reviews_waiting),
+        (wire::BackgroundState::NeedsReview, 1)
+    );
+    assert_eq!(
+        queue(&w).background.len(),
+        1,
+        "an unacknowledged review still waits"
+    );
+
+    let settled = w.core.background_acknowledge_review(&run.id).unwrap();
+    assert!(!settled.review_waiting);
+    assert_eq!(
+        settled.review_reason.as_deref(),
+        waiting.review_reason.as_deref(),
+        "the run keeps why it waited"
+    );
+    assert_eq!(
+        (
+            settled.state,
+            settled.stop_reason,
+            settled.turns_spent,
+            settled.minutes_spent,
+            settled.started_at.clone(),
+            settled.ended_at.clone(),
+        ),
+        (
+            waiting.state,
+            waiting.stop_reason,
+            waiting.turns_spent,
+            waiting.minutes_spent,
+            waiting.started_at.clone(),
+            waiting.ended_at.clone(),
+        ),
+        "nothing else about the run changes"
+    );
+    let after = w.core.background_get(&id).unwrap();
+    assert_eq!(
+        (after.state, after.reviews_waiting),
+        (wire::BackgroundState::Idle, 0)
+    );
+    assert!(
+        queue(&w).background.is_empty(),
+        "a settled review leaves the queue"
+    );
+    let paged = w
+        .core
+        .autopilot_review_queue(NOW, Page::new(None, None).unwrap())
+        .unwrap();
+    assert!(paged.background_runs.is_empty());
+    assert_eq!(
+        paged.background_total, 0,
+        "the paged queue counts a settled review as settled"
+    );
+    // The crew may run again, at once.
+    let next = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    assert_eq!(next.state, wire::BackgroundRunState::Running);
+
+    // One audit row, the person's, records what was settled.
+    let audits = w.core.store.list_audit(None, 100).unwrap();
+    let mut rows: Vec<_> = audits
+        .iter()
+        .filter(|row| row.action == "crew.background.run.acknowledge")
+        .collect();
+    assert_eq!(rows.len(), 1, "one audit row, the person's");
+    let row = rows.pop().expect("the acknowledge audit row");
+    assert_eq!((row.actor.as_str(), row.source.as_str()), ("user", "user"));
+    assert_eq!(row.target, id);
+    assert_eq!(row.detail["run"], run.id);
+    assert_eq!(row.detail["state"], "needs_review");
+    assert_eq!(
+        row.detail["review_reason"],
+        waiting.review_reason.clone().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn acknowledging_a_review_that_is_not_waiting_is_refused_plainly_and_changes_nothing() {
+    let w = world(true, Arc::new(|_, _| Turn::Silent)).await;
+    let id = crew_with(&w, "Silent", 10, 30, true).await;
+    let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
+    // A running run is not waiting.
+    let refused = |error: CoreError| {
+        assert!(
+            matches!(&error, CoreError::Invalid(why) if why == "this run is not waiting for the person's review"),
+            "{error}"
+        );
+    };
+    refused(w.core.background_acknowledge_review(&run.id).unwrap_err());
+    // A run that stopped for an engine error left nothing to review.
+    let stopped = until_run(&w, &id, wire::BackgroundRunState::Stopped).await;
+    assert!(!stopped.review_waiting);
+    refused(w.core.background_acknowledge_review(&run.id).unwrap_err());
+    // A run that is not there is not found.
+    assert!(matches!(
+        w.core.background_acknowledge_review("nothing").unwrap_err(),
+        CoreError::NotFound(_)
+    ));
+    // Nothing was written.
+    assert!(
+        !w.core
+            .store
+            .list_audit(None, 100)
+            .unwrap()
+            .iter()
+            .any(|row| row.action == "crew.background.run.acknowledge")
+    );
+    assert_eq!(w.core.background_get(&id).unwrap().reviews_waiting, 0);
+    // A failed stop still shows in Review: it is not a waiting review, so it has no acknowledgement (PR 4's open question).
+    let listed = queue(&w);
+    assert_eq!(listed.background.len(), 1, "the failed stop is listed");
+    let item = listed
+        .background
+        .iter()
+        .find(|item| item.run_id == run.id)
+        .expect("the queue lists the failed stop");
+    assert_eq!(item.state, "stopped");
+}
+
+#[tokio::test]
+async fn acknowledging_is_not_found_with_the_preview_off() {
+    let w = world(false, good()).await;
+    let error = w.core.background_acknowledge_review("nothing").unwrap_err();
+    assert!(matches!(error, CoreError::NotFound(_)), "{error}");
+}
+
 #[tokio::test]
 async fn the_wire_queue_pages_the_background_runs_and_counts_them_all() {
     let w = world(true, good()).await;
-    let mut runs = Vec::new();
-    for name in ["First", "Second", "Third"] {
-        let crew = crew_with(&w, name, 10, 30, true);
-        let run = w.core.crew_background_run_now(&crew, "user").await.unwrap();
-        until_run(&w, &crew, wire::BackgroundRunState::NeedsReview).await;
-        runs.push(run.id);
-    }
+    let first_crew = crew_with(&w, "First", 10, 30, true).await;
+    let first_run = run_to_review(&w, &first_crew).await;
+    let second_crew = crew_with(&w, "Second", 10, 30, true).await;
+    let second_run = run_to_review(&w, &second_crew).await;
+    let third_crew = crew_with(&w, "Third", 10, 30, true).await;
+    let third_run = run_to_review(&w, &third_crew).await;
 
     let first = w
         .core
@@ -275,15 +444,57 @@ async fn the_wire_queue_pages_the_background_runs_and_counts_them_all() {
         .iter()
         .map(|item| item.run_id.as_str())
         .collect();
-    assert_eq!(ids, [runs[0].as_str(), runs[1].as_str()]);
+    assert_eq!(
+        ids,
+        [first_run.as_str(), second_run.as_str()],
+        "the first page is the oldest two"
+    );
     assert_eq!(first.next_offset, Some(2), "another page of runs remains");
 
     let last = w
         .core
         .autopilot_review_queue(NOW, Page::new(Some(2), Some(2)).unwrap())
         .unwrap();
-    assert_eq!(last.background_runs.len(), 1);
-    assert_eq!(last.background_runs[0].run_id, runs[2]);
+    assert_eq!(last.background_runs.len(), 1, "one run on the last page");
+    let last_run = wire_run(&last, &third_run);
+    assert_eq!(last_run.run_id, third_run);
+    assert_eq!(last_run.crew_id, third_crew);
     assert_eq!(last.next_offset, None);
     assert_eq!(last.background_total, 3);
+}
+
+/// KC3: the queue's "what waits elsewhere" is the one needs-you field (the Inbox's items), and a wait this queue answers
+/// (a background run's review, a merge's review) is never counted as elsewhere.
+#[tokio::test]
+async fn what_waits_elsewhere_is_the_one_needs_you_field() {
+    let w = world(true, good()).await;
+    // A run whose review waits: the queue owns it, so the digest does not call it elsewhere.
+    let id = crew_with(&w, "Fix CI", 10, 30, true).await;
+    w.core.crew_background_run_now(&id, "user").await.unwrap();
+    until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+    assert!(
+        queue(&w).waiting_elsewhere.is_empty(),
+        "the queue's own background review is not elsewhere"
+    );
+
+    // A task whose worker never ran waits in the Inbox: the field names it, so the digest counts it there.
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let ghost = answer["task"].as_str().unwrap().to_owned();
+    assert_eq!(
+        queue(&w).waiting_elsewhere,
+        vec![(wire::NeedsYouKind::CouldNotStart, 1)],
+        "the field's item, by kind"
+    );
+
+    // A dismissal hides it here too: the digest reads the field, not its own list.
+    w.core
+        .crew_needs_you_dismiss(wire::NeedsYouKind::CouldNotStart, &ghost, "user")
+        .unwrap();
+    assert!(queue(&w).waiting_elsewhere.is_empty());
 }

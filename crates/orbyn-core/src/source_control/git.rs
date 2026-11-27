@@ -10,6 +10,8 @@ use tokio::process::Command;
 
 use crate::error::{CoreError, Result};
 
+use super::branch_names::{self, MAX_EXISTING_BRANCHES, Naming, NamingMode};
+
 /// Git's well-known empty tree, the parent side of a root commit's diff.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -44,6 +46,10 @@ const CREW_BYTE_EXACT: &[&str] = &[
     "-c",
     "core.untrackedCache=false",
 ];
+
+/// The Git release that started honouring `GIT_ATTR_SOURCE`. Older Git reads the checkout's own
+/// `.gitattributes` instead, which could normalize a byte change away from a byte-exact read.
+const ATTR_SOURCE_FROM: (u32, u32) = (2, 40);
 
 /// The repository's own empty tree. Reading attributes from it hides `.gitattributes`.
 async fn no_attributes(cwd: &Path) -> Result<String> {
@@ -142,6 +148,23 @@ async fn hardened(cwd: &Path, extra: &[&str], args: &[&str]) -> Result<Vec<u8>> 
         ));
     }
     Ok(output.stdout)
+}
+
+/// The major and minor version in `git version` output, such as `git version 2.39.3 (Apple Git-146)` or
+/// `git version 2.45.1.windows.1`.
+pub(crate) fn git_version(output: &str) -> Option<(u32, u32)> {
+    let version = output.trim().strip_prefix("git version ")?;
+    let mut parts = version.split(|c: char| !c.is_ascii_digit());
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Whether this Git honours `GIT_ATTR_SOURCE`, which keeps the checkout's own `.gitattributes` out of a read.
+/// A byte-exact read needs that: otherwise a text attribute could normalize a byte change away.
+pub(crate) async fn reads_attributes_from_source(cwd: &Path) -> bool {
+    let Ok(out) = git_raw(cwd, &["version"]).await else {
+        return false;
+    };
+    git_version(&text(&out.stdout)).is_some_and(|version| version >= ATTR_SOURCE_FROM)
 }
 
 /// `git_hardened` that never holds more than `cap` bytes of output: past the cap the process tree is stopped and the call is an
@@ -254,6 +277,10 @@ pub(crate) async fn primary_checkout(cwd: &Path) -> Result<PathBuf> {
     crate::util::canonicalize(Path::new(path)).map_err(Into::into)
 }
 
+/// The refusal for a purpose that cannot be a worktree folder name.
+pub(crate) const PURPOSE_RULE: &str =
+    "Use lowercase letters, digits and hyphens for the worktree name.";
+
 pub(crate) fn valid_purpose(purpose: &str) -> bool {
     !purpose.is_empty()
         && purpose.len() <= 64
@@ -362,23 +389,36 @@ pub(crate) async fn linked_worktrees(repo: &Path) -> Result<Vec<RegisteredWorktr
         .collect())
 }
 
+/// Whether `purpose` already names a registered worktree beside `repo`. Creation finds
+/// and reuses it, so a naming option that spends an engine call must not run for it.
+pub(crate) async fn reuses_worktree(repo: &Path, purpose: &str) -> Result<bool> {
+    Ok(linked_worktrees(repo).await?.iter().any(|registered| {
+        registered.path.exists()
+            && registered.path.file_name() == Some(std::ffi::OsStr::new(purpose))
+    }))
+}
+
 /// How a new worktree starts, from the settings and the project file.
 #[derive(Clone, Debug)]
 pub struct WorktreeOptions {
-    pub prefix: String,
+    pub naming: Naming,
     pub base: Option<String>,
     pub from_origin: bool,
     /// `recursive`, `top-level` or `none`; legacy spellings remain readable.
     pub submodules: String,
+    /// The thread's real title, when the creation request had one; semantic naming uses it
+    /// before the purpose.
+    pub seed: Option<String>,
 }
 
 impl Default for WorktreeOptions {
     fn default() -> Self {
         Self {
-            prefix: "feat".to_owned(),
+            naming: Naming::default(),
             base: None,
             from_origin: false,
             submodules: "none".to_owned(),
+            seed: None,
         }
     }
 }
@@ -392,9 +432,7 @@ pub(crate) async fn create_worktree(
     options: &WorktreeOptions,
 ) -> Result<Worktree> {
     if !valid_purpose(purpose) {
-        return Err(CoreError::Invalid(
-            "Use lowercase letters, digits and hyphens for the worktree name.".into(),
-        ));
+        return Err(CoreError::Invalid(PURPOSE_RULE.into()));
     }
     let path = worktree_path(&primary_checkout(repo).await?, purpose)?;
     let path_text = path.to_string_lossy().into_owned();
@@ -428,14 +466,23 @@ pub(crate) async fn create_worktree(
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let branch = format!("{}/{purpose}", options.prefix);
+    // The branch name is chosen from the thread and the naming mode, never taken from
+    // the request as a ref. Semantic naming and a written custom name read the project's
+    // local branches first: semantic naming numbers a taken slug, and a custom name that
+    // is already a branch is unusable, so the purpose stays its complete name.
+    let existing = if options.naming.mode == NamingMode::Semantic || options.naming.custom.is_some()
+    {
+        local_branch_names(repo).await?
+    } else {
+        Vec::new()
+    };
+    let branch =
+        branch_names::branch_name(&options.naming, options.seed.as_deref(), purpose, &existing);
     if git(repo, &["check-ref-format", "--branch", &branch])
         .await
         .is_err()
     {
-        return Err(CoreError::Invalid(
-            "That branch prefix is not valid.".into(),
-        ));
+        return Err(CoreError::Invalid("That branch name is not valid.".into()));
     }
     let start = worktree_start(repo, options).await.unwrap_or(head);
     git(
@@ -460,6 +507,24 @@ pub(crate) async fn create_worktree(
         branch,
         base: start,
     })
+}
+
+/// The project's local branches, capped. Semantic naming avoids them; a listing past the
+/// cap is cut rather than read unbounded, and a name past it is left to Git to refuse.
+async fn local_branch_names(repo: &Path) -> Result<Vec<String>> {
+    let listing = git(
+        repo,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .await?;
+    let listing = String::from_utf8_lossy(&listing);
+    Ok(listing
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .take(MAX_EXISTING_BRANCHES)
+        .map(str::to_owned)
+        .collect())
 }
 
 /// A chosen base, or the remote's head when asked for. `None` means this clone's HEAD.
@@ -826,6 +891,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_byte_exact_checks_need_attr_source_from_git_2_40() {
+        for (output, supported) in [
+            ("git version 2.39.5 (Apple Git-154)\n", false),
+            ("git version 2.40.0\n", true),
+            ("git version 2.45.1.windows.1\n", true),
+            ("git version 3.0.0\n", true),
+            ("not git", false),
+        ] {
+            assert_eq!(
+                git_version(output).is_some_and(|version| version >= ATTR_SOURCE_FROM),
+                supported,
+                "{output}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn a_finished_git_leader_does_not_leave_helpers_holding_output() {
         let dir = TempDir::new();
@@ -889,6 +971,50 @@ mod tests {
         })
         .await;
         assert!(escaped.is_err(), "Git's descendant survived cancellation");
+    }
+
+    /// The name rule must never accept a name real Git refuses to create: a written
+    /// custom name that passes it would become `invalid_input` instead of falling back.
+    #[tokio::test]
+    async fn the_branch_name_rule_never_accepts_a_name_git_refuses() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        let long = "x".repeat(65);
+        let names = [
+            "HEAD",
+            "head",
+            "Head",
+            "HEAD/next",
+            "main",
+            "release/login-42",
+            "v1.2",
+            "-leading",
+            "foo.",
+            "foo..bar",
+            "foo//bar",
+            "foo.lock",
+            "a b",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            "a\\b",
+            long.as_str(),
+        ];
+        for name in names {
+            if branch_names::is_valid_branch_name(name) {
+                assert!(
+                    git(&repo, &["check-ref-format", "--branch", name])
+                        .await
+                        .is_ok(),
+                    "the rule accepted {name:?}, which Git refuses"
+                );
+            }
+        }
+        // The reported gap: HEAD passes Git's general ref rules, but no branch may be HEAD.
+        assert!(!branch_names::is_valid_branch_name("HEAD"));
     }
 
     async fn repo(dir: &Path) -> PathBuf {

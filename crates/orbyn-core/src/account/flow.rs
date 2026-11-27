@@ -79,6 +79,9 @@ pub(super) struct Inner {
     sync: Option<SyncHandle>,
     paused: bool,
     deletion_scheduled: bool,
+    /// A late answer for an older request left a session in the Engine while a newer request
+    /// still needed its state: that session is ended once the newer request ends unsigned.
+    owed_sign_out: bool,
 }
 
 fn invalid(code: &'static str, message: &str) -> CoreError {
@@ -322,8 +325,17 @@ impl AccountCenter {
         let backend = self.backend()?;
         let code = normalize_email_code(code)
             .ok_or_else(|| invalid("invalid_code", "That code isn't right."))?;
-        if self.inner.lock().await.email_code_wrong >= EMAIL_CODE_TRIES {
-            return Err(invalid("invalid_code", "That code isn't right."));
+        // The try is reserved under the lock that enforces the limit, as a digits entry is
+        // ([`super::AccountCenter::submit_digits`]): two codes entered at once cannot both read a
+        // free try and both spend the last one. A reserve that is refused takes nothing, so a
+        // failed reserve leaves no try behind, and the code below gives a reserved try back only
+        // once and only when the code never left this computer.
+        {
+            let mut inner = self.inner.lock().await;
+            if inner.email_code_wrong >= EMAIL_CODE_TRIES {
+                return Err(invalid("invalid_code", "That code isn't right."));
+            }
+            inner.email_code_wrong = inner.email_code_wrong.saturating_add(1);
         }
         match backend.account.verify_email_code(&code).await {
             Ok(session) => {
@@ -333,9 +345,11 @@ impl AccountCenter {
                 self.established(session, true).await
             }
             Err(error) => {
-                if error == DeviceError::InvalidCode {
+                // A wrong code was counted by the server, and a 5xx or a rate limit reached it, so
+                // those keep the try they reserved: the server's count is the one that applies.
+                if !error.reached_the_server() {
                     let mut inner = self.inner.lock().await;
-                    inner.email_code_wrong = inner.email_code_wrong.saturating_add(1);
+                    inner.email_code_wrong = inner.email_code_wrong.saturating_sub(1);
                 }
                 Err(refusal(&error))
             }
@@ -390,10 +404,13 @@ impl AccountCenter {
     /// closes the sign-in, which starts again from the password.
     pub async fn second_factor(&self, code: &str) -> Result<()> {
         let backend = self.backend()?;
+        // The closed check comes after the cancel gate: a cancel either cleared the sign-in
+        // before this read (refused here), or waits until this answer is in, so the backend is
+        // never asked to finish a challenge the person already ended.
+        let _one_at_a_time = self.cancelling.lock().await;
         if self.inner.lock().await.second_factor.is_none() {
             return Err(invalid("sign_in_closed", "Start signing in again."));
         }
-        let _one_at_a_time = self.cancelling.lock().await;
         match backend.account.second_factor(code).await {
             Ok(SignInOutcome::Signed(session)) => self.established(session, true).await,
             Ok(SignInOutcome::AwaitingApproval(pending)) => {
@@ -408,7 +425,13 @@ impl AccountCenter {
             }
             Err(DeviceError::InvalidCode) => {
                 let mut inner = self.inner.lock().await;
-                let wrong = inner.second_factor.map_or(1, |n| n + 1);
+                // A cancel that ran while the backend answered cleared the sign-in: its answer is
+                // not a wrong code, and it must not reopen the sign-in (which the old
+                // `map_or(1, ...)` did).
+                let Some(wrong_so_far) = inner.second_factor else {
+                    return Err(invalid("sign_in_closed", "Start signing in again."));
+                };
+                let wrong = wrong_so_far + 1;
                 if wrong >= SECOND_FACTOR_TRIES {
                     inner.second_factor = None;
                     drop(inner);
@@ -440,18 +463,21 @@ impl AccountCenter {
     pub async fn cancel_second_factor(&self) -> Result<()> {
         let backend = self.backend()?.clone();
         let _one_at_a_time = self.cancelling.lock().await;
-        let open = {
+        let (factor_open, open) = {
             let inner = self.inner.lock().await;
             if inner.second_factor.is_none() && inner.approval.is_none() {
                 return Ok(());
             }
             // Only a request that is still open needs the service's help to end; a sign-in
             // waiting for its code, or a request that already has its answer, is ours alone.
-            inner
-                .approval
-                .as_ref()
-                .filter(|approval| approval.answer.is_none())
-                .map(|approval| (approval.request_id.clone(), approval.serial))
+            (
+                inner.second_factor.is_some(),
+                inner
+                    .approval
+                    .as_ref()
+                    .filter(|approval| approval.answer.is_none())
+                    .map(|approval| (approval.request_id.clone(), approval.serial)),
+            )
         };
         if let Some((id, _)) = &open {
             match backend.account.cancel_approval(id).await {
@@ -460,6 +486,11 @@ impl AccountCenter {
                 Err(DeviceError::RequestGone | DeviceError::ApprovalRefused) => {}
                 Err(error) => return Err(refusal(&error)),
             }
+        }
+        // A code challenge is the service's too: clear it here so a code typed after this cancel
+        // cannot finish a sign-in the person ended (the engine keeps its handle in the client).
+        if factor_open {
+            backend.account.cancel_second_factor().await;
         }
         let mut inner = self.inner.lock().await;
         // Only the request that was cancelled is cleared: a sign-in started meanwhile stays,
@@ -474,8 +505,14 @@ impl AccountCenter {
             inner.approval = None;
             inner.second_factor = None;
         }
+        // The request this cancel ended was the last that needed the Engine's state: a session a
+        // late answer left there is ended now.
+        let owed = cleared && std::mem::take(&mut inner.owed_sign_out);
         let signed_out = cleared && inner.session.is_none();
         drop(inner);
+        if owed {
+            let _ = backend.account.sign_out().await;
+        }
         if signed_out {
             self.status
                 .update(|s| s.state = SyncState::SignedOut { reason: None });
@@ -523,6 +560,7 @@ impl AccountCenter {
         inner.session = Some(session);
         inner.second_factor = None;
         inner.approval = None;
+        inner.owed_sign_out = false;
         inner.paused = false;
         inner.deletion_scheduled = false;
         if ask {
@@ -569,10 +607,15 @@ impl AccountCenter {
         Ok(())
     }
 
-    /// Signs out of this computer only. It never waits for the network: the server is
-    /// told once, and a failure changes nothing here.
+    /// Signs out of this computer only. The session ends here first, so a failure changes nothing
+    /// on this computer; the server is told once, under the same one-at-a-time gate as a cancel,
+    /// so this can wait behind one. With no session there is nothing to wait for.
     pub async fn sign_out(&self, discard_unsynced: bool) -> Result<()> {
         let backend = self.backend()?.clone();
+        // Nothing to end: answering at once keeps a stuck cancel from holding the person up.
+        if self.inner.lock().await.session.is_none() {
+            return Ok(());
+        }
         let _one_at_a_time = self.cancelling.lock().await;
         let mut inner = self.inner.lock().await;
         if inner.session.is_none() {

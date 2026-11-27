@@ -1,8 +1,9 @@
 import { callDuration } from "../../lib/format";
 import type { Approval } from "../../api/types";
+import { parsed } from "../../product/timeline/toolTrace";
+import type { ToolItem } from "../../product/timeline/types";
 import type { ApprovalVia, CallStatus, CodeCall, CodeErrorKind, CodeReply, CodeRunCall, CodeRunRecord, CodeRunStatus, RunError, RunView } from "./types";
 
-export const CODE_TOOLS = ["orbyn_code_search", "orbyn_code_describe", "orbyn_code_run"] as const;
 export type CodeTool = "search" | "describe" | "run";
 
 /** The limits docs/code-mode.md gives; the screens never draw more than these, so no run can grow the page. */
@@ -15,9 +16,6 @@ export function codeToolOf(name: string): CodeTool | null {
   const tool = parts.slice(2).join("_");
   return tool === "orbyn_code_run" ? "run" : tool === "orbyn_code_search" ? "search" : tool === "orbyn_code_describe" ? "describe" : null;
 }
-
-/** True for one of the three tools by its bare name (the Tools tab lists them that way). */
-export const isCodeToolName = (name: string): boolean => (CODE_TOOLS as readonly string[]).includes(name);
 
 const byteLength = (text: string) => new TextEncoder().encode(text).length;
 
@@ -65,6 +63,15 @@ export const isRunId = (value: unknown): value is string => typeof value === "st
 /** The `id` of a run's block in the transcript, or null for an id that is not a run id. */
 export const runAnchorId = (runId: unknown): string | null => (isRunId(runId) ? `cm-run-${runId}` : null);
 
+/** The run id a code-run call's block carries, from its reply or its resume argument; null for another tool or an unusable id. */
+export function runIdOf(item: ToolItem): string | null {
+  if (codeToolOf(item.name) !== "run") return null;
+  const reply = readReply(item.result);
+  const args = parsed(item.args);
+  const runId = reply?.runId ?? (typeof args.run_id === "string" ? args.run_id : null);
+  return isRunId(runId) ? runId : null;
+}
+
 /** The approval's `via`, or null. Display only: nothing that decides an approval reads it. */
 export function viaOf(approval: Approval): ApprovalVia | null {
   const via = approval.via;
@@ -110,7 +117,7 @@ export function callsOf(record: CodeRunRecord): CodeCall[] {
   });
 }
 
-const KINDS: readonly CodeErrorKind[] = ["syntax", "runtime", "limit", "denied", "lost"];
+const KINDS: readonly CodeErrorKind[] = ["syntax", "runtime", "limit", "denied", "lost", "cancelled"];
 const STATUSES: readonly CodeRunStatus[] = ["running", "paused", "completed", "error"];
 
 /** The reply an engine read from `orbyn_code_run`, or null when the text is not one. Never throws. */
@@ -200,6 +207,7 @@ const ERROR_NOTES = new Map<string, string>(Object.entries({
   limit: "· limit",
   denied: "· denied",
   lost: "· lost",
+  cancelled: "· cancelled",
 }));
 
 export const callWord = (count: number): string => `${count} ${count === 1 ? "call" : "calls"}`;
@@ -220,7 +228,8 @@ export function rowSummary(view: RunView, now: number): { note: string; due: str
   const calls = view.calls.length;
   if (view.status === "error") {
     const kind = view.error?.kind ?? "runtime";
-    return { note: ERROR_NOTES.get(kind) ?? "· runtime error", due: kind === "lost" ? "Lost" : "Failed", tone: "fail" };
+    const due = kind === "lost" ? "Lost" : kind === "cancelled" ? "Cancelled" : "Failed";
+    return { note: ERROR_NOTES.get(kind) ?? "· runtime error", due, tone: "fail" };
   }
   if (view.status === "paused") {
     const finished = view.calls.filter((call) => call.status !== "waiting" && call.status !== "running").length;

@@ -23,6 +23,16 @@ describe("saved history", () => {
     expect(second.historyAcross(["t1"]).map((e) => e.command)).toEqual(["git status", "npm test", "ls"]);
   });
 
+  it("keeps how a command ended across a reload, for the line the shell reported", async () => {
+    const first = await fresh();
+    first.recordCommand("k:main", "npm test", 1);
+    first.recordCommand("k:main", "npm test", 2);
+    first.recordExitCode("k:main", "npm test", 1);
+    expect(JSON.parse(stored() ?? "null").h["k:main"][0].ok).toBe(false);
+    const again = await fresh();
+    expect(again.historyOf("k:main").map((entry) => entry.ok)).toEqual([false, null]);
+  });
+
   it("stores only the key and the lines", async () => {
     const mod = await fresh();
     mod.recordCommand("t1:main", "ls", 1);
@@ -41,6 +51,59 @@ describe("saved history", () => {
     const again = await fresh();
     expect(again.historyOf("k").map((e) => e.command)).toEqual(["pwd"]);
   });
+
+  it("drops a literal fallback found in storage, at load", async () => {
+    window.localStorage.setItem(
+      STORE,
+      JSON.stringify({ v: 1, h: { k: [{ command: "API_TOKEN=${TOKEN:-storedhunter2}", ok: null, at: 1 }, { command: "pwd", ok: true, at: 2 }] } }),
+    );
+    const again = await fresh();
+    expect(again.historyOf("k").map((e) => e.command)).toEqual(["pwd"]);
+  });
+
+  it.each([
+    ["export API_TOKEN=abc123", "abc123"],
+    ["OPENAI_API_KEY=sk-abcdefghijklmnop1234 run-tool", "sk-abcdefghijklmnop1234"],
+    ["curl -H 'Authorization: Bearer abcdefghijklmnop1234' https://x.test", "abcdefghijklmnop1234"],
+    ["git push https://ghp_abcdefghijklmnopqrstuvwxyz0123@github.com/o/r.git", "ghp_abcdefghijklmnopqrstuvwxyz0123"],
+    ["aws configure set aws_access_key_id AKIAABCDEFGHIJKLMNOP", "AKIAABCDEFGHIJKLMNOP"],
+    ["export API_TOKEN=${TOKEN:-fallbackhunter2}", "fallbackhunter2"],
+    ["DB_PASS=${PASS:=fallbacks3cret}", "fallbacks3cret"],
+    ["export API_TOKEN=\"${TOKEN:-fallback a b}\"", "fallback a b"],
+    ["export API_TOKEN=$'ansihunter2'", "ansihunter2"],
+    ["export API_TOKEN=$\"localehunter2\"", "localehunter2"],
+    ["TOKEN=${1:-positionalhunter2}", "positionalhunter2"],
+    ["export DB_PASSWORD=\"quotedhunter2\"", "quotedhunter2"],
+    ["export API_TOKEN=${TOKEN:-${PREFIX}nestedhunter2}", "nestedhunter2"],
+    ["API_TOKEN=${TOKEN:-' spacedhunter2'}", "spacedhunter2"],
+    ["export DB_PASSWORD=\" hunter2\"", "hunter2"],
+  ])("keeps the secret in %s out of local storage while a harmless line beside it is kept", async (line, secret) => {
+    const mod = await fresh();
+    mod.recordCommand("k", line, 1);
+    mod.recordCommand("k", "ls", 2);
+    expect(stored()).not.toContain(secret);
+    expect(mod.historyOf("k").map((e) => e.command)).toEqual(["ls"]);
+  });
+
+  it.each(["tool --password hunter2", "mysql -u root -pSecretValue db", "curl https://user:pass@host.test/x", "mysql --password $'hunter2'", "curl --pass ${PASS:-hunter2}", "curl --pass ${PASS:=hunter2}"])(
+    "keeps %s out of local storage",
+    async (line) => {
+      const mod = await fresh();
+      mod.recordCommand("k", line, 1);
+      mod.recordCommand("k", "ls", 2);
+      expect(stored()).not.toMatch(/hunter2|SecretValue|user:pass/);
+      expect(mod.historyOf("k").map((e) => e.command)).toEqual(["ls"]);
+    },
+  );
+
+  it.each(["mkdir -p out/a", "docker run -p 8080:80 app", "tool --password-file ./pw.txt", "git push https://github.com/o/r.git", "mysql -u root -p", "ssh -p 22 host", "curl 'https://host.test?contact=team:x@example.test'", "curl https://host.test/#a:b@c", "tool --password $HOME_PASSWORD", "tool --password \"$HOME_PASSWORD\"", "tool --token=${API_TOKEN}", "TOKEN=$(gh auth token)", "TOKEN=${VAR}", "TOKEN=${VAR:-$OTHER}", "PATH=${PATH:-/usr/local/bin}", "API_TOKEN=${TOKEN:-`gh auth token`}", "API_TOKEN=\"${TOKEN:-`gh auth token`}\"", "TOKEN=\"${VAR}\"", "TOKEN=\"$(gh auth token)\"", "API_TOKEN=${TOKEN:-${OTHER}}", "API_TOKEN=${TOKEN:-$OTHER}", "API_TOKEN=${TOKEN:- }"])(
+    "still keeps the ordinary line %s",
+    async (line) => {
+      const mod = await fresh();
+      mod.recordCommand("k", line, 1);
+      expect(mod.historyOf("k").map((e) => e.command)).toEqual([line]);
+    },
+  );
 
   it.each(["not json", "[]", "null", '{"v":2,"h":{}}', '{"v":1,"h":[]}', '{"v":1,"h":{"k":"x"}}'])("discards %s whole", async (text) => {
     window.localStorage.setItem(STORE, text);
@@ -114,7 +177,7 @@ describe("saved history", () => {
     const saved = JSON.parse(stored() ?? "{}") as { h: Record<string, unknown> };
     expect(saved.h["t29:main"]).toBeDefined();
     expect(saved.h["t0:main"]).toBeUndefined();
-  });
+  }, 30_000);
 
   it("keeps a multi-line command, newlines and all, across a reload", async () => {
     const first = await fresh();

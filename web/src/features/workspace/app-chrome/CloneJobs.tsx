@@ -4,6 +4,7 @@ import type { CloneJob, Project } from "../../../api/types";
 import { toFailure } from "../../../lib/useAsync";
 import { useUi } from "../../../product/state/ui";
 import { Button } from "../../../ui/controls";
+import { cloneFailure } from "./cloneFailure";
 
 const POLL_MS = 1000;
 
@@ -60,7 +61,10 @@ const retry = async (id: string) => {
 
 const dismiss = (id: string) => put(useClones.getState().tracked.filter((entry) => entry.job.id !== id));
 
-/** What is cloning or stopped short, with the way forward. Stays until it is settled. */
+/** What is cloning or stopped short, with the way forward. Stays until it is settled.
+ *
+ * Drawn inside the toast stack rather than in a layer of its own: the stack is the designed toast
+ * position, and a failed clone is announced to assistive tech by that stack's live region. */
 export function CloneJobs() {
   const tracked = useClones((state) => state.tracked);
   if (tracked.length === 0) return null;
@@ -79,7 +83,7 @@ export function CloneJobs() {
             <>
               <span className="clone-job-text">
                 <strong>Clone failed</strong>
-                {job.error ? ` ${job.error}` : null}
+                {job.error ? ` ${cloneFailure(job.error)}` : null}
               </span>
               <Button small onClick={() => void retry(job.id)}>
                 Retry

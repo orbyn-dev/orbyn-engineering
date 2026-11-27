@@ -47,7 +47,9 @@ pub(super) async fn run_protocol(
                     Some(status) => {
                         EngineOutcome::Failed(exit_message(Some(status), &process.stderr).await)
                     }
-                    None => EngineOutcome::Failed(error.to_string()),
+                    None => EngineOutcome::Failed(crate::agents::driver::diagnostics::outward(
+                        &error.to_string(),
+                    )),
                 }
             };
             let _ = events.send(EngineEvent::Finished(outcome)).await;
@@ -250,6 +252,71 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
+/// The `thread/start` or `thread/resume` parameters. A confined worker starts with Codex's
+/// own sandbox off: a Seatbelt profile cannot start inside Orbyn's, so Orbyn's profile is the
+/// confinement. The saved approval policy is kept, so approvals still reach Orbyn's gate.
+pub(super) fn thread_params(spec: &RunSpec, sandbox: &str) -> Value {
+    let mut params = json!({
+        "cwd": spec.checkout,
+        "approvalPolicy": approval_policy(spec.mode),
+        "sandbox": sandbox_mode(spec, sandbox),
+        "config": thread_config(spec),
+    });
+    // The note stands without a context too: the connectors are there either way.
+    params["developerInstructions"] = json!(if spec.context.is_empty() {
+        CONNECTOR_NOTE.to_owned()
+    } else {
+        format!("{}\n{CONNECTOR_NOTE}", spec.context)
+    });
+    if let Some(model) = &spec.model {
+        params["model"] = json!(model);
+    }
+    if let Some(tier) = tier_param(spec) {
+        params["serviceTier"] = tier;
+    }
+    params
+}
+
+/// The `turn/start` parameters, with the same rule for Codex's own sandbox.
+pub(super) fn turn_params(
+    spec: &RunSpec,
+    sandbox: &str,
+    session: &str,
+    thread: &Value,
+) -> Result<Value> {
+    let text = match &spec.kind {
+        RunKind::Goal(GoalAction::Resume) => "Continue working toward the goal.",
+        // In the user's message, the context often led the model to answer that it
+        // had no tools. It goes in the thread's instructions instead.
+        _ => spec.user_prompt.as_str(),
+    };
+    let mut params = json!({
+        "threadId": session,
+        "input": [{ "type": "text", "text": text, "text_elements": [] }],
+        "cwd": spec.checkout,
+        "sandboxPolicy": sandbox_policy(sandbox_mode(spec, sandbox), &spec.checkout, spec.mode),
+        "approvalPolicy": approval_policy(spec.mode),
+        "model": spec.model,
+        "effort": spec.effort,
+        "collaborationMode": collaboration_mode(spec, thread)?,
+    });
+    if let Some(tier) = tier_param(spec) {
+        params["serviceTier"] = tier;
+    }
+    Ok(params)
+}
+
+/// Codex's own sandbox: off for a confined worker, where Orbyn's profile is the restriction.
+fn sandbox_mode<'a>(spec: &RunSpec, sandbox: &'a str) -> &'a str {
+    if spec.confine.is_some() {
+        "danger-full-access"
+    } else if spec.plan {
+        "read-only"
+    } else {
+        sandbox
+    }
+}
+
 /// Runs the handshake and starts the turn. Returns the Codex thread id and the
 /// turn id when the response has already carried it.
 async fn open_turn(
@@ -272,29 +339,11 @@ async fn open_turn(
     )
     .await?;
     rpc.notify("initialized", None).await?;
-    let config = thread_config(spec);
     // Said on every resume too: a saved session keeps the policy it last had, so
     // leaving full access has to be stated to take effect.
     // At the library, the model often answers that it has no file tools. Starting
     // here loads the checkout's `.codex` config, which folder trust already gates.
-    let mut params = json!({
-        "cwd": spec.checkout,
-        "approvalPolicy": approval_policy(spec.mode),
-        "sandbox": if spec.plan { "read-only" } else { sandbox },
-        "config": config,
-    });
-    // The note stands without a context too: the connectors are there either way.
-    params["developerInstructions"] = json!(if spec.context.is_empty() {
-        CONNECTOR_NOTE.to_owned()
-    } else {
-        format!("{}\n{CONNECTOR_NOTE}", spec.context)
-    });
-    if let Some(model) = &spec.model {
-        params["model"] = json!(model);
-    }
-    if let Some(tier) = tier_param(spec) {
-        params["serviceTier"] = tier;
-    }
+    let mut params = thread_params(spec, sandbox);
     // The same thread takes a new model: a resume carries it, and the history stays.
     let thread = match &spec.resume {
         Some(session) => {
@@ -359,26 +408,7 @@ async fn open_turn(
     let _ = rpc
         .call("mcpServerStatus/list", json!({}), TOOLS_LIMIT)
         .await;
-    let text = match &spec.kind {
-        RunKind::Goal(GoalAction::Resume) => "Continue working toward the goal.",
-        // In the user's message, the context often led the model to answer that it
-        // had no tools. It goes in the thread's instructions instead.
-        _ => spec.user_prompt.as_str(),
-    };
-    let policy = if spec.plan { "read-only" } else { sandbox };
-    let mut params = json!({
-        "threadId": session,
-        "input": [{ "type": "text", "text": text, "text_elements": [] }],
-        "cwd": spec.checkout,
-        "sandboxPolicy": sandbox_policy(policy, &spec.checkout, spec.mode),
-        "approvalPolicy": approval_policy(spec.mode),
-        "model": spec.model,
-        "effort": spec.effort,
-        "collaborationMode": collaboration_mode(spec, &thread)?,
-    });
-    if let Some(tier) = tier_param(spec) {
-        params["serviceTier"] = tier;
-    }
+    let params = turn_params(spec, sandbox, &session, &thread)?;
     let turn = rpc.call("turn/start", params, CALL_TIMEOUT).await?;
     let turn_id = turn
         .pointer("/turn/id")

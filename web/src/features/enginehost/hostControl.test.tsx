@@ -85,6 +85,7 @@ it("a 409 background_open shows the question and sends again with stop_backgroun
   const ask = await screen.findByRole("dialog", { name: /anyway/ });
   expect(within(ask).getByText(words)).toBeVisible();
   // Nothing was sent again by itself.
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
   expect(stub.writes()).toHaveLength(1);
   fireEvent.click(within(ask).getByRole("button", { name: "Stop anyway" }));
@@ -136,7 +137,7 @@ it("Try again appears for a host that can't start, once per click, and not for a
 it("the composer line's button restarts the host", async () => {
   const stub = service([]);
   const host = toHostRow({ family: "acp", state: "cant_start", restart_count: 5 })!;
-  render(<ComposerHostLine line={{ host, engineName: "ACP", fallback: false }} />);
+  render(<ComposerHostLine line={{ host, engineName: "ACP" }} />);
   fireEvent.click(screen.getByRole("button", { name: "Restart engine host" }));
   await waitFor(() => expect(stub.writes()).toHaveLength(1));
   expect(stub.writes()[0]).toMatchObject({ path: "/api/engine-host/acp/restart" });

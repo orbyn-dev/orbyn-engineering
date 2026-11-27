@@ -1,7 +1,7 @@
-import { ChevronRight, Eye, FileText, Folder, Globe, GitFork, Image as ImageIcon, Loader2, Plug, Search, Square, SquarePen, SquareTerminal, X, AppWindow, Wrench, type LucideIcon } from "lucide-react";
+import { ChevronRight, Eye, FileText, Folder, Globe, GitFork, Image as ImageIcon, Loader2, Minus, Plug, Search, Square, SquarePen, SquareTerminal, X, AppWindow, Wrench, type LucideIcon } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
 import { callDuration } from "../../../lib/format";
-import { traceTool } from "../../../product/timeline/toolTrace";
+import { callOutcome, traceTool, type CallOutcome } from "../../../product/timeline/toolTrace";
 import type { ToolItem } from "../../../product/timeline/types";
 import { useNow } from "../../../lib/useNow";
 import { useThreadLogs } from "../../../product/state/threadLogs";
@@ -13,6 +13,7 @@ import { McpApp } from "../McpApp";
 import { SurfacedWorkflows, WorkflowCards } from "../WorkflowControls";
 import { useThreadOfTimeline } from "../timelineThread";
 import { callKind, callLabel, callMs, callState, runLabel, runOutcomes, type CallKind, type CallRun, type CallState } from "../toolCalls";
+import { crewStartDiskLow } from "../../crew";
 import { Block } from "./blocks/Block";
 import { useRunRow } from "../../codemode";
 
@@ -32,18 +33,37 @@ const KIND_ICONS: Record<CallKind, LucideIcon> = {
   other: Wrench,
 };
 
-function Duration({ ms, state, item }: { ms: number | null; state: CallState; item: ToolItem }) {
-  const text = ms === null ? null : callDuration(ms);
-  const exit = item.exitCode;
-  if (state === "failed" && exit !== null && exit !== 0) {
+/** The exit code a failed call adds after Failed: only the one the engine sent, never a made-up one. */
+const failedExit = (item: ToolItem): string =>
+  item.exitCode !== null && item.exitCode !== 0 ? ` · exit code ${item.exitCode}` : "";
+
+/** True only when the run stopped the call before it answered; an answered older-log call keeps the bare word. */
+const interruptedCall = (item: ToolItem, interrupted: boolean): boolean =>
+  interrupted && !(item.done && item.result !== null);
+
+/** The right side of a row as the design words it: the duration, or the outcome the engine did not report as success. */
+function CallResult({ item, outcome, interrupted, ms }: { item: ToolItem; outcome: CallOutcome | null; interrupted: boolean; ms: number | null }) {
+  if (outcome === "failed") {
     return (
       <span className="du">
-        <span className="er">exit {exit}</span>
-        {text ? ` · ${text}` : ""}
+        <span className="fail">Failed</span>
+        {failedExit(item)}
       </span>
     );
   }
+  if (outcome === "no-result") return <span className="du">No result reported · ended without one</span>;
+  // An interrupted call names its cause; an answered older log or a lost state has none to name.
+  if (outcome === "unknown") return <span className="du">{interruptedCall(item, interrupted) ? "Outcome unknown · run interrupted" : "Outcome unknown"}</span>;
+  const text = ms === null ? null : callDuration(ms);
   return <span className="du">{text ?? ""}</span>;
+}
+
+/** The right side as plain text, for the row's spoken name. */
+function resultText(item: ToolItem, outcome: CallOutcome | null, interrupted: boolean, ms: number | null): string {
+  if (outcome === "failed") return `Failed${failedExit(item)}`;
+  if (outcome === "no-result") return "No result reported · ended without one";
+  if (outcome === "unknown") return interruptedCall(item, interrupted) ? "Outcome unknown · run interrupted" : "Outcome unknown";
+  return ms === null ? "" : callDuration(ms);
 }
 
 /** The row's status for a reader who cannot see its mark: the label replaces the button's own content. */
@@ -54,18 +74,14 @@ function withState(label: string, state: CallState): string {
   return word ? `${label}, ${word}` : label;
 }
 
-/** The duration as it is read aloud: with the exit code when there is one. */
-function spokenDuration(ms: number | null, state: CallState, item: ToolItem): string {
-  const text = ms === null ? "" : callDuration(ms);
-  if (state === "failed" && item.exitCode !== null && item.exitCode !== 0) return `exit ${item.exitCode}${text ? ` · ${text}` : ""}`;
-  return text;
-}
-
-function StateIcon({ state, Icon, group = false }: { state: CallState; Icon: LucideIcon; group?: boolean }) {
+function StateIcon({ state, outcome = null, Icon, group = false }: { state: CallState; outcome?: CallOutcome | null; Icon: LucideIcon; group?: boolean }) {
   if (state === "running") return <Loader2 size={14} className="spin" role="img" aria-label="Working" />;
+  if (outcome === "failed") return <X size={14} role="img" aria-label="Tool call failed" />;
+  // A call the engine never answered keeps the quiet minus; only the row's words name the outcome.
+  if (outcome === "no-result" || outcome === "unknown") return <Minus size={14} aria-hidden />;
   // A group keeps its kind icon; only a single failed call is marked with the cross.
   if (state === "failed" && !group) return <X size={14} role="img" aria-label="Tool call failed" />;
-  if (state === "stopped") return <Square size={14} role="img" aria-label="Stopped" />;
+  if (state === "stopped") return group ? <Square size={14} role="img" aria-label="Stopped" /> : <Minus size={14} aria-hidden />;
   return <Icon size={14} aria-hidden />;
 }
 
@@ -94,15 +110,23 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
   const codeRow = useRunRow(item, live);
   const callStateNow = callState(item, live, cancelled);
   const state: CallState = codeRow ? (codeRow.tone === "run" ? "running" : codeRow.tone === "fail" ? "failed" : "done") : callStateNow;
+  // What the engine reported for this call; only a call still running has no outcome to read yet.
+  const outcome = codeRow || state === "running" ? null : callOutcome(item, cancelled);
   const running = callStateNow === "running";
   const now = useNow(running);
   const ms = callMs(item, running ? now : null);
   const kind = callKind(item);
   const label = codeRow ? { ...callLabel(item, cwd), note: codeRow.note } : callLabel(item, cwd);
+  const lowDisk = crewStartDiskLow(item);
   const Icon = KIND_ICONS[kind];
   const full = [label.verb, label.object, label.note].filter(Boolean).join(" ");
   const { tip, label: labelRef, props } = useTip();
-  const spoken = withState([full, codeRow ? codeRow.due : spokenDuration(ms, state, item)].filter(Boolean).join(" "), state);
+  // The visible right side is the spoken one, except a running row that must also say it is running.
+  const spoken = codeRow
+    ? withState([full, codeRow.due].filter(Boolean).join(" "), state)
+    : state === "running"
+      ? withState([full, resultText(item, null, cancelled, ms)].filter(Boolean).join(" "), state)
+      : [full, resultText(item, outcome, cancelled, ms)].filter(Boolean).join(" ");
   const command = kind === "command" ? traceTool(item).command : null;
   return (
     <>
@@ -115,7 +139,7 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
         summary={
           <>
             <span className="tic">
-              <StateIcon state={state} Icon={Icon} />
+              <StateIcon state={state} outcome={outcome} Icon={Icon} />
             </span>
             <span className="lb" ref={labelRef} data-command={command ?? undefined}>
               {label.verb ? <span className="tla">{label.verb}</span> : null}
@@ -127,10 +151,11 @@ export function ToolCallRow({ item, live }: { item: ToolItem; live: boolean }) {
                 </span>
               ) : null}
             </span>
+            {lowDisk ? <span className="crew-tool-state">Not started</span> : null}
             {codeRow ? (
               <span className="du">{codeRow.tone === "wait" ? <span className="am">{codeRow.due}</span> : codeRow.due}</span>
             ) : (
-              <Duration ms={ms} state={state} item={item} />
+              <CallResult item={item} outcome={outcome} interrupted={cancelled} ms={ms} />
             )}
             <span className="tcv">
               <ChevronRight size={14} aria-hidden />

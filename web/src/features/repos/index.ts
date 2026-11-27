@@ -9,3 +9,4 @@ export type { ReposApi, RepoRow, ReposView, ThreadRepo } from "./contract";
 export { chooseRepo, RepoChooser, repoLabel, usePickedRepo, useRepoChoice, type RepoChoice } from "./choice";
 export { TrustRepo } from "./TrustRepo";
 export { TrustOffer } from "./TrustOffer";
+export { canPickFolder, pickFolder } from "./folder";

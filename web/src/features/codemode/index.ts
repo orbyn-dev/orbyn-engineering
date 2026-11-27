@@ -2,6 +2,7 @@
 export { ViaAlways, ViaClosed, ViaContext, ViaDone, ViaFacts, useViaQueue } from "./Approval";
 export { CodeModeSetting } from "./CodeModeSetting";
 export { CodeDescribeBlock, CodeSearchBlock } from "./LookupBlocks";
-export { codeToolOf, isCodeToolName, viaOf } from "./model";
+export { codeToolOf, runIdOf, viaOf } from "./model";
 export { CodeRunBlock, useRunRow } from "./RunBlock";
 export { CodeRunsList } from "./RunsList";
+export { registerTimelineScroll } from "./timelineScroll";

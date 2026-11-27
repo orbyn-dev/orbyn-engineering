@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 
 use crate::error::Result;
 use crate::governance::policy;
+use crate::governance::protected_files::{is_protected, names_protected};
 use crate::store::{AuditRecord, NewApproval, Store};
 use crate::util::new_id;
 
@@ -41,6 +42,10 @@ pub struct WriteScope {
     pub engine_cwd: PathBuf,
     /// Inside `checkout` but still off limits: a library thread's `repo/`.
     pub excluded: Vec<PathBuf>,
+    /// The core's data folder, when this scope belongs to a live core. Its
+    /// protected account files are never writable, even through a checkout
+    /// that is a parent of the folder. `None` only in tests.
+    pub data_dir: Option<PathBuf>,
 }
 
 impl WriteScope {
@@ -56,8 +61,16 @@ impl WriteScope {
     }
 
     /// True when `path` lands inside the checkout after resolving `..` and any
-    /// symlink in the part of the path that exists.
+    /// symlink in the part of the path that exists, and is not one of the data
+    /// folder's protected files.
     pub fn permits(&self, path: &str) -> bool {
+        if self
+            .data_dir
+            .as_deref()
+            .is_some_and(|data_dir| is_protected(data_dir, &self.engine_cwd.join(path)))
+        {
+            return false;
+        }
         let Some(resolved) = self.resolved(path) else {
             return false;
         };
@@ -167,10 +180,16 @@ pub trait ActionReview: Send + Sync {
     async fn review(&self, scope: &RunScope, ask: &ActionAsk) -> Review;
 }
 
+/// How many approvals one run may have waiting at once. A stalled or hostile engine gets a plain denial past
+/// this instead of growing the gate and the store's pending list without bound.
+const MAX_WAITING_APPROVALS: usize = 32;
+
 pub struct ApprovalGate {
     store: Arc<Store>,
     review: std::sync::OnceLock<Arc<dyn ActionReview>>,
     waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalState>>>,
+    /// Approvals currently waiting, counted per run.
+    waiting_runs: Mutex<HashMap<String, usize>>,
     /// Words for the engine, between a denial and its waiter reading them.
     feedback: Mutex<HashMap<String, String>>,
     timeout: Duration,
@@ -182,6 +201,7 @@ impl ApprovalGate {
             store,
             review: std::sync::OnceLock::new(),
             waiters: Mutex::new(HashMap::new()),
+            waiting_runs: Mutex::new(HashMap::new()),
             feedback: Mutex::new(HashMap::new()),
             timeout,
         }
@@ -232,6 +252,15 @@ impl ApprovalGate {
         let Some(refused) = paths.iter().find(|path| !write_scope.permits(path)) else {
             return Ok(None);
         };
+        // A protected file belongs to the protected-files check that follows this
+        // one, which writes its own audit source and message.
+        if write_scope
+            .data_dir
+            .as_deref()
+            .is_some_and(|data_dir| is_protected(data_dir, &write_scope.engine_cwd.join(refused)))
+        {
+            return Ok(Some(self.deny_protected(scope, &ask.target, ask.kind)?));
+        }
         self.store.append_audit(&AuditRecord {
             actor: format!("engine:{}", scope.engine),
             action: "action.deny".into(),
@@ -248,6 +277,47 @@ impl ApprovalGate {
         ))))
     }
 
+    /// Denies a protected action and writes its audit row: the action kind only,
+    /// never the text that matched.
+    fn deny_protected(&self, scope: &RunScope, target: &str, kind: ActionKind) -> Result<Verdict> {
+        self.store.append_audit(&AuditRecord {
+            actor: format!("engine:{}", scope.engine),
+            action: "action.deny".into(),
+            target: target.to_owned(),
+            decision: Some(PolicyEffect::Deny),
+            source: "protected_files".into(),
+            thread_id: Some(scope.thread_id.clone()),
+            run_id: Some(scope.run_id.clone()),
+            detail: json!({ "kind": kind }),
+        })?;
+        Ok(Verdict::Deny(
+            "Orbyn keeps its account files private.".to_owned(),
+        ))
+    }
+
+    /// An action whose target, paths, summary or serialized detail names one of
+    /// the data folder's protected files is denied after the scope check and
+    /// before plan, policy and review, so no rule, permission mode or person can
+    /// allow it. The audit row keeps the action kind only, never the text that
+    /// matched.
+    fn protects_account_files(&self, scope: &RunScope, ask: &ActionAsk) -> Result<Option<Verdict>> {
+        let Some(write_scope) = &scope.write_scope else {
+            return Ok(None);
+        };
+        let Some(data_dir) = &write_scope.data_dir else {
+            return Ok(None);
+        };
+        let detail = serde_json::to_string(&ask.detail).unwrap_or_default();
+        let named = names_protected(data_dir, &ask.target)
+            || names_protected(data_dir, &ask.summary)
+            || names_protected(data_dir, &detail)
+            || ask.paths.iter().any(|path| names_protected(data_dir, path));
+        if !named {
+            return Ok(None);
+        }
+        Ok(Some(self.deny_protected(scope, &ask.target, ask.kind)?))
+    }
+
     async fn request_inner(&self, scope: &RunScope, mut ask: ActionAsk) -> Result<Verdict> {
         if let (ActionKind::FileChange, Some(write_scope)) = (ask.kind, &scope.write_scope)
             && Path::new(&ask.target).is_relative()
@@ -257,6 +327,9 @@ impl ApprovalGate {
             ask.target = absolute;
         }
         if let Some(denied) = self.outside_scope(scope, &ask)? {
+            return Ok(denied);
+        }
+        if let Some(denied) = self.protects_account_files(scope, &ask)? {
             return Ok(denied);
         }
         if scope.plan && ask.kind == ActionKind::FileChange {
@@ -318,6 +391,26 @@ impl ApprovalGate {
             });
         }
 
+        // A run cannot heap approvals without bound: past the cap the engine gets a plain denial and the gate (and
+        // the store's pending list) stays bounded. The guard below counts this run's waiting approvals.
+        {
+            let mut waiting = self
+                .waiting_runs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let count = waiting.entry(scope.run_id.clone()).or_insert(0);
+            if *count >= MAX_WAITING_APPROVALS {
+                return Ok(Verdict::Deny(
+                    "Too many approvals are waiting for this run. Decide them or stop the run first."
+                        .to_owned(),
+                ));
+            }
+            *count += 1;
+        }
+        let _waiting = WaitingGuard {
+            gate: self,
+            run: scope.run_id.clone(),
+        };
         // The waiter must exist before the row does, or a fast decision is lost.
         let id = new_id();
         let (sender, receiver) = oneshot::channel();
@@ -426,6 +519,28 @@ fn policy_verb(effect: PolicyEffect) -> &'static str {
         PolicyEffect::Allow => "allow",
         PolicyEffect::Ask => "ask",
         PolicyEffect::Deny => "deny",
+    }
+}
+
+/// Holds this run's waiting-approval count for as long as one request is in flight.
+struct WaitingGuard<'a> {
+    gate: &'a ApprovalGate,
+    run: String,
+}
+
+impl Drop for WaitingGuard<'_> {
+    fn drop(&mut self) {
+        let mut waiting = self
+            .gate
+            .waiting_runs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = waiting.get_mut(&self.run) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                waiting.remove(&self.run);
+            }
+        }
     }
 }
 
@@ -543,6 +658,17 @@ mod tests {
             .unwrap();
     }
 
+    /// The data folder's parent as the checkout, as a project added there would be.
+    fn scope_over(data_dir: &Path) -> WriteScope {
+        let parent = data_dir.parent().unwrap().to_path_buf();
+        WriteScope {
+            checkout: parent.clone(),
+            engine_cwd: parent,
+            excluded: Vec::new(),
+            data_dir: Some(data_dir.to_path_buf()),
+        }
+    }
+
     async fn next_pending(store: &Store, thread: &str) -> Approval {
         loop {
             if let Some(approval) = store.pending_for_thread(thread).unwrap().pop() {
@@ -577,6 +703,7 @@ mod tests {
             checkout: dir.path().join("checkout"),
             engine_cwd: dir.path().to_path_buf(),
             excluded: Vec::new(),
+            data_dir: None,
         });
         let gate = ApprovalGate::new(f.store.clone(), Duration::from_secs(1));
         assert!(gate.request(&f.scope, ask()).await.is_allowed());
@@ -614,6 +741,162 @@ mod tests {
     }
 
     #[test]
+    fn a_checkout_above_the_data_folder_cannot_touch_its_protected_files() {
+        let dir = TempDir::new();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(data.join("workspace/repo/p")).unwrap();
+        let scope = scope_over(&data);
+        for name in [
+            "account-keys-default.store",
+            "account-snapshot-default.sealed",
+            "service.json",
+        ] {
+            assert!(!scope.permits(&data.join(name).to_string_lossy()), "{name}");
+        }
+        assert!(scope.permits(&data.join("workspace/repo/p/file.txt").to_string_lossy()));
+        assert!(
+            scope.permits(
+                &data
+                    .join("workspace/repo/p/account-keys-x.store")
+                    .to_string_lossy()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_change_to_a_protected_file_is_denied_before_an_allow_rule() {
+        let mut f = fixture();
+        let dir = TempDir::new();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        f.scope.write_scope = Some(scope_over(&data));
+        f.scope.mode = PermissionMode::FullAccess;
+        f.store
+            .add_rule(
+                &CreatePolicyRule {
+                    effect: PolicyEffect::Allow,
+                    kind: ActionKind::FileChange,
+                    pattern: "*".into(),
+                    engine: None,
+                    note: None,
+                },
+                "t",
+            )
+            .unwrap();
+        let gate = ApprovalGate::new(f.store.clone(), Duration::from_secs(1));
+        let target = data.join("account-keys-default.store");
+        let target = target.to_string_lossy().into_owned();
+        let verdict = gate
+            .request(
+                &f.scope,
+                ActionAsk {
+                    kind: ActionKind::FileChange,
+                    target: target.clone(),
+                    summary: "write the key store".into(),
+                    detail: Value::Null,
+                    paths: Vec::new(),
+                },
+            )
+            .await;
+        assert_eq!(
+            verdict,
+            Verdict::Deny("Orbyn keeps its account files private.".into())
+        );
+        let audit = f.store.list_audit(Some(&f.scope.thread_id), 10).unwrap();
+        assert!(!audit.iter().any(|row| row.source == "write_scope"));
+        assert_eq!(
+            audit
+                .iter()
+                .filter(|row| row.source == "protected_files")
+                .count(),
+            1
+        );
+        let row = audit
+            .iter()
+            .find(|row| row.source == "protected_files")
+            .expect("the protected-files audit row");
+        assert_eq!(row.action, "action.deny");
+        assert_eq!(row.decision, Some(PolicyEffect::Deny));
+        assert_eq!(row.target, target);
+        assert_eq!(row.detail, json!({ "kind": ActionKind::FileChange }));
+        assert!(
+            f.store
+                .pending_for_thread(&f.scope.thread_id)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_action_detail_that_names_a_protected_file_is_denied_without_keeping_it() {
+        let mut f = fixture();
+        let dir = TempDir::new();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        f.scope.write_scope = Some(scope_over(&data));
+        f.scope.mode = PermissionMode::FullAccess;
+        f.store
+            .add_rule(
+                &CreatePolicyRule {
+                    effect: PolicyEffect::Allow,
+                    kind: ActionKind::Command,
+                    pattern: "*".into(),
+                    engine: None,
+                    note: None,
+                },
+                "t",
+            )
+            .unwrap();
+        let gate = ApprovalGate::new(f.store.clone(), Duration::from_secs(1));
+        let path = data.join("account-keys-default.store");
+        let path_text = path.to_string_lossy().into_owned();
+        let verdict = gate
+            .request(
+                &f.scope,
+                ActionAsk {
+                    kind: ActionKind::Command,
+                    target: "cat".into(),
+                    summary: "read a file".into(),
+                    detail: json!({ "command": format!("cat {path_text}") }),
+                    paths: Vec::new(),
+                },
+            )
+            .await;
+        assert_eq!(
+            verdict,
+            Verdict::Deny("Orbyn keeps its account files private.".into())
+        );
+        let audit = f.store.list_audit(Some(&f.scope.thread_id), 10).unwrap();
+        assert_eq!(
+            audit
+                .iter()
+                .filter(|row| row.source == "protected_files")
+                .count(),
+            1
+        );
+        let row = audit
+            .iter()
+            .find(|row| row.source == "protected_files")
+            .expect("the protected-files audit row");
+        assert_eq!(row.target, "cat");
+        assert_eq!(row.detail, json!({ "kind": ActionKind::Command }));
+        assert!(!row.detail.to_string().contains(&path_text));
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_action_is_not_affected_by_the_protected_files_check() {
+        let mut f = fixture();
+        let dir = TempDir::new();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        f.scope.write_scope = Some(scope_over(&data));
+        f.scope.mode = PermissionMode::FullAccess;
+        rule(&f.store, PolicyEffect::Allow);
+        let gate = ApprovalGate::new(f.store.clone(), Duration::from_secs(1));
+        assert_eq!(gate.request(&f.scope, ask()).await, Verdict::Allow);
+    }
+
+    #[test]
     fn write_scope_resolves_traversal_and_symlinks() {
         let dir = TempDir::new();
         let checkout = crate::util::canonicalize(dir.path())
@@ -625,6 +908,7 @@ mod tests {
             checkout: checkout.clone(),
             engine_cwd: root.clone(),
             excluded: Vec::new(),
+            data_dir: None,
         };
         assert!(scope.permits(checkout.join("src/new.rs").to_str().unwrap()));
         assert!(scope.permits("repo/app/deep/new/file.rs"));
@@ -648,6 +932,7 @@ mod tests {
             checkout: dir.path().join("checkout"),
             engine_cwd: dir.path().to_path_buf(),
             excluded: Vec::new(),
+            data_dir: None,
         });
         f.store
             .add_rule(
@@ -730,6 +1015,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_run_cannot_heap_up_approvals_past_the_cap() {
+        let f = fixture();
+        let gate = Arc::new(ApprovalGate::new(f.store.clone(), Duration::from_secs(30)));
+        let mut waiting = Vec::new();
+        for _ in 0..MAX_WAITING_APPROVALS {
+            let (gate, scope) = (gate.clone(), f.scope.clone());
+            waiting.push(tokio::spawn(
+                async move { gate.request(&scope, ask()).await },
+            ));
+        }
+        for _ in 0..500 {
+            if f.store
+                .pending_for_thread(&f.scope.thread_id)
+                .unwrap()
+                .len()
+                == MAX_WAITING_APPROVALS
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        assert_eq!(
+            f.store
+                .pending_for_thread(&f.scope.thread_id)
+                .unwrap()
+                .len(),
+            MAX_WAITING_APPROVALS,
+            "the cap is reached"
+        );
+        let refused = gate.request(&f.scope, ask()).await;
+        assert!(
+            matches!(&refused, Verdict::Deny(why) if why.contains("Too many approvals")),
+            "{refused:?}"
+        );
+        assert_eq!(
+            f.store
+                .pending_for_thread(&f.scope.thread_id)
+                .unwrap()
+                .len(),
+            MAX_WAITING_APPROVALS,
+            "the refused request writes no row"
+        );
+        for task in waiting {
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
     async fn timeout_denies_and_expires() {
         let f = fixture();
         let gate = ApprovalGate::new(f.store.clone(), Duration::from_millis(20));
@@ -800,11 +1133,13 @@ mod tests {
             checkout: checkout.clone(),
             engine_cwd: library.clone(),
             excluded: Vec::new(),
+            data_dir: None,
         };
         let codex = WriteScope {
             checkout: checkout.clone(),
             engine_cwd: checkout.clone(),
             excluded: Vec::new(),
+            data_dir: None,
         };
         assert!(!claude.permits("a.txt"), "that is the library's a.txt");
         assert!(codex.permits("a.txt"));

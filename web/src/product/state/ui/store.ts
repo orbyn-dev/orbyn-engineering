@@ -15,6 +15,7 @@ import {
   type ThreadNavigationOrigin,
   type ToastAction,
   type ToastKind,
+  type ToastOptions,
 } from "./types";
 import { fileTabId, type FileTarget } from "./fileTab";
 import { PREFS_KEY, currentLayout, defaults, layoutDefaults, withLayout } from "./defaults";
@@ -45,8 +46,8 @@ interface UiState extends Prefs {
   palette: PaletteStart | null;
   setPalette(palette: PaletteStart | null): void;
   lastThreadId: string | null;
-  toasts: { id: number; text: string; kind?: ToastKind; action?: ToastAction }[];
-  pushToast(text: string, kind?: ToastKind, action?: ToastAction): void;
+  toasts: { id: number; text: string; kind?: ToastKind; action?: ToastAction; busy?: boolean }[];
+  pushToast(text: string, kind?: ToastKind, action?: ToastAction, options?: ToastOptions): number;
   dismissToast(id: number): void;
   /** The open welcome step, or null; not saved, so it lasts while the app runs. */
   welcomeStep: number | null;
@@ -57,9 +58,9 @@ interface UiState extends Prefs {
   closeFoldersNotice(undo: boolean): void;
   setTheme(theme: ThemeChoice): void;
   /** Opens `tab`, or closes its surface if `tab` is already showing. */
-  /** A file the Files surface should open next, with the line to reveal. */
-  fileReveal: ThreadNavigationOrigin & { path: string; line: number | null; nonce: number } | null;
-  revealFile(path: string, line: number | null, origin: ThreadNavigationOrigin): void;
+  /** A file the Files surface should open next, with the line to reveal and the repository of a multi-repository thread it is in. */
+  fileReveal: ThreadNavigationOrigin & { path: string; line: number | null; nonce: number; repoId?: string } | null;
+  revealFile(path: string, line: number | null, origin: ThreadNavigationOrigin, repoId?: string): void;
   consumeFileReveal(nonce: number): void;
   /** A message to scroll to when its thread is showing. */
   messageReveal: { threadId: string; messageId: string } | null;
@@ -149,10 +150,12 @@ export const useUi = create<UiState>((set, get) => {
     },
     lastThreadId: null,
     toasts: [],
-    pushToast(text, kind, action) {
+    pushToast(text, kind, action, options) {
       const id = ++toastCounter;
-      set((state) => ({ toasts: [...state.toasts, { id, text, kind, ...(action ? { action } : {}) }] }));
-      setTimeout(() => get().dismissToast(id), TOAST_MS);
+      const busy = options?.busy === true;
+      set((state) => ({ toasts: [...state.toasts, { id, text, kind, ...(action ? { action } : {}), ...(busy ? { busy } : {}) }] }));
+      if (!busy) setTimeout(() => get().dismissToast(id), options?.durationMs ?? TOAST_MS);
+      return id;
     },
     dismissToast(id) {
       set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) }));
@@ -191,10 +194,10 @@ export const useUi = create<UiState>((set, get) => {
     clearMessageReveal() {
       set({ messageReveal: null });
     },
-    revealFile(path, line, origin) {
-      const id = fileTabId({ kind: "thread", path });
+    revealFile(path, line, origin, repoId) {
+      const id = fileTabId(repoId === undefined ? { kind: "thread", path } : { kind: "thread", path, repoId });
       set({
-        fileReveal: { ...origin, path, line, nonce: ++navigationNonce },
+        fileReveal: { ...origin, path, line, ...(repoId === undefined ? {} : { repoId }), nonce: ++navigationNonce },
         diffReveal: null,
         panelOpen: true,
         panelTab: id,

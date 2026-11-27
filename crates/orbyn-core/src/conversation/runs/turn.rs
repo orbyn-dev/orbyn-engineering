@@ -72,6 +72,19 @@ impl RunManager {
             thread.skill_profile.as_deref(),
         )?;
         std::fs::create_dir_all(run_dir)?;
+        // A native engine discovers the library's skills through its own route; the
+        // approved device-local ones are laid out for it in the run's private folder,
+        // and never exposed from `skills-local` itself. A failure leaves them out and
+        // never fails the run.
+        let local_skills_dir = run_dir.join("skills-local-view");
+        let local_skills = match self.skills.local_view(&route, &local_skills_dir) {
+            Ok(true) => Some(local_skills_dir),
+            Ok(false) => None,
+            Err(error) => {
+                tracing::warn!(%error, "could not build this run's copy of the device-local skills");
+                None
+            }
+        };
         if !retry {
             self.checkpoint_start(scope, &checkout, run_dir).await;
         }
@@ -87,7 +100,7 @@ impl RunManager {
             let binding = McpBinding {
                 scope: scope.clone(),
                 permission_prompt: driver.family() == "claude",
-                skills: route.selection.clone(),
+                skills: self.skills.tool_selection(&route)?,
             };
             // A warm process already holds its token, which now answers for this run.
             let reused = warm
@@ -231,6 +244,7 @@ impl RunManager {
             thread_id: thread.id.clone(),
             cwd: start,
             library: root,
+            local_skills,
             checkout,
             prompt: format!("{context}\n\n{sent_prompt}"),
             context,
@@ -388,6 +402,14 @@ impl RunManager {
         )
         .is_ok_and(|mode| mode == "turn");
         let mut shaper = EventShaper::new(whole);
+        // What this run was asked to return (M20), and the assistant's words as they go by.
+        let request = self
+            .results
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&scope.run_id)
+            .cloned();
+        let mut answer = result::AnswerText::default();
         // A note taken for this turn is on the timeline before anything the engine says.
         let sent = self
             .notes_sent
@@ -469,12 +491,21 @@ impl RunManager {
                     replied |= shows_work(&event, &mut user_messages) && own_turn;
                     match event {
                         EngineEvent::Agui(event) => {
+                            if own_turn && request.is_some() {
+                                answer.observe(&event);
+                            }
                             if let Some(outcome) = self.write_events(scope, shaper.push(event)) {
                                 break outcome;
                             }
                         }
                         EngineEvent::SteerFailed(steer) => {
                             self.requeue_steer(scope, &steer);
+                            // If the crew bus handed this text live, its record is corrected now:
+                            // the text really goes with the next turn. A steer the bus did not hand
+                            // over writes no delivery row.
+                            if let Some(core) = self.crew.get().and_then(std::sync::Weak::upgrade) {
+                                core.crew_steer_failed(&scope.thread_id, &steer);
+                            }
                         }
                         EngineEvent::Limited { resets_at } => {
                             self.limit_signals().insert(scope.run_id.clone(), resets_at);
@@ -547,6 +578,18 @@ impl RunManager {
             }
         };
         let _ = self.write_events(scope, shaper.flush());
+        if let Some(request) = &request
+            && matches!(outcome, EngineOutcome::Completed)
+            && !cancelling
+        {
+            let text = answer.finish().unwrap_or_default();
+            let events = request.events(&text);
+            if self.write_events(scope, events).is_none() {
+                tracing::debug!(run = %scope.run_id, bytes = text.len(), "recorded a typed turn result");
+            } else {
+                tracing::warn!(run = %scope.run_id, "could not record a typed turn result");
+            }
+        }
         // Blocked engines hear a denial even when the engine ended on its own.
         if let Err(error) = self
             .gate

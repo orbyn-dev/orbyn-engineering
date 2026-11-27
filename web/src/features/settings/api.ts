@@ -18,6 +18,7 @@ import type { AcpSessionCapabilities } from "../../generated/AcpSessionCapabilit
 import type { EngineInstalls } from "../../generated/EngineInstalls";
 import type { HistoryScan } from "../../generated/HistoryScan";
 import type { HistorySessionImported } from "../../generated/HistorySessionImported";
+import type { KeybindingReset } from "../../generated/KeybindingReset";
 import type { ProjectScopeCatalog } from "../../generated/ProjectScopeCatalog";
 import type { ProviderList } from "../../generated/ProviderList";
 import type { RedactionPatternDetail } from "../../generated/RedactionPatternDetail";
@@ -26,7 +27,7 @@ import type { RedactionPatternTest } from "../../generated/RedactionPatternTest"
 import type { RedactionPatternTestInput } from "../../generated/RedactionPatternTestInput";
 import type { RedactionSettings } from "../../generated/RedactionSettings";
 import type { RedactionSurfaceChange } from "../../generated/RedactionSurfaceChange";
-import type { ScopedPreferencesResult } from "../../generated/ScopedPreferencesResult";
+import type { TextGenerators } from "../../generated/TextGenerators";
 import type { TriagePlaybook } from "../../generated/TriagePlaybook";
 
 const q = encodeURIComponent;
@@ -36,13 +37,12 @@ export function listProviders(signal?: AbortSignal) {
   return request<ProviderList>("GET", "/api/providers", undefined, signal);
 }
 
-export function queryPreferences(body: unknown, signal?: AbortSignal) {
-  return request<ScopedPreferencesResult>("POST", "/api/settings/preferences/query", body, signal);
+/** Every enabled engine with its text-generator models and the choice for this scope. */
+export function listTextGenerators(project: string | null, signal?: AbortSignal) {
+  return request<TextGenerators>("GET", project === null ? "/api/text-generators" : `/api/text-generators?project=${q(project)}`, undefined, signal);
 }
 
-export function updatePreferences(body: unknown) {
-  return request<ScopedPreferencesResult>("PUT", "/api/settings/preferences", body);
-}
+export { queryPreferences, updatePreferences } from "../../api/preferences";
 
 export function queryProjectScopes(body: unknown, signal?: AbortSignal) {
   return request<ProjectScopeCatalog>("POST", "/api/settings/project-scopes", body, signal);
@@ -75,6 +75,11 @@ export function readKeybindings(signal?: AbortSignal) {
 
 export function saveKeybinding(body: unknown) {
   return request<KeybindingsView>("POST", "/api/keybindings", body);
+}
+
+/** Drops the person's own rule for a command and context, so the built-in key shows again. */
+export function resetKeybinding(body: KeybindingReset) {
+  return request<KeybindingsView>("POST", "/api/keybindings/reset", body);
 }
 
 export function readDiagnostics(signal?: AbortSignal) {
@@ -196,6 +201,11 @@ export function listBrowserProfiles(signal?: AbortSignal) {
 
 export function createBrowserProfile(name: string) {
   return request<BrowserProfile>("POST", "/api/browser-profiles", { name });
+}
+
+/** Changes the stored name only, so a profile open in a tab can be renamed. */
+export function renameBrowserProfile(id: string, name: string) {
+  return request<BrowserProfile>("POST", `/api/browser-profiles/${q(id)}/rename`, { name });
 }
 
 /** Empties cookies, storage and history; the profile and its name stay. */

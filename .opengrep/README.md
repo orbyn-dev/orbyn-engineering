@@ -6,10 +6,19 @@ finding, and **does not replace CodeQL**.
 
 ## What is here
 
-- `rules/rust.yaml`, `rules/web.yaml`: six Rust and six TypeScript or JavaScript rules, written from the project's
-  risk list (process spawning and shells, SQL built with `format!`, TLS verification, `unsafe`, secret-named values in
-  logs, `eval`, unsafe HTML, secrets in browser storage, reflected HTML from a request URL, first-occurrence-only
-  `replace`, incomplete HTML-comment stripping).
+- `rules/rust.yaml`, `rules/web.yaml`: nine Rust and seven TypeScript or JavaScript rules. The starter set was written
+  from the project's risk list (process spawning and shells, SQL built with `format!`, TLS verification, `unsafe`,
+  secret-named values in logs, `eval`, unsafe HTML, secrets in browser storage, reflected HTML from a request URL,
+  first-occurrence-only `replace`, incomplete HTML-comment stripping). Four rules cover a CodeQL query the starter set
+  did not:
+  - `orbyn-rust-request-path-to-fs` for `rust/path-injection`: the request's own URL text reaching a filesystem path,
+    with this repository's `resolve` confinement as the sanitizer.
+  - `orbyn-rust-sql-built-query-reaches-execute` for `rust/sql-injection`: a `format!`-built statement reaching a query
+    call through a variable, which the inline `orbyn-rust-sql-format` rule cannot see.
+  - `orbyn-rust-secret-field-in-log` for `rust/cleartext-logging`: a secret-named field reaching a log call through
+    another value; `redact`, `redacted_tail` and length-only reads are sanitizers.
+  - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")` whose
+    character class does not escape a backslash (`web/src/styles/tokens.test.ts:165` is the known case).
 - `tests/`: a matching case and a safe look-alike for every rule. A rule is unproven without both. The workflow runs
   them first.
 
@@ -26,14 +35,25 @@ opengrep scan --config .opengrep/rules --exclude .opengrep --exclude node_module
 
 Use only local rules: a `p/...` ruleset or `opengrep validate` downloads from `semgrep.dev`.
 
-## Status against CodeQL (one snapshot, 2026-11-21)
+## Status against CodeQL (re-checked 2026-11-23)
 
-On the same commit these rules found 7 of CodeQL's 11 open alerts. The other four are three Rust alerts that are
-false positives on reading (a method named `conflicts`, a JSON field named `trusted`, a fixture string named
-`secret_id`) and one regex-escaping case with no rule. The engine could not parse six Rust files (`&raw const`,
-async closures), among them process and sandbox code. Nothing here covers what CodeQL's Rust queries find in product
-code. Do not turn CodeQL off until the comparison on the `orbyn-opengrep` skill's CI-gate page has been run side by
-side for a stretch chosen in advance.
+Four of the five query classes named in issue #849 now have a rule with tests: `rust/path-injection`,
+`rust/sql-injection`, `rust/cleartext-logging` and `js/incomplete-sanitization`. What is still open before CodeQL can be
+turned off:
+
+- **Parser limits, not rules.** Opengrep v2.0.0 still cannot parse five files under `crates/orbyn-core/src`
+  (`host/process.rs:557`, `host/process/unix_tree.rs:85`, `governance/computer/mod.rs:323`,
+  `governance/computer/cdp.rs:560`, `crew/cancel.rs:156`) or `web/src/api/client.ts:262`. A clean scan says nothing
+  about those files. The 2026-11-21 snapshot named six; `cdp.rs` and `client.ts` joined them since.
+- **No interfile taint.** Request data reaches a filesystem path across the route/core boundary, where an intrafile rule
+  cannot follow it. Closing that needs `--enable-interfile` in the scan and `taint_interfile: true` on the rule: a
+  workflow change that was not made or measured with the runners disabled.
+- **Cleartext transmission has no rule.** Telling `http` from `https` needs the configured endpoint, which a rule
+  cannot see; a rule that fires on every authenticated call would be worse than none.
+- **The side-by-side run has not happened** (the CI-gate method in the `orbyn-opengrep` skill).
+- The session-storage question in the issue is a design decision, not a rule.
+
+Do not turn CodeQL off until that side-by-side comparison has been run for a stretch chosen in advance.
 
 ## Findings are leads
 

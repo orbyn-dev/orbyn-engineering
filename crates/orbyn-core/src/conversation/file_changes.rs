@@ -38,8 +38,10 @@ fn relative_in(scope: &WriteScope, path: &str) -> Option<String> {
 
 fn checkout_scope(scope: &WriteScope) -> WriteScope {
     WriteScope {
+        checkout: scope.checkout.clone(),
         engine_cwd: scope.checkout.clone(),
-        ..scope.clone()
+        excluded: scope.excluded.clone(),
+        data_dir: scope.data_dir.clone(),
     }
 }
 
@@ -131,7 +133,7 @@ pub(crate) async fn finished(store: &Store, scope: &RunScope, paths: &[String]) 
     }
 }
 
-fn file_scope_of(checkout: &Path, root: &Path) -> WriteScope {
+fn file_scope_of(checkout: &Path, root: &Path, data_dir: &Path) -> WriteScope {
     WriteScope {
         checkout: checkout.to_path_buf(),
         engine_cwd: checkout.to_path_buf(),
@@ -140,6 +142,7 @@ fn file_scope_of(checkout: &Path, root: &Path) -> WriteScope {
         } else {
             Vec::new()
         },
+        data_dir: Some(data_dir.to_path_buf()),
     }
 }
 
@@ -238,7 +241,7 @@ impl Core {
         self.run_in_thread(thread_id, run_id)?;
         let thread = self.idle_thread(thread_id)?;
         let root = self.workspace.root()?;
-        let scope = file_scope_of(Path::new(&thread.cwd), &root);
+        let scope = file_scope_of(Path::new(&thread.cwd), &root, &self.config.data_dir);
         let mut changes = self.store.kept_changes(run_id)?;
         if let Some(wanted) = &request.paths {
             if let Some(unknown) = wanted
@@ -284,6 +287,7 @@ mod tests {
             checkout: real.clone(),
             engine_cwd: real,
             excluded: Vec::new(),
+            data_dir: None,
         }
     }
 
@@ -316,6 +320,61 @@ mod tests {
         };
         assert!(restore_one(&scope, &change, RestorePoint::Start).is_err());
         assert_eq!(std::fs::read(outside.path().join("secret")).unwrap(), b"s");
+    }
+
+    /// A kept change whose path was recorded through a folder that is a link out of the checkout: the restore must
+    /// neither write the file the link leads to nor report it restored.
+    #[cfg(unix)]
+    #[test]
+    fn a_restore_through_a_linked_folder_never_writes_outside_the_checkout() {
+        let dir = TempDir::new();
+        let outside = TempDir::new();
+        let scope = scope(dir.path());
+        std::fs::write(outside.path().join("f"), "new").unwrap();
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("d")).unwrap();
+        let change = KeptChange {
+            path: "d/f".into(),
+            before: Snapshot::Stored(b"old".to_vec()),
+            after: Snapshot::Stored(b"new".to_vec()),
+        };
+        for point in [RestorePoint::Start, RestorePoint::End] {
+            let outcome = restore_one(&scope, &change, point);
+            assert!(
+                !matches!(outcome, Ok(RestoreOutcome::Restored)),
+                "{point:?} restored through a link out: {outcome:?}"
+            );
+            assert_eq!(std::fs::read(outside.path().join("f")).unwrap(), b"new");
+        }
+    }
+
+    /// Paths a kept change must never name: Git's own folder, a climb out of the checkout, an absolute path. Each
+    /// is refused with the outside-the-checkout answer and nothing is written.
+    #[test]
+    fn a_restore_never_touches_git_a_climb_or_an_absolute_path() {
+        let dir = TempDir::new();
+        let outside = TempDir::new();
+        let scope = scope(dir.path());
+        std::fs::create_dir_all(dir.path().join(".git/hooks")).unwrap();
+        std::fs::write(dir.path().join(".git/hooks/pre-commit"), "new").unwrap();
+        std::fs::write(outside.path().join("f"), "new").unwrap();
+        let absolute = outside.path().join("f").to_string_lossy().into_owned();
+        for path in [".git/hooks/pre-commit", "../escape", absolute.as_str()] {
+            let change = KeptChange {
+                path: path.into(),
+                before: Snapshot::Stored(b"old".to_vec()),
+                after: Snapshot::Stored(b"new".to_vec()),
+            };
+            let Err(CoreError::Invalid(why)) = restore_one(&scope, &change, RestorePoint::Start)
+            else {
+                panic!("{path} was not refused as invalid");
+            };
+            assert_eq!(why, "That path is outside this checkout.", "{path}");
+        }
+        assert_eq!(
+            std::fs::read(dir.path().join(".git/hooks/pre-commit")).unwrap(),
+            b"new"
+        );
+        assert_eq!(std::fs::read(outside.path().join("f")).unwrap(), b"new");
     }
 
     #[test]

@@ -3,6 +3,7 @@ import type { IssueActor } from "./IssueActor";
 import type { IssueComment } from "./IssueComment";
 import type { IssueLabel } from "./IssueLabel";
 import type { IssueLinkedPull } from "./IssueLinkedPull";
+import type { IssueReactionCount } from "./IssueReactionCount";
 import type { IssueState } from "./IssueState";
 import type { TrackerKind } from "./TrackerKind";
 
@@ -14,7 +15,18 @@ comments: Array<IssueComment>, linked_pull_requests: Array<IssueLinkedPull>,
 /**
  * Threads that link this issue.
  */
-linked_threads: Array<string>, tracker: TrackerKind, scope: string, key: string, 
+linked_threads: Array<string>, 
+/**
+ * The reactions on the issue as the tracker reports them, in the tracker's own words. Absent when the
+ * tracker does not report them; a write route answers them for a tracker that does (docs/issues.md).
+ */
+reactions?: Array<IssueReactionCount> | null, 
+/**
+ * The states this issue can move to, in the tracker's own words and order (docs/issues.md, "Issue writes and
+ * list controls"). Absent when the tracker offers no state change here; `[]` when it offers one but has no
+ * state to name.
+ */
+states?: Array<IssueState> | null, tracker: TrackerKind, scope: string, key: string, 
 /**
  * How the tracker writes the key: `#412`, `ORB-87`.
  */

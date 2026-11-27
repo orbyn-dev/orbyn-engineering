@@ -10,14 +10,14 @@ export function FlowOffline() {
       <div className="cx-cwpg">
             <FlowHead sub="Login redirect crew · Task: Use next in the auth redirect · 5 runs" acts />
             <div className="cx-cwtabs">
-              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox · 4", "Report"]} on={0} />
+              <Seg kind="segx" items={["Flow", "Review · 7", "Map", "Board", "Lanes", "Inbox", "Report"]} on={0} />
               <span className="cx-end">Claude Code 412k of 1M tokens · Codex not reported while offline · 2h 14m<span className="cx-cwpv" title="Planned: no Flow route reports usage yet">Planned</span></span>
             </div>
             <div className="cx-flcr">
               <span style={{ color: "var(--color-muted)" }}>All tasks</span>
               <Ic n="right" sm />
               <b>Use next in the auth redirect</b>
-              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">After the beta</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
+              <span className="cx-end"><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="plus" sm />Add reviewer<span className="cx-cwpv">Planned</span></span><span className="cx-fil" style={{ display: "inline-flex", alignItems: "center", gap: "6px", height: "26px", padding: "0 10px", borderRadius: "8px", background: "var(--color-sunken)" }}><Ic n="down" sm />Round 1</span></span>
             </div>
             <div className="cx-fl" style={{ height: "322px", width: "1110px" }}>
               <span className="cx-cwpv" style={{ position: "absolute", left: "0", top: "0", margin: "0", zIndex: 1 }} title="The wide graph is Planned; the app’s zoom is the stage list">Planned</span>
@@ -32,7 +32,7 @@ export function FlowOffline() {
               <span className="cx-fh" style={{ left: "904px", top: "22px", width: "93px" }}><Ic n="git" sm />Main</span>
               <span className="cx-fh" style={{ left: "1017px", top: "22px", width: "93px" }}><Ic n="user" sm />You</span>
               <span className="cx-fg" style={{ left: "113px", top: "0", width: "206px" }}>Build</span>
-              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs, no limit</span>
+              <span className="cx-fg" style={{ left: "339px", top: "0", width: "432px" }}>Prove: separate runs</span>
               <span className="cx-fg" style={{ left: "791px", top: "0", width: "206px" }}>Land: no human wait</span>
               <span className="cx-fg" style={{ left: "1017px", top: "0", width: "93px" }}>You</span>
               <svg className="cx-fe" width="1110" height="322" aria-hidden="true">
@@ -175,7 +175,7 @@ export function FlowOffline() {
         <div className="cx-db">
           <div className="cx-fbx cx-amber">
             <h6>Codex isn’t signed in, and no engine besides Claude Code is signed in at the lead tier</h6>
-            <p>Security needs a different engine at the lead tier, and none is available. Nothing started, and Crew never falls back to the author’s engine without asking you.</p>
+            <p>Security needs a different engine at the lead tier, and none is available. Nothing started, and Crew does not fall back to the author’s engine without asking you.</p>
           </div>
           <div className="cx-fcol">
             <h5>Your options</h5>

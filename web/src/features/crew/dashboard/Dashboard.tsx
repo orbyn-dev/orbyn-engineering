@@ -5,11 +5,11 @@ import { AllRepos } from "./AllRepos";
 import { AreaModes } from "./AreaModes";
 import { PeriodChoice, ProjectMenu, type Choosable } from "./Controls";
 import { Failure } from "./Failure";
-import { Bars, Planned, WHY } from "./parts";
+import { Bars, Planned, Tile, WHY } from "./parts";
 import { AreaTable, EngineTable } from "./Tables";
 import { Tiles, type Metric } from "./Tiles";
 import { PERIODS, dashboardClient, type DashboardClient, type Period } from "./contract";
-import { CHECKS_TEXT, NEEDED_TEXT, dayLong, mergesOf, text, type DashModel } from "./model";
+import { CHECKS_TEXT, NEEDED_TEXT, dayLong, mergesOf, text, waitingKindLabel, workingWhyLabel, type DashLive, type DashModel } from "./model";
 import { ALL, readChoice, writeChoice } from "./prefs";
 import { useModel } from "./useDashboard";
 import "./dashboard.css";
@@ -54,6 +54,49 @@ function Unread() {
           <span className="cx-t10f">Not shown while the history can’t be read</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+const totalOf = (rows: readonly { count: number }[]) => rows.reduce((total, row) => total + row.count, 0);
+
+/** KC3's two live tiles: what waits for the person now, and which workers own live work. Neither reads the window. */
+function RightNow({ live }: { live: DashLive }) {
+  const waiting = totalOf(live.needsYou);
+  const working = totalOf(live.working);
+  const cut = live.truncated ? ". Showing the newest workers only." : "";
+  return (
+    <div className="cx-t10g" role="group" aria-label="Right now" data-testid="dashboard-right-now">
+      <div style={{ gridColumn: "1 / -1", display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+        <small style={{ color: "var(--color-text)", fontSize: "12px", fontWeight: 500 }}>Right now</small>
+        <span style={{ color: "var(--color-muted)", fontSize: "11.5px" }}>Live count. Ignores the 30, 60 and 90 day range.</span>
+      </div>
+      <div className="cx-t10g cx-t10two" style={{ gridColumn: "1 / -1" }}>
+        <Tile
+          label="Needs you"
+          value={waiting}
+          sub="waiting for you now"
+          sample={waiting === 0 ? "Nothing waits for you." : "This repository only. The Inbox may list more."}
+        >
+          {live.needsYou.length > 0 ? (
+            <div className="cx-t10e">
+              {live.needsYou.map((row, at) => <span key={`${row.kind}-${at}`}><i>{waitingKindLabel(row.kind)}</i><b>{row.count}</b></span>)}
+            </div>
+          ) : null}
+        </Tile>
+        <Tile
+          label="Working"
+          value={working}
+          sub={working === 0 ? "no worker owns live work" : working === 1 ? "worker owns live work" : "workers own live work"}
+          sample={`${working === 0 ? "Nothing is running." : "None of them waits for you"}${cut}`}
+        >
+          {live.working.length > 0 ? (
+            <div className="cx-t10e">
+              {live.working.map((row, at) => <span key={`${row.why}-${at}`}><i>{workingWhyLabel(row.why)}</i><b>{row.count}</b></span>)}
+            </div>
+          ) : null}
+        </Tile>
+      </div>
     </div>
   );
 }
@@ -144,13 +187,15 @@ function MetricView({ model, metric, onBack }: { model: DashModel; metric: Metri
   );
 }
 
-function ProjectView({ client, id, name, days, compact, metric, onMetric, onWindow }: { client: DashboardClient; id: string; name: string; days: Period; compact: boolean; metric: Metric | null; onMetric(next: Metric | null): void; onWindow(days: number): void }) {
+function ProjectView({ client, id, name, days, compact, metric, onMetric, onWindow }: { client: DashboardClient; id: string; name: string; days: Period; compact: boolean; metric: Metric | null; onMetric(next: Metric | null): void; onWindow(days: number | null): void }) {
   const read = useModel(client, id, days);
   const slow = useWaited(read.status === "loading");
-  const readDays = read.status === "ready" ? read.data.days : null;
+  // Only the trust record reads one window of its own; the history read honours the period chosen.
+  const fixedWindow = read.status === "ready" && read.data.source === "trust" ? read.data.days : null;
+  const readFinished = read.status === "ready";
   useEffect(() => {
-    if (readDays !== null && readDays > 0) onWindow(readDays);
-  }, [readDays, onWindow]);
+    if (readFinished) onWindow(fixedWindow !== null && fixedWindow > 0 ? fixedWindow : null);
+  }, [readFinished, fixedWindow, onWindow]);
   if (read.status === "loading") return slow ? <Skeleton /> : <span className="sr-only" role="status">Reading the history</span>;
   if (read.status === "error") return <><Failure failure={read.error} onRetry={() => void read.reload()} /><Unread /></>;
   const model = read.data;
@@ -164,6 +209,7 @@ function ProjectView({ client, id, name, days, compact, metric, onMetric, onWind
           <span>This repo has {mergesOf(model.merges)} in the last {model.days} days. A rate shows from {model.minRate} merges, so each tile says what it rests on{model.recent && model.recent.length > 0 ? " and Crew lists the merges themselves" : ""}.</span>
         </div>
       ) : null}
+      {!compact && model.live ? <RightNow live={model.live} /> : null}
       <Tiles model={model} onOpen={onMetric} compact={compact} />
       {compact ? (
         <a className="cx-ghost" style={{ alignSelf: "flex-start" }} href={routeHref({ name: "settings", section: "crew", crewPage: "dashboard", repo: id })}>Open in Crew</a>
@@ -203,7 +249,7 @@ export function Dashboard({ projects, client: given, sample, compact, wanted, in
   const [days, setDays] = useState<Period>(kept.days ?? 60);
   const [metric, setMetric] = useState<Metric | null>(initial?.metric ?? null);
   const [window_, setWindow] = useState<number | null>(null);
-  const fixed = client.history === null;
+  const fixed = client.history === null || window_ !== null;
   const shown = fixed ? (window_ ?? 60) : days;
   const choose = (next: string, period: Period) => {
     setProject(next);

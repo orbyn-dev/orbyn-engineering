@@ -26,6 +26,7 @@ it("draws nothing, and asks only for the trackers, while the service answers 404
   const fetching = vi.fn(async (_url: string) => new Response(JSON.stringify({ code: "not_found", message: "Not found." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   render(<IssueTrackersSettings />);
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   expect(screen.queryByText("Issue trackers")).toBeNull();
   expect(fetching.mock.calls.map(([url]) => new URL(String(url), "http://x").pathname)).toEqual(["/api/issues/trackers"]);
@@ -80,6 +81,27 @@ it("asks for the address each tracker needs, and Linear and GitHub for none", as
   await user.click(within(rowOf("Linear")).getByRole("button", { name: "Add token…" }));
   dialog = await screen.findByRole("dialog", { name: "Linear API token" });
   expect(within(dialog).queryByLabelText(/address|URL/i)).toBeNull();
+});
+
+it("keeps Save off for GitLab until a token is pasted, and for Azure DevOps until the organisation URL and the token are both filled", async () => {
+  setIssuesApi(createIssuesMock({ trackers: none }));
+  const user = userEvent.setup();
+  render(<IssueTrackersSettings />);
+  await table();
+  await user.click(within(rowOf("GitLab")).getByRole("button", { name: "Add token…" }));
+  let dialog = await screen.findByRole("dialog", { name: "GitLab API token" });
+  expect(within(dialog).getByLabelText("GitLab address")).toHaveValue("gitlab.com");
+  expect(within(dialog).getByRole("button", { name: "Save token" })).toBeDisabled();
+  await user.type(within(dialog).getByLabelText("API token"), TOKEN);
+  expect(within(dialog).getByRole("button", { name: "Save token" })).toBeEnabled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(within(rowOf("Azure DevOps")).getByRole("button", { name: "Add token…" }));
+  dialog = await screen.findByRole("dialog", { name: "Azure DevOps organisation and token" });
+  expect(within(dialog).getByLabelText("Organisation URL")).toHaveValue("");
+  await user.type(within(dialog).getByLabelText("API token"), TOKEN);
+  expect(within(dialog).getByRole("button", { name: "Save token" })).toBeDisabled();
+  await user.type(within(dialog).getByLabelText("Organisation URL"), "dev.azure.com/orbyn");
+  expect(within(dialog).getByRole("button", { name: "Save token" })).toBeEnabled();
 });
 
 it("keeps the token in a hidden, uncontrolled field that password managers are told to leave alone", async () => {
@@ -260,6 +282,117 @@ it("Remove asks first, Cancel writes nothing, Remove token is one write and the 
   await user.dblClick(within(dialog).getByRole("button", { name: "Remove token" }));
   await waitFor(() => expect(within(rowOf("Linear")).getByText("Not connected")).toBeVisible());
   expect(mock.writes).toEqual(["disconnect:linear"]);
+});
+
+it("puts the needs-attention banner above the group with an alert icon", async () => {
+  setIssuesApi(createIssuesMock({ trackers: [{ tracker: "linear", connected: false, host: "https://api.linear.app", detail: "No token is saved" }] }));
+  render(<IssueTrackersSettings />);
+  await table();
+  const section = screen.getByRole("region", { name: /Issue trackers/ });
+  const alert = within(section).getByRole("alert");
+  const head = within(section).getByText("Issue trackers", { selector: ".set-grp" });
+  expect(alert).toHaveTextContent("No token is saved");
+  expect(alert.querySelector("svg")).not.toBeNull();
+  expect(alert.compareDocumentPosition(head) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(section).getByText("Saved in your keychain · https://api.linear.app")).toBeVisible();
+  expect(within(rowOf("Linear")).getByText("Needs attention")).toBeVisible();
+  expect(within(rowOf("Linear")).getByRole("button", { name: "Retry" })).toBeVisible();
+  expect(within(rowOf("Linear")).getByRole("button", { name: "Replace…" })).toBeVisible();
+  expect(within(rowOf("Linear")).getByRole("button", { name: "Remove…" })).toBeVisible();
+});
+
+it("draws the address dialogs wide and Linear's token-only dialog narrow", async () => {
+  setIssuesApi(createIssuesMock({ trackers: none }));
+  const user = userEvent.setup();
+  render(<IssueTrackersSettings />);
+  await table();
+  await user.click(within(rowOf("GitLab")).getByRole("button", { name: "Add token…" }));
+  expect(await screen.findByRole("dialog", { name: "GitLab API token" })).toHaveClass("trk-dialog-address");
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+  await user.click(within(rowOf("Azure DevOps")).getByRole("button", { name: "Add token…" }));
+  expect(await screen.findByRole("dialog", { name: "Azure DevOps organisation and token" })).toHaveClass("trk-dialog-address");
+  await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+  await user.click(within(rowOf("Linear")).getByRole("button", { name: "Add token…" }));
+  const linear = await screen.findByRole("dialog", { name: "Linear API token" });
+  expect(linear).not.toHaveClass("trk-dialog-address");
+  await user.type(within(linear).getByLabelText("API token"), TOKEN);
+  expect(within(linear).getByRole("button", { name: "Save token" })).toBeEnabled();
+});
+
+it("saves Linear's token with its one fixed host, and the row says that host", async () => {
+  const mock = createIssuesMock({ trackers: none });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssueTrackersSettings />);
+  await table();
+  await user.click(within(rowOf("Linear")).getByRole("button", { name: "Add token…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Linear API token" });
+  await user.type(within(dialog).getByLabelText("API token"), TOKEN);
+  await user.click(within(dialog).getByRole("button", { name: "Save token" }));
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(mock.writes).toEqual(["connect:linear:"]);
+  expect(within(rowOf("Linear")).getByText("Saved in your keychain · https://api.linear.app")).toBeVisible();
+});
+
+it("a keychain that cannot keep the token says so under the fields, keeps the address and saves nothing", async () => {
+  const mock = createIssuesMock({ trackers: none });
+  mock.failNext("keychain");
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssueTrackersSettings />);
+  await table();
+  await user.click(within(rowOf("Forgejo")).getByRole("button", { name: "Add token…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Forgejo address and token" });
+  await user.type(within(dialog).getByLabelText("Forgejo address"), "git.orbyn.dev");
+  await user.type(within(dialog).getByLabelText("API token"), TOKEN);
+  await user.click(within(dialog).getByRole("button", { name: "Save token" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("There is no usable keychain here, so a token cannot be saved.");
+  expect(within(dialog).getByLabelText("Forgejo address")).toHaveValue("git.orbyn.dev");
+  expect(within(dialog).getByLabelText("API token")).toHaveValue("");
+  expect(within(dialog).getByRole("button", { name: "Save token" })).toBeDisabled();
+  expect(within(rowOf("Forgejo")).getByText("Not connected")).toBeVisible();
+  expect(document.body.innerHTML).not.toContain(TOKEN);
+});
+
+it("a refused address says the service's words, keeps the address and asks for the token again", async () => {
+  const mock = createIssuesMock({ trackers: none });
+  mock.failNext("host");
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  render(<IssueTrackersSettings />);
+  await table();
+  await user.click(within(rowOf("GitLab")).getByRole("button", { name: "Add token…" }));
+  const dialog = await screen.findByRole("dialog", { name: "GitLab API token" });
+  const address = within(dialog).getByLabelText("GitLab address");
+  await user.clear(address);
+  await user.type(address, "http://gitlab.example.com");
+  await user.type(within(dialog).getByLabelText("API token"), TOKEN);
+  await user.click(within(dialog).getByRole("button", { name: "Save token" }));
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent("That host is not allowed: it must start with https://.");
+  expect(address).toHaveValue("http://gitlab.example.com");
+  expect(within(dialog).getByLabelText("API token")).toHaveValue("");
+  expect(within(dialog).getByRole("button", { name: "Save token" })).toBeDisabled();
+  expect(within(rowOf("GitLab")).getByText("Not connected")).toBeVisible();
+  expect(document.body.innerHTML).not.toContain(TOKEN);
+});
+
+it("Remove on a stored Forgejo connection asks first with Cancel focused and writes nothing", async () => {
+  setIssuesApi(createIssuesMock({ trackers: [{ tracker: "forgejo", connected: true, host: "https://git.orbyn.dev" }] }));
+  const user = userEvent.setup();
+  render(<IssueTrackersSettings />);
+  await table();
+  await user.click(within(rowOf("Forgejo")).getByRole("button", { name: "Remove…" }));
+  const dialog = await screen.findByRole("dialog", { name: "Remove Forgejo’s token from the keychain?" });
+  expect(within(dialog).getByText("Orbyn deletes the token it saved. Issues from Forgejo stop showing until you add one again. Linked threads keep their links.")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+});
+
+it("lets the status chip take its own width and stacks the row actions when the table is narrow", () => {
+  const source = readFileSync(join(process.cwd(), "src/features/issues/trackers.css"), "utf8");
+  expect(source).toMatch(/\.trk-table \.trk-row \{[^}]*grid-template-columns: 28px minmax\(0, 1fr\) auto auto/);
+  expect(source).toMatch(/\.trk-table \{[^}]*container-type: inline-size/);
+  expect(source).toMatch(/@container \(max-width: 560px\)/);
+  expect(source).toMatch(/\.trk-table \.trk-row \.trk-acts \{[^}]*grid-column: 2 \/ -1/);
 });
 
 it("Retry on a connection that is not working reads the trackers again and writes nothing", async () => {

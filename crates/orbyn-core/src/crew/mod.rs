@@ -14,6 +14,11 @@ pub(crate) mod capacity;
 pub mod changes;
 mod checks;
 mod classes;
+mod close_lead;
+mod codex_homes;
+mod dashboard;
+#[cfg(debug_assertions)]
+pub mod dev_seed;
 mod draft;
 pub mod escapes;
 mod filters;
@@ -22,14 +27,22 @@ pub mod fixtures;
 mod flow;
 mod gather;
 mod guard;
+mod http_probe;
 mod index_flags;
 mod leases;
+pub mod lessons;
+mod lessons_person;
+pub mod lessons_view;
 pub(crate) mod lifecycle;
+mod needs_you;
 mod persist;
+mod person_check;
+pub mod proposals;
 mod protect;
 mod recover;
 mod report;
 pub mod rerun;
+mod resume;
 mod retry_start;
 mod review;
 mod router;
@@ -37,16 +50,21 @@ mod score;
 mod settle;
 mod stamp;
 mod start;
+mod stop;
 mod tier_settings;
 mod tiers;
 mod tool;
 pub mod triggers;
 mod verify;
 mod view;
+mod watch;
 mod workers;
+mod working;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) use workers::worker_refusal;
 
 pub(crate) use autopilot::GateReview;
 pub use autopilot::{
@@ -60,6 +78,7 @@ pub use autopilot::{
 };
 pub use background::{
     BackgroundEnd, EVERY_HOURS_MAX, MINUTES_MAX, NAME_MAX, SETTING_MAX, TURNS_MAX,
+    WATCH_COMMAND_MAX,
 };
 pub use bus::{ASK_TOOL, BOARD_READ_TOOL, BOARD_WRITE_TOOL, BUS_TOOLS, Bus, Limits, POST_TOOL};
 pub use classes::{
@@ -69,6 +88,7 @@ pub use classes::{
 pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, withhold};
 pub use leases::refuse_protected;
+pub use needs_you::WORKER_STOPPED_TWICE;
 pub use protect::protected_changes;
 pub use review::{
     CHECK_FINDING_TOOL, CODE_LANE, FINDING_TOOL, FindingStatus, REVIEW_TOOL, REVIEW_TOOLS,
@@ -78,7 +98,7 @@ pub use router::{RouteFailure, RouteInput, RouteRefusal, route};
 pub use score::{EvalHistory, SEED_PASS_PERMILLE};
 pub use stamp::Stamper;
 pub use tiers::{AcpTierAssignment, RouterConfig, TierWords, WorkerProvider, tier_model};
-pub use tool::{REPORT_TOOL, ROUTE_TOOL, START_TOOL, is_tool, tool_specs};
+pub use tool::{REPORT_TOOL, RESUME_TOOL, ROUTE_TOOL, START_TOOL, STOP_TOOL, is_tool, tool_specs};
 pub use verify::Judgement;
 pub use view::EngineView;
 

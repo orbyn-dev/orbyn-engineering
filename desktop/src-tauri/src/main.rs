@@ -14,8 +14,10 @@ mod person_key;
 mod presence;
 mod restart_policy;
 mod shell_state;
+mod snapshot;
 mod system;
 mod window_actions;
+mod window_frame;
 
 use core_process::{CoreProcess, ServiceMessage};
 use links::ServicePort;
@@ -394,14 +396,26 @@ fn open_window(app: &AppHandle) -> tauri::Result<()> {
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
             .traffic_light_position(tauri::LogicalPosition::new(x, y)),
-        chrome::Frame::Native => builder,
+        // Only Windows draws the web controls, but the match must name every frame.
+        chrome::Frame::Native | chrome::Frame::Drawn => builder,
+    };
+    // On Windows the web bar draws Minimize, Maximize and Close too, so the window has no native frame.
+    #[cfg(target_os = "windows")]
+    let builder = match chrome::frame_for(std::env::consts::OS) {
+        chrome::Frame::Drawn => builder.decorations(false).shadow(true),
+        chrome::Frame::Unified { .. } | chrome::Frame::Native => builder,
     };
     let window = builder.build()?;
+    // The Menu button runs its items through `window_frame::window_menu_run`; accelerators with a hidden menu are NOT observed.
+    #[cfg(target_os = "windows")]
+    let _ = window.hide_menu();
     #[cfg(not(target_os = "macos"))]
     sync_tray(app, current_theme(app));
     shell_state::load(app);
     let zoom = *app.state::<Zoom>().0.lock().expect("zoom");
     window.set_zoom(zoom)?;
+    #[cfg(windows)]
+    window_frame::install_hit_test(&window, app.state::<window_frame::MaximizeRect>());
     Ok(())
 }
 
@@ -480,24 +494,35 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // The frame is chosen in `chrome`; a saved decoration state must not bring the native one back.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         .manage(Core(Mutex::new(None)))
         .manage(presence::Presence::default())
+        .manage(snapshot::SnapShot::default())
         .manage(Restarts::default())
         .manage(ServiceGeneration::default())
         .manage(app_update::Updates::default())
         .manage(WaitingLinks(Mutex::new(Vec::new())))
         .manage(ServicePort::default())
         .manage(Zoom::default())
+        .manage(window_frame::MaximizeRect::default())
         .manage(activity::KeepAwake::default())
         .manage(menu::QuitItem::default())
         .menu(menu::build)
         .on_menu_event(menu::on_event)
-        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence, person_key::person_key, folder_picker::pick_folder])
+        .invoke_handler(tauri::generate_handler![restart_core, show_core_log, quit_core, presence::crew_presence, person_key::person_key, folder_picker::pick_folder, snapshot::snapshot_state, snapshot::snapshot_configure, snapshot::snapshot_capture, snapshot::snapshot_take, snapshot::snapshot_discard, snapshot::snapshot_setup, window_frame::window_menu_run, window_frame::window_set_maximize_rect])
         .setup(|app| {
             core_process::startup_phase("setup-started");
             let handle = app.handle().clone();

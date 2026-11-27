@@ -25,7 +25,8 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http://127.0.0.1:*; font-src 'self' http://127.0.0.1:*; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:*; media-src 'self' http://127.0.0.1:*; frame-src 'self' http://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'self'",
       "capabilities": [
         "main",
-        "main-macos"
+        "main-macos",
+        "main-windows"
       ]
     }
   },
@@ -45,7 +46,8 @@
     ],
     "resources": {
       "../../build/ui": "ui",
-      "../../build/library": "library"
+      "../../build/library": "library",
+      "../../build/sdk": "sdk"
     },
     "icon": [
       "icons/32x32.png",
@@ -56,8 +58,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "13.0",
-      "hardenedRuntime": true,
-      "entitlements": "../../engine-host/entitlements.plist"
+      "hardenedRuntime": true
     },
     "windows": {
       "webviewInstallMode": {

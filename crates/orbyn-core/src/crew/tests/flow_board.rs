@@ -2,11 +2,14 @@
 //! count of checks and no check text, a task that needs the person carries its reason, the reads change nothing, and the flag
 //! off hides them. No test depends on the clock: two tasks that start together get briefs of their own.
 
-use orbyn_contracts::{CrewObject, FlowBoard, FlowColumnId as Column, object_id};
+use orbyn_contracts::{
+    CrewObject, Evidence, FlowBoard, FlowCard, FlowColumnId as Column, FlowWorking, NeedsYouKind,
+    ResultState, object_id,
+};
 use serde_json::{Value, json};
 
 use super::flow::{built_another, crew_rows, nonce, page};
-use super::harness::{Turn, brief, key, world};
+use super::harness::{Turn, World, brief, give_back_worker_run, key, take_worker_run, world};
 use super::review_support::{arc, built, crew, reviewed};
 use crate::crew::Page;
 
@@ -20,6 +23,27 @@ fn column(board: &FlowBoard, id: Column) -> &orbyn_contracts::FlowColumn {
     board.columns.iter().find(|c| c.column == id).unwrap()
 }
 
+/// The card with this id in this column, found by id: a read owns the card order, so a test does not.
+fn card_by_id<'a>(board: &'a FlowBoard, place: Column, id: &str) -> &'a FlowCard {
+    column(board, place)
+        .cards
+        .iter()
+        .find(|card| card.id == id)
+        .unwrap_or_else(|| panic!("the {id} card in the {place:?} column"))
+}
+
+/// The stored Evidence of the check called `check`, found by its check id: the row order is not the contract, and a
+/// test must graft the row it names.
+fn evidence_of(w: &World, task: &str, check: &str) -> Evidence {
+    w.core
+        .store
+        .crew_evidence(task)
+        .expect("the task's evidence reads")
+        .into_iter()
+        .find(|row| row.check.as_str() == check)
+        .unwrap_or_else(|| panic!("the evidence of the {check} check"))
+}
+
 #[tokio::test]
 async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
     let w = crew(arc(|n, root| match n {
@@ -29,8 +53,11 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
     .await;
     let subject = w.built_work().await;
     let crew_id = w.task(&subject).crew_id;
+    // The review answer lists its lanes in start order; the test asks for one, so the list must hold exactly it.
     let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    assert_eq!(lanes.len(), 1, "the test asks for one lane: {lanes:?}");
+    let lane = lanes.into_iter().next().expect("the lane's task");
+    w.until_state(&lane, "passed").await;
 
     let before = crew_rows(&w);
     let moved = w.task(&subject).updated_at;
@@ -56,8 +83,7 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
             .filter(|c| c.column != Column::Passed)
             .all(|c| c.count == 0)
     );
-    let card = &column(&view, Column::Passed).cards[0];
-    assert_eq!(card.id, subject);
+    let card = card_by_id(&view, Column::Passed, &subject);
     assert_eq!(card.kind, "implement");
     assert_eq!(card.engine.as_deref(), Some("alpha"));
     assert!(card.model.is_some() && card.effort.is_some());
@@ -84,7 +110,12 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
         "the card counts the latest verification"
     );
     assert_eq!(view.engines.len(), 1);
-    assert_eq!(view.kinds[0].name, "implement");
+    let kind = view
+        .kinds
+        .iter()
+        .find(|kind| kind.name == "implement")
+        .expect("the kind chip of the one task");
+    assert_eq!((kind.count, view.kinds.len()), (1, 1), "{view:?}");
 
     // A card has these fields and no cell or check text; its checks are two counts.
     let mut keys: Vec<String> = serde_json::to_value(card)
@@ -108,11 +139,14 @@ async fn a_finished_task_is_one_card_and_its_reviewer_is_not() {
             "kind",
             "model",
             "name",
+            "needs_you",
             "owner",
             "reason",
             "state",
+            "stop_detail",
             "stop_reason",
-            "updated_at"
+            "updated_at",
+            "working"
         ]
     );
 
@@ -158,7 +192,7 @@ async fn a_running_task_can_be_cancelled_and_shows_no_check_text() {
 
     // Give the running task Evidence that carries text a reader must not see, built at run time.
     let marker = nonce("board");
-    let evidence = w.core.store.crew_evidence(&done).unwrap().remove(0);
+    let evidence = evidence_of(&w, &done, "chk-run");
     let mut value: Value = CrewObject::Evidence(evidence).to_value();
     value["run_id"] = json!(task.run_id);
     value["crew_id"] = json!(task.crew_id);
@@ -175,8 +209,7 @@ async fn a_running_task_can_be_cancelled_and_shows_no_check_text() {
     let view = board(&w, &task.crew_id);
     assert_eq!(column(&view, Column::Running).count, 1);
     assert_eq!(column(&view, Column::Passed).count, 1);
-    let card = &column(&view, Column::Running).cards[0];
-    assert_eq!(card.id, running);
+    let card = card_by_id(&view, Column::Running, &running);
     assert!(card.can_cancel);
     assert!(
         !card.can_rerun,
@@ -191,8 +224,14 @@ async fn a_running_task_can_be_cancelled_and_shows_no_check_text() {
         card.checks.is_none(),
         "a running task shows no count, though it holds evidence"
     );
+    assert_eq!(
+        card.working,
+        Some(FlowWorking::Running),
+        "KC3: a live turn is Working"
+    );
+    assert!(card.needs_you.is_none(), "nothing waits for the person");
     assert!(
-        column(&view, Column::Passed).cards[0].checks.is_some(),
+        card_by_id(&view, Column::Passed, &done).checks.is_some(),
         "the passed one still does"
     );
 }
@@ -202,13 +241,13 @@ async fn hostile_evidence_fields_reach_a_card_only_as_two_counts() {
     let w = crew(arc(|_, root| built(root))).await;
     let done = w.built_work().await;
     let crew_id = w.task(&done).crew_id;
-    let base = w.core.store.crew_evidence(&done).unwrap().remove(0);
+    let base = evidence_of(&w, &done, "chk-run");
     let ran = w.core.store.crew_evidence(&done).unwrap().len();
     let before = board(&w, &crew_id);
-    let was = column(&before, Column::Passed).cards[0]
+    let was = card_by_id(&before, Column::Passed, &done)
         .checks
         .clone()
-        .unwrap();
+        .expect("the passed card's counts");
     assert_eq!(was.of as usize, ran);
 
     // A failing row, with hostile text in every field a check has, built at run time.
@@ -226,7 +265,7 @@ async fn hostile_evidence_fields_reach_a_card_only_as_two_counts() {
         .unwrap();
 
     let view = board(&w, &crew_id);
-    let card = &column(&view, Column::Passed).cards[0];
+    let card = card_by_id(&view, Column::Passed, &done);
     let counts = card.checks.clone().expect("counts");
     // No finished verification named the grafted row, so it is not part of the one the task passed on.
     assert_eq!(
@@ -253,7 +292,7 @@ async fn hostile_evidence_fields_reach_a_card_only_as_two_counts() {
         .add_crew_object(&done, &CrewObject::parse(&later).unwrap())
         .unwrap();
     let view = board(&w, &crew_id);
-    let counts = column(&view, Column::Passed).cards[0]
+    let counts = card_by_id(&view, Column::Passed, &done)
         .checks
         .clone()
         .expect("counts");
@@ -290,17 +329,69 @@ async fn a_task_that_needs_the_person_carries_its_reason() {
     let view = board(&w, &crew_id);
     let needs = column(&view, Column::NeedsYou);
     assert_eq!(needs.count, 1);
-    let card = &needs.cards[0];
-    assert_eq!(card.id, id);
+    let card = card_by_id(&view, Column::NeedsYou, &id);
     assert!(card.engine.is_none(), "it was never routed");
     assert!(card.reason.as_ref().is_some_and(|r| !r.is_empty()));
     assert!(card.can_cancel);
     assert!(!card.can_rerun);
 }
 
+/// A task whose last cancel attempt could not stop its worker is a Needs-you card from the one field, with its own kind and
+/// line; once a stop holds, the field no longer names it and the card leaves the column.
+#[tokio::test]
+async fn a_cancelled_task_whose_worker_could_not_be_stopped_is_a_needs_you_card_until_a_stop_holds()
+{
+    let w = crew(arc(|_, _| Turn::Hang)).await;
+    let (answer, error) = w
+        .start(
+            brief(json!({
+                "outcome": "Stuck in a loop.",
+                "files": [{ "path": "src/stuck/**", "mode": "write" }]
+            })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let crew_id = w.task(&id).crew_id;
+    let epoch = take_worker_run(&w, &id);
+    let closed = w.core.crew_close_lead(&w.lead, "user").await.unwrap();
+    assert_eq!(closed.failed, vec![id.clone()]);
+
+    let view = board(&w, &crew_id);
+    let card = column(&view, Column::NeedsYou)
+        .cards
+        .iter()
+        .find(|card| card.id == id)
+        .expect("the could-not-stop card");
+    assert_eq!(card.needs_you, Some(NeedsYouKind::CouldNotStop));
+    assert!(
+        card.reason
+            .as_ref()
+            .is_some_and(|reason| !reason.is_empty())
+    );
+
+    give_back_worker_run(&w, &id, &epoch);
+    w.core.crew_cancel_task(&id, None, "user").await.unwrap();
+    let view = board(&w, &crew_id);
+    assert!(
+        column(&view, Column::NeedsYou)
+            .cards
+            .iter()
+            .all(|card| card.id != id),
+        "the card stays after the stop held"
+    );
+}
+
 #[tokio::test]
 async fn a_reason_that_quotes_another_tasks_check_is_withheld() {
-    let w = crew(arc(|_, root| built(root))).await;
+    // A real TaskNeedsPerson task, not a could-not-start one: the reason under test is the task's own scrubbed
+    // `needs_person` result, which is the path a held question takes. Quoting another task's check hides it whole.
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => Turn::Hang,
+    }))
+    .await;
     // The first task's key has a check of its own; a second task, held for a person, will quote it.
     let other_check = format!("echo {}", nonce("board-check"));
     let other_key = json!({
@@ -310,17 +401,32 @@ async fn a_reason_that_quotes_another_tasks_check_is_withheld() {
     });
     let done = built_another(&w, "First task.", other_key).await;
     let crew_id = w.task(&done).crew_id;
-    let ghost = brief(
-        json!({ "outcome": "Second task.", "engine": { "id": "ghost", "assigned_by": "lead" } }),
-    );
-    let (answer, error) = w.start(ghost, key()).await;
+    let second = brief(json!({
+        "outcome": "Second task.",
+        "files": [{ "path": "src/held/**", "mode": "write" }]
+    }));
+    let (answer, error) = w.start(second, key()).await;
     assert!(!error, "the second task did not start");
     let held = answer["task"].as_str().unwrap().to_owned();
+    w.core
+        .store
+        .begin_crew_verification(&held, "engine-run-1", None)
+        .unwrap();
+    w.core.crew_needs_person(&held, "A person decides.", false);
+    assert_eq!(w.task(&held).state, "needs_person");
 
     // The stored reason of the held task is rewritten to quote the first task's check.
     let task = w.task(&held);
-    let mut result =
-        CrewObject::Result(w.core.store.crew_results(&held).unwrap().remove(0)).to_value();
+    // The one result the hold wrote, found by its state; the read's row order is not the contract.
+    let stored = w
+        .core
+        .store
+        .crew_results(&held)
+        .expect("the held task's results read")
+        .into_iter()
+        .find(|result| result.state == ResultState::NeedsPerson)
+        .expect("the held task's needs_person result");
+    let mut result = CrewObject::Result(stored).to_value();
     result["summary"] = json!(format!("ran {other_check} and it failed"));
     result["id"] = json!(object_id(&result).unwrap());
     w.core
@@ -330,14 +436,31 @@ async fn a_reason_that_quotes_another_tasks_check_is_withheld() {
     assert_eq!(task.state, "needs_person");
 
     let view = board(&w, &crew_id);
-    let card = &column(&view, Column::NeedsYou).cards[0];
+    let card = card_by_id(&view, Column::NeedsYou, &held);
+    assert_eq!(card.needs_you, Some(NeedsYouKind::TaskNeedsPerson));
+    // The reason is withheld whole, so it falls back to the kind's fixed words: none for TaskNeedsPerson.
+    assert!(
+        card.reason.as_deref().is_none_or(str::is_empty),
+        "the reason is withheld whole: {:?}",
+        card.reason
+    );
     let reason = card.reason.clone().unwrap_or_default();
-    assert!(reason.contains("ran"), "the reason is read");
     assert!(
         !reason.contains(&other_check),
         "the reason holds another task's check"
     );
     assert!(!serde_json::to_string(&view).unwrap().contains(&other_check));
+
+    // The same crew's needs-you read holds the whole question back, not just the check it quotes.
+    let held_item = w
+        .core
+        .crew_needs_you()
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|item| item.id == held && item.crew_id.as_deref() == Some(crew_id.as_str()))
+        .expect("the held task is in the needs-you read");
+    assert!(held_item.question_hidden, "the question is hidden whole");
 }
 
 #[tokio::test]
@@ -369,4 +492,241 @@ async fn bad_input_is_refused_and_the_flag_off_hides_the_board() {
             .crew_flow_board("crew-1", None, None, None, None, None, page()),
         Err(crate::error::CoreError::NotFound(_))
     ));
+}
+
+/// KC3: the Needs you column is the one needs-you field (a passed task whose merge waits and a stopped task whose trip
+/// wire stopped it are cards there; a dismissed stop is not, and no second rule puts it back), and a live turn's card is
+/// Working from the one working function while its column still says its run state.
+#[tokio::test]
+async fn the_needs_you_column_is_the_one_field_and_a_live_card_is_working() {
+    let w = crew(arc(|n, root| match n {
+        0 => built(root),
+        _ => Turn::Hang,
+    }))
+    .await;
+    // A passed task whose merge waits: the field says MergeWaiting, so the card is in Needs you, not in Passed.
+    let merged = w.built_work().await;
+    let crew_id = w.task(&merged).crew_id;
+    let mut record = crate::crew::fixtures::merge_record(&merged, "/repo", "main", "a break");
+    record.crew_id = crew_id.clone();
+    record.review_state = "waiting".to_owned();
+    record.needs_person = Some("The break needs a person.".to_owned());
+    w.core.store.add_crew_merge(&record).unwrap();
+
+    // A task still running: Working, in Running.
+    let (answer, error) = w
+        .start(
+            brief(json!({ "outcome": "Keeps working.", "files": [{ "path": "src/live/**", "mode": "write" }] })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let running = answer["task"].as_str().unwrap().to_owned();
+    assert_eq!(w.task(&running).state, "running");
+
+    // A task stopped by a trip wire: it waits for the person even though its run state is stopped.
+    let (answer, error) = w
+        .start(
+            brief(json!({ "outcome": "Stopped by a trip wire.", "files": [{ "path": "src/stop/**", "mode": "write" }] })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let stopped = answer["task"].as_str().unwrap().to_owned();
+    w.core
+        .store
+        .move_crew_task(&stopped, "stopped", Some("too_many_denials"))
+        .unwrap();
+    w.core
+        .store
+        .add_crew_autopilot_event(&stopped, &crew_id, "tripwire", &json!({ "in_a_row": 3 }))
+        .unwrap();
+
+    let view = board(&w, &crew_id);
+    let needs = column(&view, Column::NeedsYou);
+    assert_eq!(needs.count, 2, "the merge wait and the trip-wire stop");
+    assert_eq!(
+        column(&view, Column::Passed).count,
+        0,
+        "a waiting merge is not Passed"
+    );
+    assert_eq!(column(&view, Column::StoppedCancelled).count, 0);
+    let waiting_merge = needs.cards.iter().find(|c| c.id == merged).unwrap();
+    assert_eq!(waiting_merge.state, "passed");
+    assert_eq!(waiting_merge.needs_you, Some(NeedsYouKind::MergeWaiting));
+    assert_eq!(
+        waiting_merge.reason.as_deref(),
+        Some("A merge needs your decision."),
+        "the reason is the field's own line"
+    );
+    assert!(
+        waiting_merge.working.is_none(),
+        "passed work is not Working"
+    );
+    let tripwire = needs.cards.iter().find(|c| c.id == stopped).unwrap();
+    assert_eq!(tripwire.state, "stopped");
+    assert_eq!(tripwire.needs_you, Some(NeedsYouKind::TripwireStop));
+
+    let live = card_by_id(&view, Column::Running, &running);
+    assert_eq!(live.working, Some(FlowWorking::Running));
+    assert!(live.needs_you.is_none());
+
+    // The column is the field's own count for this crew: no second rule adds or removes a card.
+    let field: Vec<_> = w
+        .core
+        .crew_needs_you()
+        .unwrap()
+        .items
+        .into_iter()
+        .filter(|i| i.crew_id.as_deref() == Some(crew_id.as_str()))
+        .collect();
+    assert_eq!(field.len(), needs.count as usize);
+
+    // A dismissed stop leaves the column on the next read, and the field is the reason.
+    w.core
+        .crew_needs_you_dismiss(NeedsYouKind::TripwireStop, &stopped, "user")
+        .unwrap();
+    let view = board(&w, &crew_id);
+    let needs = column(&view, Column::NeedsYou);
+    assert_eq!(needs.count, 1, "the dismissed stop is gone");
+    assert!(needs.cards.iter().all(|c| c.id != stopped));
+    assert_eq!(column(&view, Column::StoppedCancelled).count, 1);
+    let moved = card_by_id(&view, Column::StoppedCancelled, &stopped);
+    assert_eq!(moved.state, "stopped", "the stop still holds");
+}
+/// KC3 F1, the product decision: a dismissed could-not-start wait leaves the Inbox and the dashboard (they read the one field), but
+/// not the Taskboard. The task still cannot run, so its card stays in Needs you with no field kind and no sentence: the board never
+/// hides a task that still needs the person, and it does not invent a wait the field no longer names.
+#[tokio::test]
+async fn a_dismissed_could_not_start_card_keeps_its_place_without_a_sentence() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let crew_id = w.task(&id).crew_id;
+    let view = board(&w, &crew_id);
+    let card = card_by_id(&view, Column::NeedsYou, &id);
+    assert_eq!(card.needs_you, Some(NeedsYouKind::CouldNotStart));
+    assert!(card.reason.as_ref().is_some_and(|r| !r.is_empty()));
+
+    w.core
+        .crew_needs_you_dismiss(NeedsYouKind::CouldNotStart, &id, "user")
+        .unwrap();
+    // The field no longer names it, so the Inbox and the dashboard drop it.
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id)
+    );
+
+    // The card keeps its place, with no field kind and no sentence.
+    let view = board(&w, &crew_id);
+    let needs = column(&view, Column::NeedsYou);
+    assert_eq!(needs.count, 1, "the task still cannot run");
+    let card = needs.cards.iter().find(|card| card.id == id).unwrap();
+    assert_eq!(card.state, "needs_person");
+    assert!(card.could_not_start);
+    assert_eq!(card.needs_you, None);
+    assert_eq!(card.reason, None);
+}
+
+/// KC3 F2: a could-not-start card carries the task's own scrubbed refusal, not only the kind's fixed words, because the one
+/// needs-you list now reads the task's latest `needs_person` result for every task kind.
+#[tokio::test]
+async fn a_could_not_start_card_carries_its_own_refusal() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let (answer, error) = w
+        .start(
+            brief(json!({ "engine": { "id": "ghost", "assigned_by": "lead" } })),
+            key(),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    let id = answer["task"].as_str().unwrap().to_owned();
+    let crew_id = w.task(&id).crew_id;
+    let stored = w.core.store.crew_results(&id).unwrap();
+    let refusal = stored
+        .iter()
+        .rev()
+        .find(|result| result.state == ResultState::NeedsPerson)
+        .expect("the start refusal is a needs_person result")
+        .summary
+        .clone();
+    let first_word = refusal.split_whitespace().next().expect("a refusal");
+
+    let view = board(&w, &crew_id);
+    let card = card_by_id(&view, Column::NeedsYou, &id);
+    let reason = card.reason.clone().expect("the refusal is carried");
+    assert!(
+        reason.contains(first_word),
+        "{reason} does not hold {refusal}"
+    );
+    assert_ne!(
+        reason, "The worker never ran.",
+        "the fixed words replaced the task's refusal"
+    );
+    // The Inbox row carries the same scrubbed sentence: it is one field.
+    let item = w
+        .core
+        .crew_needs_you()
+        .unwrap()
+        .items
+        .into_iter()
+        .find(|item| item.id == id)
+        .unwrap();
+    assert_eq!(item.reason.as_deref(), Some(reason.as_str()));
+}
+
+#[tokio::test]
+async fn the_board_names_every_wait_of_its_crew_past_the_inboxs_two_hundred() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let mut ids = Vec::new();
+    // Two hundred and one tasks that could not start: the Inbox shows the newest 200, the board of their crew all of them.
+    for n in 0..201 {
+        let (answer, error) = w
+            .start(
+                brief(json!({
+                    "outcome": format!("Wait number {n}."),
+                    "engine": { "id": "ghost", "assigned_by": "lead" }
+                })),
+                key(),
+            )
+            .await;
+        assert!(!error, "{answer}");
+        ids.push(answer["task"].as_str().unwrap().to_owned());
+    }
+    // Any one wait carries the crew, and the list is the test's own start order.
+    let crew_id = w.task(ids.first().expect("the first wait started")).crew_id;
+    assert_eq!(w.core.crew_needs_you().unwrap().items.len(), 200);
+    // The Needs you column, past the Inbox's 200: its last page holds the oldest waits, which the Inbox no longer lists.
+    let view = w
+        .core
+        .crew_flow_board(
+            &crew_id,
+            None,
+            None,
+            None,
+            Some("needs_you"),
+            None,
+            Page::new(Some(50), Some(190)).unwrap(),
+        )
+        .unwrap();
+    let needs = column(&view, Column::NeedsYou);
+    assert_eq!(needs.count, 201);
+    assert_eq!(needs.cards.len(), 11);
+    assert!(
+        needs
+            .cards
+            .iter()
+            .all(|card| card.needs_you == Some(NeedsYouKind::CouldNotStart)),
+        "a wait past the Inbox's cap lost its field kind on the board"
+    );
 }

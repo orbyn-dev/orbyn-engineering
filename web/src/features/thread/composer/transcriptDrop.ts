@@ -1,25 +1,20 @@
 /**
- * A transcript file dragged onto the composer (parity B43), built hidden. The file is made by the export (`GET /api/threads/{id}/export`). The per-thread attach route this drop would use is not
- * built, so `transcriptsApi()` answers `null` in a production build: a file dropped on the composer is then an ordinary attachment, as today. The route is
- * written in docs/attachments-transcripts.md; the mock lives in web/mock/attachments.ts.
+ * A transcript file dragged onto the composer (parity B43). The file is made by the export (`GET /api/threads/{id}/export`) and
+ * attached by `POST /api/threads/{id}/transcripts` (`transcriptsClient.ts`; docs/attachments-transcripts.md, "Attach to the
+ * composer"): a dropped transcript becomes a chip whose attachment rides on the thread's next message, and every other file goes
+ * to the attachment strip. Tests and the dev-only preview install a client with `setTranscriptsApi`; `null` turns the drop off, so
+ * every file is then an ordinary attachment. The mock lives in web/mock/attachments.ts.
  */
 
-export const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
-/** The service's `TRANSCRIPT_FILE_ENDING` and `TRANSCRIPT_MEDIA_TYPE` (docs/attachments-transcripts.md). */
-export const TRANSCRIPT_EXTENSION = ".orbyn.json";
-export const TRANSCRIPT_TYPE = "application/vnd.orbyn.transcript+json";
+import { TRANSCRIPT_EXTENSION, TRANSCRIPT_TYPE } from "../../../lib/transcript";
+import type { TranscriptsApi } from "./transcriptContract";
+import { realTranscriptsApi } from "./transcriptsClient";
 
-/** A transcript the service read and kept for this thread. Its id goes in the run's `attachment_ids`, like a file's. */
-export interface ImportedTranscript {
-  id: string;
-  title: string;
-  message_count: number;
-}
+export { TRANSCRIPT_EXTENSION, TRANSCRIPT_TYPE };
+export type { ImportedTranscript, TranscriptsApi } from "./transcriptContract";
 
-export interface TranscriptsApi {
-  /** Uploads the file for the service to read. Rejects with `transcript_too_new`, `transcript_unreadable` or `file_too_large`. */
-  read(threadId: string, file: File, signal: AbortSignal): Promise<ImportedTranscript>;
-}
+/** The service refuses a file over this (`413 file_too_large`); the drop refuses it before sending. */
+export const MAX_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
 
 export const looksLikeTranscript = (file: File): boolean => file.name.toLowerCase().endsWith(TRANSCRIPT_EXTENSION);
 
@@ -37,11 +32,12 @@ export function willBeTranscript(items: ArrayLike<DataTransferItem>): boolean {
   return held.length > 0 && held.every((item) => item.type === TRANSCRIPT_TYPE);
 }
 
-let current: TranscriptsApi | null = null;
+/** The production default is the real attach route; tests install `null` to exercise the path with no client. */
+let current: TranscriptsApi | null = realTranscriptsApi;
 
 export const transcriptsApi = (): TranscriptsApi | null => current;
 
-/** Tests and the dev-only preview install a client here; `null` puts back the production default, which sends nothing. */
+/** Tests and the dev-only preview install a client here; `null` is no client, and every file goes to the attachment strip. */
 export function setTranscriptsApi(next: TranscriptsApi | null): void {
   current = next;
 }

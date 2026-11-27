@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useUi } from "../../../../product/state/ui";
-import { setAttentionApi, attentionApi } from "./contract";
+import { setAttentionApi } from "./contract";
 import { TerminalAttention } from "./TerminalAttention";
 import { useAttention } from "./store";
 
@@ -13,8 +13,7 @@ beforeEach(() => { useAttention.getState().reset(); writes.mockReset(); });
 afterEach(() => { cleanup(); setAttentionApi(null); vi.restoreAllMocks(); });
 
 describe("production default", () => {
-  it("has no client and draws nothing", () => {
-    expect(attentionApi()).toBeNull();
+  it("draws nothing while no terminal has announced anything", () => {
     const { container } = render(<TerminalAttention threadId="t1" onOpen={() => undefined} />);
     expect(container).toBeEmptyDOMElement();
   });

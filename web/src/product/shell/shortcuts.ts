@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { KeybindingRule } from "../../api/types";
 import { inDesktopApp } from "../../api/shell";
+import { clientPlatform, isMacClient, isMacPlatform } from "../../lib/platform";
 import { actionIdFromCommand } from "../composer/actionCommand";
 
 /** Handlers live with what they act on, and register while mounted. */
@@ -34,7 +35,7 @@ export function useCommand(command: string, handler: (argument?: string) => bool
   }, [command]);
 }
 
-const mac = () => /mac/i.test(navigator.platform);
+const mac = () => isMacClient();
 const SHIFTED_CODE = /^(Digit|Bracket)/;
 
 type ShortcutEvent = Pick<KeyboardEvent, "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
@@ -166,11 +167,11 @@ const KEY_LABELS: Record<string, string> = {
 };
 
 /** A rule's key as people write it: mod+o is ⌘O on macOS and Ctrl+O elsewhere. */
-export function formatShortcut(rule: string, platform = navigator.platform): string {
+export function formatShortcut(rule: string, platform = clientPlatform()): string {
   const parts = rule.toLowerCase().split(/\+(?=.)/);
   const key = parts.pop() ?? "";
   const has = (name: string) => parts.includes(name);
-  const onMac = /mac/i.test(platform);
+  const onMac = isMacPlatform(platform);
   const modifiers: string[] = [];
   const add = (label: string) => {
     if (!modifiers.includes(label)) modifiers.push(label);
@@ -193,12 +194,27 @@ export function commandShortcut(rules: KeybindingRule[] | null | undefined, comm
   return chosen?.key ?? null;
 }
 
+/**
+ * What the Close tab items write for their key: the person's own rule for closing the open tab, else the built-in `mod+w`
+ * (a rule list without the command, as before it loads). A removed rule leaves no key. A browser closes its own tab on
+ * `mod+w`, so there the label is the alternate the rule also answers to.
+ */
+export function closeTabShortcut(rules: KeybindingRule[] | null | undefined, desktop = inDesktopApp()): string | undefined {
+  const known = rules?.some((rule) => rule.command === "rightPanel.close") ?? false;
+  const key = known ? commandShortcut(rules, "rightPanel.close") : "mod+w";
+  if (!key) return undefined;
+  return formatShortcut((desktop ? null : browserAlternate(key)) ?? key);
+}
+
 /** What applies before the service's list arrives, or if it can't be read. */
 export const FALLBACK_RULES: KeybindingRule[] = (
   [
     ["mod+b", "sidebar.toggle", null],
     ["mod+j", "terminal.toggle", null],
     ["mod+alt+b", "rightPanel.toggle", null],
+    ["mod+t", "rightPanel.new", "rightPanelOpen && !terminalFocus"],
+    // Maximise is the shift variant of the panel toggle, as appearance.cycle is of theme.select.
+    ["mod+alt+shift+b", "rightPanel.maximize", "rightPanelOpen && !terminalFocus"],
     ["mod+shift+b", "threadPanel.toggle", "!terminalFocus"],
     ["mod+d", "diff.toggle", "!terminalFocus"],
     ["mod+k", "commandPalette.toggle", "!terminalFocus"],

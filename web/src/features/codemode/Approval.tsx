@@ -149,7 +149,7 @@ export function ViaContext({ via }: { via: ApprovalVia }) {
 
 /** The line under the buttons: Always allow is about the tool, never about the script. */
 export function ViaAlways({ approval }: { approval: Approval }) {
-  return <p className="cm-always">Always allow covers {toolOfApproval(approval) ?? "this tool"} only, never this script.</p>;
+  return <p className="cm-always">Always allow covers {toolOfApproval(approval) ?? "this tool"}, not this script.</p>;
 }
 
 /** An answered approval: one quiet block with the tool, the answer, and what the script saw. */

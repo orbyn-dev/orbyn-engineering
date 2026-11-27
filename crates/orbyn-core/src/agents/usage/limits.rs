@@ -1,5 +1,5 @@
 //! Subscription snapshots have no validated current account/workspace cache key.
-//! Read afresh, and fence responses that a forget (account change or sign-out) has superseded.
+//! Read afresh, and fence responses that an explicit usage refresh has superseded.
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -23,8 +23,9 @@ impl LimitsReads {
         self.generation.load(Ordering::SeqCst)
     }
 
-    /// Fences reads in flight across an account change or sign-out. Overlapping
-    /// reads do not fence one another.
+    /// Fences reads in flight across an explicit usage refresh (`POST /api/usage/refresh`),
+    /// the only caller. Overlapping reads do not fence one another, and an engine
+    /// configuration change does not fence either.
     pub(super) fn forget(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         if let Some(notify) = self.notify.get() {
@@ -40,7 +41,9 @@ impl LimitsReads {
 impl Core {
     /// Reads the engine's current subscription report without keeping a fallback.
     /// Neither its signed-in boolean nor its plan proves the account/workspace.
-    /// `force` remains accepted for compatibility; every read is fresh.
+    /// `force` is a person's refresh: it asks the driver again and skips nothing else.
+    /// There is no kept report to skip, and the fences below hold either way, so a
+    /// refresh can never answer with another account's figures.
     pub async fn engine_limits(&self, id: &str, _force: bool) -> Result<EngineLimits> {
         // Observe invalidation before lookup can resolve an older configuration.
         let epoch = self.engines.change_epoch();
@@ -75,6 +78,8 @@ impl Core {
 
     /// The overview never starts or awaits Claude, including its status probe.
     /// An explicit engine/thread limits read can still ask that driver.
+    /// `force` is forwarded to each engine read unchanged: a person's refresh is not a
+    /// reason to start a family the overview must never start.
     pub async fn limits_overview(&self, force: bool) -> Result<LimitsOverview> {
         let mut engines = Vec::new();
         let mut unavailable = Vec::new();

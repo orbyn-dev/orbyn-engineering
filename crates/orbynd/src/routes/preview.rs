@@ -12,7 +12,8 @@ use axum::response::{IntoResponse, Response};
 use orbyn_contracts::{
     AnswerFileChooser, ClearPreview, CreateBrowserProfile, NavigatePreview, OpenPreview,
     OpenPreviewFile, PickPreview, PreviewControl, PreviewCopy, PreviewInput,
-    PreviewRecordingOptions, PreviewUpload, PreviewView, ReloadPreview, ResizePreview, StepPreview,
+    PreviewRecordingOptions, PreviewUpload, PreviewView, ReloadPreview, RenameBrowserProfile,
+    ResizePreview, StepPreview,
 };
 use orbyn_core::browser::preview::OpenHow;
 use serde::Deserialize;
@@ -37,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/browser-profiles", get(profiles).post(create_profile))
         .route("/api/browser-profiles/{id}", delete(delete_profile))
         .route("/api/browser-profiles/{id}/clear", post(clear_profile))
+        .route("/api/browser-profiles/{id}/rename", post(rename_profile))
         .route("/api/threads/{id}/previews/{tab}/navigate", post(navigate))
         .route("/api/threads/{id}/previews/{tab}/history", post(history))
         .route("/api/threads/{id}/previews/{tab}/resize", post(resize))
@@ -101,10 +103,15 @@ pub async fn open_file(
     Path(id): Path<String>,
     ApiJson(body): ApiJson<OpenPreviewFile>,
 ) -> ApiResult<impl IntoResponse> {
-    let tab = state
-        .core
-        .open_preview_file(&id, &body.path, LOCAL_USER)
-        .await?;
+    // Core resolves the file inside the chosen repository's worktree and refuses one that
+    // leaves it; an absent, unknown or ordinary-thread `repo_id` is that resolver's answer.
+    let tab = orbyn_core::in_repo(body.repo_id.clone(), async {
+        state
+            .core
+            .open_preview_file(&id, &body.path, LOCAL_USER)
+            .await
+    })
+    .await?;
     Ok((StatusCode::CREATED, Json(tab)))
 }
 
@@ -173,6 +180,14 @@ pub async fn create_profile(
         StatusCode::CREATED,
         Json(state.core.create_browser_profile(&body.name)?),
     ))
+}
+
+pub async fn rename_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ApiJson(body): ApiJson<RenameBrowserProfile>,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.rename_browser_profile(&id, &body.name)?))
 }
 
 pub async fn clear_profile(

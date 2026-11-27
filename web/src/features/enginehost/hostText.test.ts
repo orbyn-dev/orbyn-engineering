@@ -37,6 +37,7 @@ it("says since when on the card, today when it is today", () => {
 it("lists what the host said it can do, in its order, and shows a word it does not know as it came", () => {
   expect(capabilityLine(["steer", "fork", "background", "rollback", "models", "usage"])).toBe("Steer a run, fork, background work, roll back, list models, report usage");
   expect(capabilityLine(["steer", "teleport"])).toBe("Steer a run, teleport");
+  expect(capabilityLine(["readHistory", "readSubagent", "stopTask", "probe"])).toBe("Read earlier messages, read a sub-agent's messages, stop a background task, check the engine");
 });
 
 it("writes the banner for a crash and for a mismatch, and none otherwise", () => {

@@ -29,9 +29,9 @@ impl RunManager {
             run_dir,
             resume,
         } = *launch;
-        if self.store.crew_task_for_worker(&thread.id)?.is_none() {
+        let Some((task, _)) = self.store.crew_task_for_worker(&thread.id)? else {
             return Ok(None);
-        }
+        };
         // A worker whose core is not bound cannot be told apart from an unrestricted run.
         let Some(core) = self.crew.get().and_then(Weak::upgrade) else {
             return Err(CoreError::EngineUnavailable(
@@ -52,7 +52,14 @@ impl RunManager {
             &[start, checkout, project],
         )?;
         let projects = crate::agents::usage::history_root(crate::agents::usage::Engine::Claude);
-        close_transcripts(confinement, &driver.family(), projects, resume, start).map(Some)
+        let family = driver.family();
+        let rules = close_transcripts(confinement, &family, projects, resume, start)?;
+        if family == "codex" {
+            // The worker's own home, its API-key login and the real home closed. The auth
+            // rule runs before a folder is made, so a ChatGPT sign-in starts nothing.
+            return rules.with_codex_worker_home(&task.id).map(Some);
+        }
+        Ok(Some(rules))
     }
 }
 

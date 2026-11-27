@@ -4,14 +4,16 @@
 //! rewind keeps the session when the engine can roll it back natively.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use orbyn_contracts::{
-    CommitInfo, FileDiff, ForkThread, RestorePoint, RestoreWorkspace, RewindThread, SwitchEngine,
-    Thread,
+    CommitInfo, FileDiff, ForkThread, RestorePoint, RestoreWorkspace, RewindMode, RewindResult,
+    RewindThread, SwitchEngine, Thread,
 };
 use orbyn_contracts::{ModelSelection, RunChanges};
 use serde_json::{Value, json};
 
+use crate::agents::driver::EngineDriver;
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::source_control::git;
@@ -20,6 +22,35 @@ use crate::util::new_id;
 
 pub fn checkpoint_ref(thread_id: &str, run_id: &str, point: &str) -> String {
     format!("refs/orbyn/checkpoints/{thread_id}/{run_id}/{point}")
+}
+
+/// The native rollback a rewind applied, and what it needs to drop the point again if a
+/// later step fails before the rewrite is committed.
+struct NativeRevert {
+    driver: Arc<dyn EngineDriver>,
+    session: String,
+}
+
+/// A refusal with the status and code a client already knows, and plain words for a person.
+fn refused(status: u16, code: &'static str, message: &str) -> CoreError {
+    CoreError::Refused {
+        status,
+        code,
+        message: message.to_owned(),
+        detail: Value::Null,
+    }
+}
+
+fn rewind_busy() -> CoreError {
+    refused(
+        409,
+        "thread_busy",
+        "This thread has an active run. Rewind it once the run finishes.",
+    )
+}
+
+fn restore_failed_before_changes() -> CoreError {
+    CoreError::Git("Your files were not changed. The thread was not rewound.".into())
 }
 
 const MAX_CHANGED_PATHS: usize = 200;
@@ -57,16 +88,23 @@ pub(crate) fn claude_write_paths(block: &Value) -> Vec<String> {
 }
 
 impl Core {
+    /// The thread a checkpoint read diffs the checkout of: the repository asked for, else the primary, with
+    /// its worktree as the folder. A multi-repository task folder is never handed to Git.
     fn trusted_thread(&self, id: &str) -> Result<Thread> {
-        let thread = self.store.thread(id)?;
+        let thread = self.scoped_thread(id)?;
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }
         Ok(thread)
     }
 
+    /// The thread a write to its own files acts in. A multi-repository thread's engine works in the task folder,
+    /// so a file restore stays relative to it; only the reads above resolve one repository.
     pub(crate) fn idle_thread(&self, id: &str) -> Result<Thread> {
-        let thread = self.trusted_thread(id)?;
+        let thread = self.store.thread(id)?;
+        if !self.store.project(&thread.project_id)?.trusted {
+            return Err(CoreError::FolderUntrusted);
+        }
         if thread.active_run.is_some() {
             return Err(CoreError::ThreadBusy);
         }
@@ -162,14 +200,14 @@ impl Core {
         git::restore_worktree(cwd, &current, &target).await
     }
 
-    fn audit_thread(
+    fn audit_record(
         &self,
         actor: &str,
         action: &str,
         thread_id: &str,
         detail: serde_json::Value,
-    ) -> Result<()> {
-        self.store.append_audit(&AuditRecord {
+    ) -> AuditRecord {
+        AuditRecord {
             actor: actor.to_owned(),
             action: action.to_owned(),
             target: thread_id.to_owned(),
@@ -178,77 +216,194 @@ impl Core {
             thread_id: Some(thread_id.to_owned()),
             run_id: None,
             detail,
-        })?;
+        }
+    }
+
+    fn audit_thread(
+        &self,
+        actor: &str,
+        action: &str,
+        thread_id: &str,
+        detail: serde_json::Value,
+    ) -> Result<()> {
+        self.store
+            .append_audit(&self.audit_record(actor, action, thread_id, detail))?;
         Ok(())
     }
 
+    /// The thread a rewind may move, with the words the rewind route shows a person.
+    fn rewind_idle_thread(&self, id: &str) -> Result<Thread> {
+        let thread = self.store.thread(id).map_err(|error| match error {
+            CoreError::NotFound(_) => refused(404, "not_found", "This thread was not found."),
+            other => other,
+        })?;
+        let project = self
+            .store
+            .project(&thread.project_id)
+            .map_err(|error| match error {
+                CoreError::NotFound(_) => refused(
+                    404,
+                    "not_found",
+                    "The project for this thread was not found.",
+                ),
+                other => other,
+            })?;
+        if !project.trusted {
+            return Err(refused(
+                403,
+                "folder_untrusted",
+                "Trust this folder before rewinding its thread.",
+            ));
+        }
+        if thread.active_run.is_some() {
+            return Err(rewind_busy());
+        }
+        Ok(thread)
+    }
+
+    /// Restores the files a rewind asked for, before the thread is marked rewound. The
+    /// audit row is written only after the files are back, so a failed restore leaves no
+    /// record of one.
+    async fn restore_for_rewind(&self, thread: &Thread, run_id: &str, actor: &str) -> Result<()> {
+        let shared = self.store.threads_sharing_checkout(thread)?;
+        if !shared.is_empty() {
+            return Err(CoreError::SharedDirectory(shared.len()));
+        }
+        let checkpoint =
+            self.thread_checkpoint(&thread.id, run_id)
+                .map_err(|error| match error {
+                    CoreError::NotFound(_) => refused(
+                        404,
+                        "not_found",
+                        "The checkpoint for this run was not found.",
+                    ),
+                    other => other,
+                })?;
+        let target = checkpoint.start;
+        let cwd = Path::new(&thread.cwd);
+        let safety = checkpoint_ref(&thread.id, &new_id(), "before-restore");
+        let index = self.scratch_index().map_err(|error| {
+            tracing::warn!(%error, thread = %thread.id, "rewind could not prepare a checkpoint");
+            restore_failed_before_changes()
+        })?;
+        let current = git::snapshot(cwd, Some(&safety), &index)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, thread = %thread.id, "rewind could not snapshot the workspace");
+                restore_failed_before_changes()
+            })?;
+        git::restore_worktree(cwd, &current, &target)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, thread = %thread.id, "rewind could not restore the workspace");
+                CoreError::Git(
+                    "Your files may have changed. The thread was not rewound.".into(),
+                )
+            })?;
+        self.audit_thread(
+            actor,
+            "workspace.restore",
+            &thread.id,
+            json!({
+                "target": target,
+                "safety": current,
+            }),
+        )
+    }
+
     /// Continues the conversation from before a run. The log stays whole, since
-    /// it is append-only; clients hide what follows the logged rewind.
+    /// it is append-only; clients hide what follows the logged rewind. The engine step
+    /// and the files are worked out before the store is touched, and the store rewrite
+    /// is one transaction, so a failure leaves the thread where it was.
     pub async fn rewind_thread(
         &self,
         thread_id: &str,
         request: &RewindThread,
         actor: &str,
-    ) -> Result<()> {
-        self.idle_thread(thread_id)?;
-        let _hold = self.runs.hold_for_rewind(thread_id)?;
-        let through = self.store.seq_before_run(thread_id, &request.run_id)?;
-        if request.restore_files {
-            let restore = RestoreWorkspace {
-                run_id: request.run_id.clone(),
-                point: RestorePoint::Start,
-            };
-            self.restore_workspace(thread_id, &restore, actor).await?;
+    ) -> Result<RewindResult> {
+        let thread = self.rewind_idle_thread(thread_id)?;
+        let _hold = self
+            .runs
+            .hold_for_rewind(thread_id)
+            .map_err(|error| match error {
+                CoreError::ThreadBusy => rewind_busy(),
+                other => other,
+            })?;
+        let through = self
+            .store
+            .seq_before_run(thread_id, &request.run_id)
+            .map_err(|error| match error {
+                CoreError::NotFound(_) => {
+                    refused(404, "not_found", "This run was not found in this thread.")
+                }
+                other => other,
+            })?;
+        // The engine step first: a native rollback notes its point (or rolls the session
+        // back), and the handoff text is read; neither writes to the store.
+        let native = self.revert_natively(thread_id, &request.run_id).await;
+        let handoff = if native.is_none() {
+            Some(self.store.handoff_text(thread_id, through)?)
+        } else {
+            None
+        };
+        if request.restore_files
+            && let Err(error) = self
+                .restore_for_rewind(&thread, &request.run_id, actor)
+                .await
+        {
+            if let Some(native) = &native {
+                native
+                    .driver
+                    .forget_revert(Path::new(&thread.cwd), &native.session)
+                    .await;
+            }
+            return Err(error);
         }
-        if self.revert_natively(thread_id, &request.run_id).await {
-            self.audit_thread(
-                actor,
-                "thread.rewind",
-                thread_id,
-                json!({ "through": through, "native": true }),
-            )?;
-            self.store.forget_messages_after(thread_id, through)?;
-            return self.store.note_thread_event(
-                thread_id,
-                "thread.rewound",
-                json!({ "through": through, "native": true }),
-            );
-        }
-        let handoff = self.store.handoff_text(thread_id, through)?;
-        self.audit_thread(
+        let native = native.is_some();
+        let audit = self.audit_record(
             actor,
             "thread.rewind",
             thread_id,
-            json!({ "through": through }),
-        )?;
-        self.store.set_handoff(thread_id, &handoff)?;
-        self.store.forget_messages_after(thread_id, through)?;
+            if native {
+                json!({ "through": through, "native": true })
+            } else {
+                json!({ "through": through })
+            },
+        );
         self.store
-            .note_thread_event(thread_id, "thread.rewound", json!({ "through": through }))
+            .record_rewind(thread_id, through, handoff.as_deref(), &audit, native)?;
+        Ok(RewindResult {
+            native,
+            mode: if native {
+                RewindMode::Native
+            } else {
+                RewindMode::Handoff
+            },
+        })
     }
 
     /// Asks the engine to drop `run_id`'s turn and every later one from the session
-    /// the thread still speaks in, which then carries on. False when the engine has
+    /// the thread still speaks in, which then carries on. None when the engine has
     /// no native rollback, the run's turn or session is not the thread's, or the
     /// engine refused; the rewind then leaves a handoff as before.
-    async fn revert_natively(&self, thread_id: &str, run_id: &str) -> bool {
+    async fn revert_natively(&self, thread_id: &str, run_id: &str) -> Option<NativeRevert> {
         let Ok(Some((session, turn))) = self.store.native_revert_point(thread_id, run_id) else {
-            return false;
+            return None;
         };
         let Ok(thread) = self.store.thread(thread_id) else {
-            return false;
+            return None;
         };
         let Ok(driver) = self.engines.driver(&thread.engine) else {
-            return false;
+            return None;
         };
         match driver
             .revert_session(Path::new(&thread.cwd), &session, &turn)
             .await
         {
-            Ok(()) => true,
+            Ok(()) => Some(NativeRevert { driver, session }),
             Err(error) => {
                 tracing::info!(%error, "native rollback refused; the rewind leaves a handoff");
-                false
+                None
             }
         }
     }
@@ -402,7 +557,25 @@ const SIDE_CHAT_TITLE: &str = "Side chat";
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use async_trait::async_trait;
+    use orbyn_contracts::{AgUiEvent, EngineCapabilities, EngineTier, PermissionMode, RunState};
+    use tokio::sync::mpsc;
+
     use super::*;
+    use crate::agents::claude_history::project_folder_name;
+    use crate::agents::driver::claude::ClaudeDriver;
+    use crate::agents::driver::host::{EnginePath, HostDriver, HostSpec, Pool, Timings};
+    use crate::agents::driver::{EngineDescriptor, EngineEvent, EngineProbe, RunHandle, RunSpec};
+    use crate::store::{Admission, NewProject, NewThread, Store};
+    use crate::testing::{TempDir, run_git};
+
+    const SESSION: &str = "0f3c2b1a-1111-4222-8333-444455556666";
+    const PROMPT: &str = "a1a1a1a1-1111-4222-8333-444455556666";
+    const HEAD: &str = "b2b2b2b2-1111-4222-8333-444455556666";
 
     #[test]
     fn only_what_an_engine_reports_writing_counts() {
@@ -415,5 +588,306 @@ mod tests {
         let bash = json!({ "name": "Bash", "input": { "command": "echo > x" } });
         assert!(reported_paths("tool_use", &bash).is_empty());
         assert!(reported_paths("commandExecution", &json!({})).is_empty());
+    }
+
+    fn open_core(dir: &TempDir) -> Arc<Core> {
+        let mut config =
+            crate::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        Arc::new(Core::open(config).unwrap())
+    }
+
+    fn seed(repo: &Path) {
+        std::fs::create_dir_all(repo).unwrap();
+        run_git(repo, &["init", "-q", "-b", "main"]);
+        run_git(repo, &["config", "user.email", "t@example.com"]);
+        run_git(repo, &["config", "user.name", "T"]);
+        std::fs::write(repo.join("base.txt"), "base\n").unwrap();
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-q", "-m", "first"]);
+    }
+
+    fn head(repo: &Path) -> String {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(repo)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn project_and_thread(core: &Core, repo: &Path, engine: &str) -> String {
+        let path = repo.to_string_lossy().into_owned();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: &path,
+                name: "repo",
+                is_git: true,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        core.store.trust_project(&project.id, "tester").unwrap();
+        let thread = core
+            .store
+            .create_thread(NewThread {
+                project_id: project.id,
+                title: "t".into(),
+                engine: engine.into(),
+                model: None,
+                cwd: path,
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+        thread.id
+    }
+
+    fn ran(store: &Store, thread: &str, prompt: &str, session: &str, turn: Option<&str>) -> String {
+        let run = store
+            .admit_run(Admission {
+                thread_id: thread,
+                prompt,
+                actor: "tester",
+            })
+            .unwrap();
+        store.mark_starting(&run.id).unwrap();
+        store.mark_running(&run.id).unwrap();
+        store.set_engine_session(&run.id, session).unwrap();
+        if let Some(turn) = turn {
+            store.set_engine_turn(&run.id, turn).unwrap();
+        }
+        store
+            .finish_run(&run.id, RunState::Completed, None)
+            .unwrap();
+        run.id
+    }
+
+    struct NativeFixture {
+        _dir: TempDir,
+        core: Arc<Core>,
+        pool: Arc<Pool>,
+        repo: PathBuf,
+        thread: String,
+        second: String,
+    }
+
+    /// A Claude thread whose second run can be rewound natively through a session file.
+    fn native_fixture() -> NativeFixture {
+        let dir = TempDir::new();
+        let repo = dir.path().join("repo");
+        seed(&repo);
+        let core = open_core(&dir);
+        let pool = Pool::new(
+            "claude",
+            HostSpec {
+                program: "/nonexistent/orbyn-engine-host".into(),
+                args: Vec::new(),
+                env: Vec::new(),
+                instance: "rewind-test".into(),
+            },
+            Timings::default(),
+            None,
+        );
+        let projects = dir.path().join("projects");
+        let folder = projects.join(project_folder_name(&repo.to_string_lossy()));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join(format!("{SESSION}.jsonl")),
+            format!(
+                "{}\n{}\n",
+                json!({"type":"assistant","uuid":HEAD,"sessionId":SESSION,"message":{}}),
+                json!({"type":"user","uuid":PROMPT,"sessionId":SESSION,"message":{}}),
+            ),
+        )
+        .unwrap();
+        let driver = HostDriver::new(
+            Arc::new(ClaudeDriver::new("claude".into(), Duration::from_secs(1))),
+            pool.clone(),
+            "claude".into(),
+        )
+        .with_history_root(projects)
+        .with_path(Arc::new(|| Ok(EnginePath::Sdk)));
+        core.engines.register(Arc::new(driver));
+        let thread = project_and_thread(&core, &repo, "claude");
+        let first = ran(&core.store, &thread, "first", SESSION, None);
+        let second = ran(&core.store, &thread, "second", SESSION, Some(PROMPT));
+        assert_eq!(
+            core.store.native_revert_point(&thread, &second).unwrap(),
+            Some((SESSION.to_owned(), PROMPT.to_owned())),
+            "the second run has an earlier run in the same session to keep"
+        );
+        let start = head(&repo);
+        core.store.add_checkpoint(&thread, &second, &start).unwrap();
+        core.store.finish_checkpoint(&second, &start).unwrap();
+        let _ = first;
+        NativeFixture {
+            _dir: dir,
+            core,
+            pool,
+            repo,
+            thread,
+            second,
+        }
+    }
+
+    fn has_rewound_event(core: &Core, thread: &str) -> bool {
+        core.store
+            .events_after(thread, 0, 10_000)
+            .unwrap()
+            .iter()
+            .any(|event| {
+                matches!(
+                    &event.event,
+                    AgUiEvent::Custom { name, .. } if name == "thread.rewound"
+                )
+            })
+    }
+
+    fn has_rewind_audit(core: &Core, thread: &str) -> bool {
+        core.store
+            .list_audit(Some(thread), 1000)
+            .unwrap()
+            .iter()
+            .any(|event| event.action == "thread.rewind")
+    }
+
+    #[tokio::test]
+    async fn a_failed_file_restore_leaves_the_thread_unrewound_and_its_point_forgotten() {
+        let f = native_fixture();
+        std::fs::write(f.repo.join("after.txt"), "later").unwrap();
+        // The safety snapshot fails before a file is touched: the folder is no longer a
+        // checkout, so the checkpoint's start commit cannot be read.
+        std::fs::remove_dir_all(f.repo.join(".git")).unwrap();
+
+        let error = f
+            .core
+            .rewind_thread(
+                &f.thread,
+                &RewindThread {
+                    run_id: f.second.clone(),
+                    restore_files: true,
+                },
+                "tester",
+            )
+            .await
+            .expect_err("the restore cannot succeed without Git");
+        assert_eq!(
+            error.to_string(),
+            "Your files were not changed. The thread was not rewound."
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.repo.join("after.txt")).unwrap(),
+            "later",
+            "files stay as they were"
+        );
+        assert!(
+            f.core.store.pending_handoff(&f.thread).unwrap().is_none(),
+            "no handoff was set"
+        );
+        assert!(!has_rewound_event(&f.core, &f.thread));
+        assert!(!has_rewind_audit(&f.core, &f.thread));
+        assert_eq!(
+            f.pool.take_resume_at("claude", SESSION),
+            None,
+            "the point noted by the native step was forgotten"
+        );
+    }
+
+    /// A driver whose engine step fails and corrupts the event log the handoff reads, so
+    /// the rewind fails before it can touch the files.
+    struct BreakHandoff {
+        store: Arc<Store>,
+        thread: String,
+    }
+
+    #[async_trait]
+    impl EngineDriver for BreakHandoff {
+        fn descriptor(&self) -> EngineDescriptor {
+            EngineDescriptor {
+                id: "fake".into(),
+                name: "Fake".into(),
+                tier: EngineTier::Terminal,
+                capabilities: EngineCapabilities {
+                    streaming: false,
+                    approvals: false,
+                    resume: false,
+                    mcp: false,
+                    sandbox: false,
+                    managed: true,
+                    skill_delivery: Vec::new(),
+                    goal_control: false,
+                    decline_feedback: false,
+                    permission_modes: PermissionMode::ALL.to_vec(),
+                },
+            }
+        }
+
+        async fn probe(&self) -> EngineProbe {
+            EngineProbe::default()
+        }
+
+        async fn start_run(
+            &self,
+            _spec: RunSpec,
+            _events: mpsc::Sender<EngineEvent>,
+        ) -> Result<RunHandle> {
+            Err(CoreError::Unsupported("no run".into()))
+        }
+
+        async fn revert_session(&self, _cwd: &Path, _session: &str, _turn: &str) -> Result<()> {
+            self.store
+                .reader()
+                .execute(
+                    "INSERT INTO thread_events (thread_id, seq, run_id, ts, event)
+                     SELECT id, next_seq, NULL, '2026-01-01T00:00:00Z', 'not json'
+                     FROM threads WHERE id = ?1",
+                    [&self.thread],
+                )
+                .unwrap();
+            Err(CoreError::Unsupported("the engine refused".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_handoff_step_does_not_restore_files() {
+        let dir = TempDir::new();
+        let repo = dir.path().join("repo");
+        seed(&repo);
+        let core = open_core(&dir);
+        let thread = project_and_thread(&core, &repo, "fake");
+        core.engines.register(Arc::new(BreakHandoff {
+            store: core.store.clone(),
+            thread: thread.clone(),
+        }));
+        ran(&core.store, &thread, "first", SESSION, None);
+        let second = ran(&core.store, &thread, "second", SESSION, Some(PROMPT));
+        let start = head(&repo);
+        core.store.add_checkpoint(&thread, &second, &start).unwrap();
+        core.store.finish_checkpoint(&second, &start).unwrap();
+        std::fs::write(repo.join("after.txt"), "later").unwrap();
+
+        core.rewind_thread(
+            &thread,
+            &RewindThread {
+                run_id: second.clone(),
+                restore_files: true,
+            },
+            "tester",
+        )
+        .await
+        .expect_err("the handoff text cannot be read");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("after.txt")).unwrap(),
+            "later",
+            "the files were not restored on a failed engine step"
+        );
+        assert!(core.store.pending_handoff(&thread).unwrap().is_none());
+        assert!(!has_rewind_audit(&core, &thread));
     }
 }

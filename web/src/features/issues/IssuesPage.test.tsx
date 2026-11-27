@@ -128,6 +128,17 @@ it("says which tracker is empty and where to make an issue, with no create butto
   expect(screen.queryByRole("button", { name: /new issue|create/i })).toBeNull();
 });
 
+it("draws the New issue control with a list and not in the no-issues block, which no frame draws it for", async () => {
+  setIssuesApi(createIssuesMock());
+  const listed = render(<IssuesPage />);
+  expect(await screen.findByRole("button", { name: "New issue" })).toBeVisible();
+  listed.unmount();
+  setIssuesApi(createIssuesMock({ issues: [] }));
+  render(<IssuesPage />);
+  expect(await screen.findByText("No open issues")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "New issue" })).toBeNull();
+});
+
 it("says what failed, that nothing changed, and retries and copies the details", async () => {
   const mock = createIssuesMock();
   mock.failNext("list");
@@ -232,6 +243,7 @@ it("drops a page that lands after the filter changed: the latest request wins", 
   await user.click(loadMore()!);
   await user.click(screen.getByRole("button", { name: /^Closed/ }));
   await waitFor(() => expect(screen.getByText("Closed as not planned")).toBeVisible());
+  // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
   await new Promise((resolve) => setTimeout(resolve, 120));
   expect(rows()).toHaveLength(2);
   expect(loadMore()).toBeNull();

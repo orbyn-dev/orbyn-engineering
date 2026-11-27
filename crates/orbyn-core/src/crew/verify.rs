@@ -9,8 +9,9 @@
 use std::path::Path;
 
 use orbyn_contracts::{
-    AnswerKey, CheckOutcome, CrewAuthor, CrewCommit, CrewError, CrewHash, CrewId, CrewObject,
-    CrewShortText, ErrorCode, Evidence, Gate, GateDecider, GateDecision, GateStage, ResultCheck,
+    AnswerKey, CheckKind, CheckOutcome, CrewAuthor, CrewCheck, CrewCommit, CrewError, CrewHash,
+    CrewId, CrewObject, CrewShortText, ErrorCode, Evidence, Gate, GateDecider, GateDecision,
+    GateStage, ResultCheck,
 };
 use sha2::{Digest, Sha256};
 
@@ -19,16 +20,41 @@ use super::guard::{key_needles, redact, refuse_leak, refuse_secret, withhold};
 use super::leases::{core_author, internal, timestamp};
 use super::protect::{Snapshot, protected_changes};
 use crate::app::Core;
-use crate::store::{CrewRun, CrewTask};
+use crate::store::{CrewRun, CrewTask, ManualCheckState};
 
 const ZERO_COMMIT: &str = "0000000000000000000000000000000000000000";
 const NOT_PROVEN: &str = "Anything this check does not run.";
 const DIRTY: &str = "The checkout had uncommitted changes, so this commit is not exactly what ran.";
 
+/// What a failure names, in words a worker may read: a check's kind (never its id, its command or any other
+/// part of the key), or the core's own words for a failure no check ran.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    /// A check in the answer key, by the kind it declares. The word is the protocol's own kind name, so a new
+    /// kind gains its word with the contract.
+    Check(CheckKind),
+    /// A failure the core raises itself before any check runs, named by its own fixed words.
+    Core(&'static str),
+}
+
+impl FailureKind {
+    /// The word a stored lesson may name: the check's kind, never its id.
+    pub fn word(self) -> String {
+        match self {
+            Self::Check(kind) => super::wire_name(&kind),
+            Self::Core(word) => word.to_owned(),
+        }
+    }
+}
+
 /// One check that did not pass.
 #[derive(Clone, Debug)]
 pub struct Failed {
+    /// The check's id, or the core's own name for a synthetic failure. Internal to the core: a fingerprint and
+    /// the loop guard use it, and it never reaches a lesson, a brief or a worker.
     pub id: String,
+    /// What the failure names in words a worker may read: the check's kind, never its id (H1).
+    pub kind: FailureKind,
     pub outcome: CheckOutcome,
     pub exit_code: Option<u32>,
     /// What failed, by name. The fingerprint is made of these and not of the output.
@@ -46,17 +72,25 @@ pub struct Judgement {
     pub failures: Vec<Failed>,
     /// Checks this version does not run, so the result never implies more than was checked.
     pub not_verified: Vec<String>,
+    /// The `manual` checks nobody has decided yet, by id: the task waits for a person and must not be judged either way.
+    pub awaiting: Vec<String>,
     pub passes: usize,
 }
 
 impl Judgement {
+    /// Nothing failed, at least one check passed, and no check is still waiting for a person.
     pub fn passed(&self) -> bool {
-        self.failures.is_empty() && self.passes > 0
+        self.failures.is_empty() && self.passes > 0 && self.awaiting.is_empty()
     }
 
     /// Nothing failed, and nothing passed either: every check was one this version cannot run.
     pub fn undecided(&self) -> bool {
-        self.failures.is_empty() && self.passes == 0
+        self.failures.is_empty() && self.passes == 0 && self.awaiting.is_empty()
+    }
+
+    /// A check waits for a person's decision: the task parks instead of passing or failing.
+    pub fn waiting(&self) -> bool {
+        !self.awaiting.is_empty()
     }
 
     /// A hash of the failures, so the loop guard can tell the same failure from another: the
@@ -101,6 +135,25 @@ pub(super) fn budget_left(created_at: &str, minutes: u64, now: i64) -> std::time
     std::time::Duration::from_secs(u64::try_from(end - now).unwrap_or(0))
 }
 
+/// What is left of a task's time budget after a restart: the time between its start and its last
+/// recorded event, less the downtime already excused, clamped to the budget. The app being off
+/// spends no minutes; `last_event` is a unix second from `Store::crew_task_last_event` (or now
+/// for a live check, where `downtime_secs` is the only part of the elapsed time excused).
+pub(super) fn budget_left_after_downtime(
+    created_at: &str,
+    minutes: u64,
+    last_event: i64,
+    downtime_secs: i64,
+) -> std::time::Duration {
+    let start = crate::util::parse_time(created_at).unwrap_or(last_event);
+    let budget = i64::try_from(minutes.saturating_mul(60)).unwrap_or(i64::MAX);
+    let spent = last_event
+        .saturating_sub(start)
+        .saturating_sub(downtime_secs)
+        .clamp(0, budget);
+    std::time::Duration::from_secs(u64::try_from(budget - spent).unwrap_or(0))
+}
+
 /// What a refused check records: that it did not run, and the rule, never the command.
 fn refused_check(check: &orbyn_contracts::CrewCheck, rule: &str) -> Ran {
     let why = format!("The check was not run: the command guard refused it ({rule}).");
@@ -112,6 +165,63 @@ fn refused_check(check: &orbyn_contracts::CrewCheck, rule: &str) -> Ran {
         duration_ms: 0,
         reason: Some(why),
         names: Vec::new(),
+    }
+}
+
+/// One `manual` check of the key: the person's stored decision once they made it, and otherwise the wait for one. A wait parks the check
+/// in `crew_manual_checks` and is listed on the judgement's `awaiting`, so the task holds rather than passing on the other checks or
+/// failing on a check nobody ran. A person's own words go only into the worker-facing reason, where the usual leak and secret checks
+/// apply; no Evidence excerpt carries them, and the pass and fail cases log nothing of their own.
+fn manual_check(
+    core: &Core,
+    task: &CrewTask,
+    check: &CrewCheck,
+    verdict: &mut Judgement,
+) -> Result<Ran, CrewError> {
+    let held = core
+        .store
+        .crew_manual_check(&task.id, check.id.as_str())
+        .map_err(internal)?;
+    let (decided, note) = match held {
+        Some(row) => (row.state, row.note),
+        None => (ManualCheckState::Awaiting, None),
+    };
+    let ran = |outcome: CheckOutcome, command: String| Ran {
+        outcome,
+        exit_code: None,
+        command,
+        log: String::new(),
+        duration_ms: 0,
+        reason: None,
+        names: Vec::new(),
+    };
+    match decided {
+        ManualCheckState::Passed => Ok(ran(
+            CheckOutcome::Pass,
+            format!("manual: {} checked by a person", check.id),
+        )),
+        ManualCheckState::Failed => {
+            let why = note
+                .filter(|text| !text.trim().is_empty())
+                .unwrap_or_else(|| "A person checked this and it does not hold.".to_owned());
+            let mut failed = ran(
+                CheckOutcome::Fail,
+                format!("manual: {} checked by a person", check.id),
+            );
+            failed.reason = Some(why);
+            failed.names = vec![check.id.as_str().to_owned()];
+            Ok(failed)
+        }
+        ManualCheckState::Awaiting => {
+            core.store
+                .park_manual_check(&task.id, check.id.as_str(), crate::util::unix_now())
+                .map_err(internal)?;
+            verdict.awaiting.push(check.id.as_str().to_owned());
+            Ok(ran(
+                CheckOutcome::Skipped,
+                format!("manual: {} waits for a person", check.id),
+            ))
+        }
     }
 }
 
@@ -206,7 +316,12 @@ impl Core {
         // A verification inside the task gets what is left of its budget; one the core runs
         // again after the run has ended gets a fresh one.
         let left = if live {
-            budget_left(&task.created_at, minutes, crate::util::unix_now())
+            budget_left_after_downtime(
+                &task.created_at,
+                minutes,
+                crate::util::unix_now(),
+                run.downtime_secs,
+            )
         } else {
             std::time::Duration::from_secs(minutes * 60)
         };
@@ -232,6 +347,7 @@ impl Core {
             evidence: Vec::new(),
             failures: Vec::new(),
             not_verified: Vec::new(),
+            awaiting: Vec::new(),
             passes: 0,
         };
         // N7, H9 and H11: if the worker changed a file the checks use, nothing is run. The
@@ -258,6 +374,7 @@ impl Core {
             if !touched.is_empty() {
                 verdict.failures.push(Failed {
                     id: "protected_paths".to_owned(),
+                    kind: FailureKind::Core("protected paths"),
                     outcome: CheckOutcome::Fail,
                     exit_code: None,
                     names: touched,
@@ -300,6 +417,7 @@ impl Core {
             if !hidden.is_empty() {
                 verdict.failures.push(Failed {
                     id: "index_flags".to_owned(),
+                    kind: FailureKind::Core("index flags"),
                     outcome: CheckOutcome::Fail,
                     exit_code: None,
                     names: hidden,
@@ -382,8 +500,13 @@ impl Core {
                             check.params["note"].as_str().unwrap_or(""),
                             &site,
                         )
+                    } else if check.kind == CheckKind::Manual {
+                        // A check only a person can make: their stored answer, or the wait for one.
+                        manual_check(self, task, check, &mut verdict)?
                     } else {
-                        run_check(check, &site).await
+                        // Boxed: this future is the biggest one in the verify chain, and the chain is awaited from the
+                        // forge watch, so it sits on a small stack (a 2 MiB thread overflowed there).
+                        Box::pin(run_check(check, &site)).await
                     }
                 }
             };
@@ -443,6 +566,7 @@ impl Core {
                 CheckOutcome::Skipped => verdict.not_verified.push(ran.command.clone()),
                 CheckOutcome::Fail | CheckOutcome::Error => verdict.failures.push(Failed {
                     id: check.id.as_str().to_owned(),
+                    kind: FailureKind::Check(check.kind),
                     outcome: ran.outcome,
                     exit_code: ran.exit_code,
                     names: ran.names.clone(),
@@ -450,7 +574,12 @@ impl Core {
                 }),
             }
         }
-        if rerun.is_none() && !verdict.undecided() && !verdict.evidence.is_empty() {
+        // A check waiting for a person decides nothing yet: the checks gate is written once the wait is answered.
+        if rerun.is_none()
+            && !verdict.undecided()
+            && !verdict.evidence.is_empty()
+            && !verdict.waiting()
+        {
             self.store_checks_gate(task, key, &run_id, &verdict)?;
         }
         Ok(verdict)

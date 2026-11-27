@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
-import { api } from "../api/client";
+import { ApiFailure, api } from "../api/client";
 import { useWorkspace } from "../product/state/workspace";
 import { useUi } from "../product/state/ui";
 import { useThreadLogs } from "../product/state/threadLogs";
@@ -19,6 +19,8 @@ beforeEach(() => {
 });
 
 const wait = { timeout: 8000 };
+/** The failure `client.ts` throws when the service cannot answer a read: the service’s code, status and sentence. */
+const readFailed = () => new ApiFailure("internal", "Orbyn hit an internal error. Check the service log.", 500);
 const details = () => screen.findByRole("button", { name: "Details" }, wait);
 const popover = () => screen.queryByRole("dialog", { name: "Thread details" });
 const card = () => screen.queryByRole("dialog", { name: "Thread details" });
@@ -166,21 +168,27 @@ describe("the Details button and the Details popover", () => {
   it("keeps its title and shows one error row with Try again for what could not be read, and the rows that loaded stay", async () => {
     setViewportWidth(1400);
     const user = userEvent.setup();
-    const diff = vi.spyOn(api, "diff").mockRejectedValue(new Error("down"));
-    vi.spyOn(threadApi, "listThreadServers").mockRejectedValue(new Error("down"));
+    const diff = vi.spyOn(api, "diff").mockRejectedValue(readFailed());
+    const servers = vi.spyOn(threadApi, "listThreadServers").mockRejectedValue(readFailed());
     render(<App />);
     await user.click(await details());
     const alert = await within(card()!).findByRole("alert", {}, wait);
     expect(alert).toHaveTextContent("Couldn’t read the details.");
-    // One row for all that failed, in the place of the first.
+    expect(within(alert).getByRole("button", { name: "Try again" })).toBeEnabled();
+    // One row for all that failed, in the place of the first: neither read that failed has a row of its own.
     expect(within(card()!).getAllByRole("alert")).toHaveLength(1);
+    expect(within(card()!).queryByText("Changes")).toBeNull();
+    expect(within(card()!).queryByText("Local servers")).toBeNull();
     expect(within(card()!).getByText("Details")).toBeInTheDocument();
-    expect(within(card()!).queryByText("None running")).toBeNull();
     expect(within(card()!).getByText("Limits")).toBeInTheDocument();
+    // Try again reads both failed rows again, and both come back.
     diff.mockResolvedValue([]);
-    vi.spyOn(threadApi, "listThreadServers").mockResolvedValue([]);
+    servers.mockResolvedValue([]);
     await user.click(within(alert).getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(within(card()!).queryByRole("alert")).toBeNull());
+    expect(within(card()!).getByText("Changes")).toBeInTheDocument();
+    expect(within(card()!).getByText("No changes")).toBeInTheDocument();
+    expect(within(card()!).getByText("Local servers")).toBeInTheDocument();
     expect(within(card()!).getByText("None running")).toBeInTheDocument();
   });
 
@@ -191,13 +199,18 @@ describe("the Details button and the Details popover", () => {
     render(<App />);
     await user.click(await details());
     expect(await within(card()!).findByText("· 1 file", { exact: false }, wait)).toBeInTheDocument();
-    diff.mockRejectedValue(new Error("down"));
+    diff.mockRejectedValue(readFailed());
     const before = diff.mock.calls.length;
     act(() => useThreadLogs.setState((state) => ({ diffVersion: { ...state.diffVersion, "t-done": (state.diffVersion["t-done"] ?? 0) + 1 } })));
     await waitFor(() => expect(diff.mock.calls.length).toBeGreaterThan(before));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 50));
+    // The last good read stays with what it said, and no error row or its retry appears over it.
     expect(within(card()!).queryByRole("alert")).toBeNull();
+    expect(within(card()!).queryByText("Couldn’t read the details.")).toBeNull();
     expect(within(card()!).getByText("+4")).toBeInTheDocument();
+    expect(within(card()!).getByText("−3")).toBeInTheDocument();
+    expect(within(card()!).getByText("· 1 file", { exact: false })).toBeInTheDocument();
   });
 
   it("is put away when the panel takes the thread's place on a phone", async () => {
@@ -276,7 +289,7 @@ describe("the Details button and the Details popover", () => {
     expect(within(card()!).queryByRole("button", { name: /Copy folder path/ })).toBeNull();
     await user.click(await screen.findByRole("button", { name: "Thread menu" }));
     const menu = await screen.findByRole("menu", { name: "Thread menu" });
-    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Settle", "Snooze…", "Rename", "Copy folder path", "Archive", "Delete thread"]);
+    expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Settle", "Snooze…", "Rename", "Copy folder path", "Export transcript", "Archive", "Delete thread"]);
     await user.click(within(menu).getByRole("menuitem", { name: "Delete thread" }));
     expect(await screen.findByRole("dialog", { name: /Delete “/ })).toBeInTheDocument();
   });

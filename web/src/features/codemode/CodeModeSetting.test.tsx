@@ -106,6 +106,7 @@ describe("the Code Mode switch of an engine", () => {
     render(<CodeModeSetting engine={engine()} />);
     const toggle = await screen.findByRole("switch", { name: "Use Code Mode" });
     await waitFor(() => expect(vi.mocked(fetch)).toHaveBeenCalled());
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(toggle).not.toBeChecked();
     expect(toggle).toBeDisabled();
@@ -179,6 +180,7 @@ describe("the Code Mode switch of an engine", () => {
     rerender(<CodeModeSetting engine={engine({ id: "codex", name: "Codex" })} />);
     await waitFor(() => expect(screen.getByRole("switch", { name: "Use Code Mode" })).toBeEnabled());
     finish();
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.getByRole("switch", { name: "Use Code Mode" })).not.toBeChecked();
   });

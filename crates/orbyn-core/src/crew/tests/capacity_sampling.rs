@@ -3,7 +3,6 @@
 //! Real `Core`, fake engines. No git is needed: the sampling step reads store rows only.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::json;
 
@@ -63,6 +62,16 @@ fn rows(w: &World) -> i64 {
         .unwrap()
 }
 
+/// The id a recorded batch is stored under: its oldest and newest merge, in landing order. A batch is named by
+/// those two, so a test names it from the fixture's first and last merge rather than a fixed index.
+fn batch_id(batch: &[MergeRecord]) -> String {
+    format!(
+        "batch-{}-{}",
+        batch.first().expect("the batch's oldest merge").id,
+        batch.last().expect("the batch's newest merge").id
+    )
+}
+
 #[tokio::test]
 async fn with_sampling_off_nothing_is_written_however_many_low_merges_land() {
     let w = quiet().await;
@@ -105,12 +114,22 @@ async fn the_fourth_low_merge_closes_a_batch_and_one_is_picked_and_recorded_once
     let batch = w
         .core
         .store
-        .crew_review_sample(&format!("batch-{}-{}", all[0].id, all[3].id))
+        .crew_review_sample(&batch_id(&all))
         .unwrap()
         .unwrap();
-    let chosen: Vec<_> = batch.tasks.iter().filter(|t| t.chosen).collect();
-    assert_eq!(chosen.len(), 1);
-    assert_eq!(chosen[0].task_id, picked[0]);
+    // The stored rows say which task was chosen, so a test finds it by that flag, not by its position.
+    let chosen: Vec<&String> = batch
+        .tasks
+        .iter()
+        .filter(|task| task.chosen)
+        .map(|task| &task.task_id)
+        .collect();
+    assert_eq!(chosen.len(), 1, "one task of the batch is chosen");
+    assert_eq!(
+        chosen,
+        picked.iter().collect::<Vec<_>>(),
+        "the recorded choice is the returned pick"
+    );
     // The picked merge waits for a person, so the capacity state lists it; nothing else changed on the merge.
     assert_eq!(
         w.core.crew_capacity_state(&project(&w)).unwrap().picked,
@@ -175,7 +194,10 @@ async fn high_and_medium_merges_are_never_sampled_or_counted_toward_a_batch() {
         .chain([&fourth])
         .map(|m| m.task_id.clone())
         .collect();
-    assert!(in_batch.contains(&picked[0]));
+    assert!(
+        picked.iter().all(|task| in_batch.contains(task)),
+        "the pick is one of the four Low merges: {picked:?}"
+    );
     assert_eq!(rows(&w), 4, "only the four Low merges are recorded");
 }
 
@@ -193,15 +215,15 @@ async fn the_same_seed_picks_the_same_merges_and_the_choice_is_close_batch_not_t
     let stored = w
         .core
         .store
-        .crew_review_sample(&format!("batch-{}-{}", batch[0].id, batch[7].id))
+        .crew_review_sample(&batch_id(&batch))
         .unwrap()
         .unwrap();
     assert_eq!(stored.seed, 42);
     assert!(close_batch(&w.core.store, &batch, Sampling::OneInFour, 42, NOW).is_err());
     assert_eq!(rows(&w), 8, "a second record is refused");
-    // Off plans nothing and writes nothing.
+    // Off plans nothing and writes nothing, even for a whole batch.
     assert!(
-        close_batch(&w.core.store, &batch[..4], Sampling::Off, 1, NOW)
+        close_batch(&w.core.store, &batch, Sampling::Off, 1, NOW)
             .unwrap()
             .is_empty()
     );
@@ -242,12 +264,11 @@ async fn the_merge_hook_samples_in_its_detached_task_and_logs_instead_of_failing
         // `/repo` is not a repository: provenance fails and is written to the ledger, and sampling still runs.
         w.core.capacity_after_merge(&merge, NOW);
     }
-    for _ in 0..100 {
-        if rows(&w) == 4 {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    // The detached write is waited for on the harness clock, not a five-second wall-clock guess.
+    w.until("the detached sampling wrote its four rows", |w| {
+        rows(w) == 4
+    })
+    .await;
     assert_eq!(rows(&w), 4);
     assert_eq!(
         w.core
@@ -267,7 +288,8 @@ async fn hooks_finishing_out_of_order_drop_no_merge() {
     for i in 0..5 {
         merges.push(landed(&w, i, "low").await);
     }
-    // Merge 5's hook finishes before merge 4's (and 1 to 3 never ran theirs).
+    // Merge 5's hook finishes before merge 4's (and 1 to 3 never ran theirs). The merges are in landing order
+    // and that order is the contract: the oldest four are the batch, so the fifth is still open.
     let picked = sample_after_merge(&w.core.store, &merges[4], NOW).unwrap();
     assert_eq!(picked.len(), 1);
     assert!(
@@ -297,7 +319,8 @@ async fn hooks_finishing_out_of_order_drop_no_merge() {
             .len(),
         1
     );
-    // The next three complete the next batch, with the fifth in it.
+    // The next three complete the next batch, with the fifth in it: the eighth merge closes it. Landing order
+    // is again the contract.
     for i in 5..8 {
         merges.push(landed(&w, i, "low").await);
     }
@@ -502,6 +525,8 @@ async fn a_merge_landing_in_the_boundary_second_counts_as_after_and_one_second_e
             .unwrap()
             .is_empty()
     );
+    // The merges are in landing order and that order is the contract: the third is not a batch of four, the
+    // fourth closes it.
     assert!(
         sample_after_merge(&w.core.store, &all[2], NOW)
             .unwrap()
@@ -573,6 +598,7 @@ async fn with_no_readable_start_time_nothing_older_than_now_is_sampled() {
     for i in 1..4 {
         now_merges.push(landed_at(&w, i, "low", NOW).await);
     }
+    // Landing order is the contract: the third merge after `now` is not a batch of four, the fourth is.
     assert!(
         sample_after_merge(&w.core.store, &now_merges[2], NOW)
             .unwrap()
@@ -620,7 +646,8 @@ async fn with_the_preview_flag_off_the_hook_samples_nothing_though_the_same_merg
     }
     // With the flag off the hook returns before it spawns anything, so there is nothing to wait for.
     assert_eq!(rows(&w), 0);
-    // Not vacuous: the same four merges are sampled when the step runs.
+    // Not vacuous: the same four merges are sampled when the step runs. Landing order is the contract: the
+    // fourth merge completes the batch.
     assert_eq!(
         sample_after_merge(&w.core.store, &merges[3], NOW)
             .unwrap()

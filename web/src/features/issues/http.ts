@@ -1,8 +1,8 @@
 import { ApiFailure, request } from "../../api/client";
 import type {
-  IssueDetail, IssueList, IssueQuery, IssueRef, IssueTarget, IssuesApi, ThreadDraft, TrackerKind, TrackerRow,
+  CreateIssueInput, IssueDetail, IssueList, IssueQuery, IssueRef, IssueTarget, IssuesApi, ThreadDraft, TrackerKind, TrackerRow,
 } from "./contract";
-import { readCandidates, readDetail, routeAbsent, updateProblem } from "./edit";
+import { commentProblem, createProblem, readCandidates, readComment, readDetail, readTemplates, routeAbsent, updateProblem } from "./edit";
 
 /**
  * The HTTP client behind `IssuesApi`: one function per route in docs/issues.md, through the app's own `request`, which adds the
@@ -100,6 +100,26 @@ export function createHttpIssuesApi(): IssuesApi {
       return readDetail(await request<IssueDetail>("POST", "/api/issues/item/update", { ...named(issue), ...fields }));
     },
     setState: async (issue, state) => readDetail(await request<IssueDetail>("POST", "/api/issues/item/state", { ...named(issue), state: state.name, ...(state.close_reason ? { close_reason: state.close_reason } : {}) })),
+    comment: async (issue, body) => {
+      // Blank or over a limit: refused here, before anything is sent.
+      const problem = commentProblem(body);
+      if (problem) throw new Error(problem);
+      return readComment(await request<unknown>("POST", "/api/issues/item/comment", { ...named(issue), body }));
+    },
+    templates: async (target, signal) => {
+      const query = new URLSearchParams({ tracker: target.tracker, scope: target.scope });
+      return readTemplates(await request<unknown>("GET", `/api/issues/templates?${query}`, undefined, signal));
+    },
+    create: async (input: CreateIssueInput) => {
+      // Over a limit, or a title that is not one line: refused here, before anything is sent. One call creates one issue.
+      const problem = createProblem(input);
+      if (problem) throw new Error(problem);
+      const body: Record<string, unknown> = { tracker: input.tracker, scope: input.scope, title: input.title, labels: input.labels ?? [], assignees: input.assignees ?? [] };
+      if (input.body !== undefined) body.body = input.body;
+      if (input.template !== undefined) body.template = input.template;
+      return readDetail(await request<IssueDetail>("POST", "/api/issues/item/create", body));
+    },
+    react: async (issue, reaction, on) => readDetail(await request<IssueDetail>("POST", "/api/issues/item/react", { ...named(issue), reaction, on })),
   };
 }
 
@@ -160,5 +180,9 @@ export function createLiveIssuesApi(http: IssuesApi = createHttpIssuesApi()): Is
     candidates: strict(http.candidates),
     update: strict(http.update),
     setState: strict(http.setState),
+    comment: strict(http.comment),
+    templates: quiet(http.templates, []),
+    create: strict(http.create),
+    react: strict(http.react),
   };
 }

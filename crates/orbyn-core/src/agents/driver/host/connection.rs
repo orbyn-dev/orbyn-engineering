@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
-use super::frames::{AskFrame, HostError, Incoming, RunDone, decode, is_gated, request};
+use super::frames::{AskFrame, HostError, HostSdk, Incoming, RunDone, decode, is_gated, request};
 use super::process::{Read, Ready, Transport};
 use super::state::{CrashInfo, CrashKind, ExitRecord, MalformedWindow, Timings};
 
@@ -25,6 +25,8 @@ pub enum RunFrame {
         engine_session_id: Option<String>,
         turn_id: Option<String>,
     },
+    /// The host took the prompt: frames after this one are the prompt's own turn.
+    Accepted,
     Done(RunDone),
     Background(Value),
 }
@@ -53,6 +55,13 @@ pub enum RequestError {
     Closed,
 }
 
+impl RequestError {
+    /// Whether the host answered that this build carries no SDK for the family.
+    pub fn sdk_missing(&self) -> bool {
+        matches!(self, Self::Failed(error) if error.sdk_missing())
+    }
+}
+
 /// The connection is closing and takes no new run.
 #[derive(Debug)]
 pub struct Closing;
@@ -71,7 +80,11 @@ struct Book {
     closing: bool,
 }
 
-type Pending = oneshot::Sender<Result<Value, HostError>>;
+struct Pending {
+    reply: oneshot::Sender<Result<Value, HostError>>,
+    /// The run to tell when this request is accepted; the `send` response does it.
+    accepted: Option<u64>,
+}
 
 struct Shared {
     next_id: AtomicU64,
@@ -91,7 +104,11 @@ pub struct Connection {
     pub id: u64,
     pub capabilities: Vec<String>,
     pub host_version: String,
+    /// The SDK package and version the host's hello named, when it named both.
+    pub sdk: Option<HostSdk>,
     started: Instant,
+    /// Unix seconds when this host became ready, for the UI's `since`.
+    started_at: i64,
     shared: Arc<Shared>,
     outbox: mpsc::UnboundedSender<String>,
     closed: watch::Receiver<Option<ClosedReason>>,
@@ -140,7 +157,9 @@ impl Connection {
             id,
             capabilities: ready.hello.capabilities,
             host_version: ready.hello.host,
+            sdk: ready.hello.sdk,
             started: Instant::now(),
+            started_at: crate::util::unix_now(),
             shared: shared.clone(),
             outbox: transport.outbox.clone(),
             closed,
@@ -153,6 +172,11 @@ impl Connection {
 
     pub fn uptime(&self) -> std::time::Duration {
         self.started.elapsed()
+    }
+
+    /// Unix seconds when this host became ready.
+    pub fn started_at(&self) -> i64 {
+        self.started_at
     }
 
     pub fn has_capability(&self, name: &str) -> bool {
@@ -176,11 +200,40 @@ impl Connection {
         kind: &str,
         fields: Value,
     ) -> Result<Value, RequestError> {
+        self.request_inner(id, kind, fields, None).await
+    }
+
+    /// A request whose acceptance belongs to run `send_id`: the response dispatches an
+    /// `Accepted` frame to that run before this future wakes, so every frame the host
+    /// sent before taking the prompt is ordered ahead of it.
+    pub async fn request_accepting(
+        &self,
+        id: u64,
+        kind: &str,
+        fields: Value,
+        send_id: u64,
+    ) -> Result<Value, RequestError> {
+        self.request_inner(id, kind, fields, Some(send_id)).await
+    }
+
+    async fn request_inner(
+        &self,
+        id: u64,
+        kind: &str,
+        fields: Value,
+        accepted: Option<u64>,
+    ) -> Result<Value, RequestError> {
         if is_gated(kind) && !self.has_capability(kind) {
             return Err(RequestError::Unsupported(kind.to_owned()));
         }
         let (tx, rx) = oneshot::channel();
-        lock(&self.shared.pending).insert(id, tx);
+        lock(&self.shared.pending).insert(
+            id,
+            Pending {
+                reply: tx,
+                accepted,
+            },
+        );
         if self.outbox.send(request(id, kind, fields)).is_err() {
             lock(&self.shared.pending).remove(&id);
             return Err(RequestError::Closed);
@@ -284,8 +337,13 @@ fn dispatch(shared: &Shared, frame: Incoming, pings: &mut HashSet<u64>) -> bool 
                 pings.clear();
                 return true;
             }
-            if let Some(reply) = lock(&shared.pending).remove(&response.id) {
-                let _ = reply.send(response.result);
+            if let Some(pending) = lock(&shared.pending).remove(&response.id) {
+                if let Some(send_id) = pending.accepted
+                    && response.result.is_ok()
+                {
+                    route(send_id, RunFrame::Accepted);
+                }
+                let _ = pending.reply.send(response.result);
             }
         }
         Incoming::Delta { send_id, update } => route(send_id, RunFrame::Delta(update)),
@@ -309,9 +367,7 @@ fn dispatch(shared: &Shared, frame: Incoming, pings: &mut HashSet<u64>) -> bool 
                 let _ = route.tx.send(RunFrame::Done(done));
             }
         }
-        Incoming::Log { level } => {
-            tracing::debug!(level, "engine host log");
-        }
+        Incoming::Log { level, event } => record_log(&level, event.as_ref()),
         Incoming::Background { session_id, event } => {
             let mut book = lock(&shared.book);
             let id = event.get("id").and_then(Value::as_str).map(str::to_owned);
@@ -334,6 +390,22 @@ fn dispatch(shared: &Shared, frame: Incoming, pings: &mut HashSet<u64>) -> bool 
         }
     }
     false
+}
+
+/// One `log` frame from the host. A frame that carries an `envAdded` event names the keys the Claude family
+/// added to a confined child's environment: keys only, never a value, and worth an info line because they are
+/// the one part of that child environment the host chose. Every other frame stays at debug, as before.
+fn record_log(level: &str, event: Option<&Value>) {
+    let added = event
+        .filter(|event| event.get("type").and_then(Value::as_str) == Some("envAdded"))
+        .and_then(|event| event.get("keys"))
+        .and_then(Value::as_array)
+        .map(|keys| keys.iter().filter_map(Value::as_str).collect::<Vec<_>>());
+    if let Some(keys) = added {
+        tracing::info!(keys = ?keys, "engine host added environment keys");
+    } else {
+        tracing::debug!(level, "engine host log");
+    }
 }
 
 async fn sleep_until_opt(due: Option<tokio::time::Instant>) {
@@ -493,4 +565,97 @@ async fn watch_host(
         let _ = tokio::time::timeout(timings.exit_grace, transport.child.wait()).await;
     }
     // Dropping the transport kills whatever is left of the tree.
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Metadata};
+
+    use super::*;
+
+    thread_local! {
+        /// The lines `Capture` recorded on this thread. Thread-local, so the module's two tests never share them.
+        static LINES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    #[derive(Default)]
+    struct Fields(String);
+
+    impl Visit for Fields {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            use std::fmt::Write as _;
+            let _ = write!(self.0, " {}={value:?}", field.name());
+        }
+    }
+
+    /// Keeps the text of every event recorded on this thread, so a test reads what the connection logged.
+    struct Capture;
+
+    impl tracing::Subscriber for Capture {
+        fn enabled(&self, _: &Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+
+        fn record(&self, _: &Id, _: &Record<'_>) {}
+
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+
+        fn event(&self, event: &Event<'_>) {
+            let mut fields = Fields::default();
+            event.record(&mut fields);
+            let meta = event.metadata();
+            let line = format!("{} {}{}", meta.level(), meta.target(), fields.0);
+            LINES.with(|lines| lines.borrow_mut().push(line));
+        }
+
+        fn enter(&self, _: &Id) {}
+
+        fn exit(&self, _: &Id) {}
+    }
+
+    fn capture(frame: &str) -> String {
+        LINES.with(|lines| lines.borrow_mut().clear());
+        let shared = Shared {
+            next_id: AtomicU64::new(2),
+            pending: Mutex::default(),
+            book: Mutex::default(),
+            malformed: AtomicU64::new(0),
+        };
+        let frame = decode(frame).unwrap();
+        assert!(matches!(frame, Incoming::Log { .. }), "a log frame");
+        tracing::subscriber::with_default(Capture, || {
+            dispatch(&shared, frame, &mut HashSet::new());
+        });
+        LINES.with(|lines| lines.borrow().join("\n"))
+    }
+
+    #[test]
+    fn a_host_log_frame_records_the_environment_keys_it_added() {
+        let logged = capture(
+            r#"{"type":"log","level":"info","event":{"type":"envAdded","keys":["CLAUDE_CODE_ADDED","CLAUDE_AGENT_SDK_ADDED"]}}"#,
+        );
+        assert!(logged.contains("INFO"), "{logged}");
+        assert!(
+            logged.contains("engine host added environment keys"),
+            "{logged}"
+        );
+        assert!(logged.contains("CLAUDE_CODE_ADDED"), "{logged}");
+        assert!(logged.contains("CLAUDE_AGENT_SDK_ADDED"), "{logged}");
+    }
+
+    #[test]
+    fn a_host_log_frame_without_added_keys_stays_a_debug_line() {
+        let logged =
+            capture(r#"{"type":"log","level":"warn","event":{"type":"holdingResult","sendId":3}}"#);
+        assert!(logged.contains("DEBUG"), "{logged}");
+        assert!(!logged.contains("added environment keys"), "{logged}");
+    }
 }

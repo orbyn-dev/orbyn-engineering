@@ -5,6 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use orbyn_contracts as wire;
 use orbyn_core::crew::changes::changes_crew_state;
 use orbyn_core::crew::fixtures;
 use orbyn_core::{Core, CoreConfig};
@@ -23,16 +24,35 @@ struct Served {
 }
 
 async fn serve(name: &str) -> Served {
+    serve_with(
+        name,
+        Access::new("token", vec![], None).with_dev_person_override(true),
+        true,
+    )
+    .await
+}
+
+/// A service whose person key is this launch's only way into a `Person` route, as in a build the person uses.
+async fn serve_keyed(name: &str) -> Served {
+    serve_with(
+        name,
+        Access::new("token", vec![], None).with_person_key(Some("the-key")),
+        true,
+    )
+    .await
+}
+
+async fn serve_with(name: &str, access: Access, preview: bool) -> Served {
     let dir = std::env::temp_dir().join(format!("orbynd-bg-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut config = CoreConfig::new(dir.join("data"), "http://127.0.0.1:1".into());
-    config.crew_preview = true;
+    config.crew_preview = preview;
     let core = Arc::new(Core::open(config).unwrap());
     let project = fixtures::add_project(&core, dir.join("repo").to_str().unwrap());
     let app = router(AppState {
         core: core.clone(),
-        access: Arc::new(Access::new("token", vec![], None).with_dev_person_override(true)),
+        access: Arc::new(access),
         remote: false,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),
@@ -50,10 +70,26 @@ async fn serve(name: &str) -> Served {
 
 impl Served {
     async fn call(&self, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+        self.call_as(method, path, body, Some("token"), None).await
+    }
+
+    /// One request, with the service token and the person key when each is given.
+    async fn call_as(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        token: Option<&str>,
+        key: Option<&str>,
+    ) -> (u16, Value) {
         let url = format!("http://127.0.0.1:{}{path}", self.port);
-        let mut request = reqwest::Client::new()
-            .request(method.parse().unwrap(), url)
-            .bearer_auth("token");
+        let mut request = reqwest::Client::new().request(method.parse().unwrap(), url);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
+        if let Some(key) = key {
+            request = request.header("x-orbyn-person", key);
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }
@@ -299,6 +335,156 @@ async fn a_bad_request_is_refused_and_stores_nothing() {
     }
 }
 
+/// A watch is stored with its command and action, and a command the screen refuses comes back as the rule's sentence, never the
+/// command itself, at create and update.
+#[tokio::test]
+async fn a_watch_is_stored_and_a_refused_command_keeps_the_command_out_of_the_error() {
+    let app = serve("watch").await;
+    let mut body = app.body("Watch");
+    body["trigger"] = json!({
+        "kind": "watch", "command": "cargo test", "every_hours": 6, "on_failing": "needs_you"
+    });
+    let (status, crew) = app
+        .call("POST", "/api/crew/background/create", Some(body))
+        .await;
+    assert_eq!(status, 200, "{crew}");
+    assert_eq!(crew["trigger"]["kind"], "watch");
+    assert_eq!(crew["trigger"]["command"], "cargo test");
+    assert_eq!(crew["trigger"]["every_hours"], 6);
+    assert_eq!(crew["trigger"]["on_failing"], "needs_you");
+
+    let mut refused = app.body("Force");
+    refused["trigger"] = json!({
+        "kind": "watch", "command": "git push --force origin main", "every_hours": 6, "on_failing": "template"
+    });
+    let (status, answer) = app
+        .call("POST", "/api/crew/background/create", Some(refused))
+        .await;
+    assert_eq!(status, 400, "{answer}");
+    assert_eq!(answer["code"], "invalid_input");
+    assert_eq!(
+        answer["message"],
+        "That command is not allowed: force-push, history rewrite or any push to main."
+    );
+    assert!(!answer.to_string().contains("origin main"));
+
+    let id = crew["id"].as_str().unwrap();
+    let (status, answer) = app
+        .call(
+            "POST",
+            &format!("/api/crew/background/{id}/update"),
+            Some(json!({
+                "trigger": { "kind": "watch", "command": "echo \"unclosed", "every_hours": 6, "on_failing": "needs_you" }
+            })),
+        )
+        .await;
+    assert_eq!(status, 400, "{answer}");
+    assert_eq!(
+        answer["message"],
+        "That command is empty or has an open quote."
+    );
+    assert!(!answer.to_string().contains("unclosed"));
+    let (_, stored) = app
+        .call("GET", &format!("/api/crew/background/{id}"), None)
+        .await;
+    assert_eq!(stored["trigger"]["command"], "cargo test");
+    let (_, listed) = app.call("GET", "/api/crew/background", None).await;
+    assert_eq!(listed["total"], 1, "the refusals stored nothing");
+}
+
+/// A watch's last check and change history are reads: a fresh watch is `not_checked` with no history, a crew that is not a
+/// watch is refused plainly, and Run now still refuses a watch because its command runs on its own schedule.
+#[tokio::test]
+async fn a_watch_reads_its_state_and_history_and_run_now_still_refuses_it() {
+    let app = serve("watch-read").await;
+    let mut body = app.body("Watch read");
+    body["trigger"] = json!({
+        "kind": "watch", "command": "cargo test", "every_hours": 6, "on_failing": "needs_you"
+    });
+    let (status, crew) = app
+        .call("POST", "/api/crew/background/create", Some(body))
+        .await;
+    assert_eq!(status, 200, "{crew}");
+    let id = crew["id"].as_str().unwrap().to_owned();
+
+    let (status, state) = app
+        .call("GET", &format!("/api/crew/background/{id}/watch"), None)
+        .await;
+    assert_eq!(status, 200, "{state}");
+    assert_eq!(state["crew_id"], id);
+    assert_eq!(state["state"], "not_checked");
+    assert_eq!(state["baseline_done"], false);
+    assert_eq!(state["error_streak"], 0);
+    assert!(state["last_checked_at"].is_null());
+    assert!(state["tail"].is_null());
+
+    let (status, history) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{id}/watch/changes?limit=1&offset=0"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{history}");
+    assert_eq!(history["total"], 0);
+    assert_eq!(history["changes"], json!([]));
+    assert!(history["next_offset"].is_null());
+
+    // A crew that is not a watch has no watch state.
+    let (status, plain) = app
+        .call(
+            "POST",
+            "/api/crew/background/create",
+            Some(app.body("Plain")),
+        )
+        .await;
+    assert_eq!(status, 200, "{plain}");
+    let plain_id = plain["id"].as_str().unwrap();
+    let (status, answer) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{plain_id}/watch"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 400, "{answer}");
+    assert_eq!(answer["message"], "This background crew is not a watch.");
+
+    // Run now still refuses a watch: it runs its command on its schedule, not on demand.
+    app.call("POST", &format!("/api/crew/background/{id}/enable"), None)
+        .await;
+    let (status, answer) = app
+        .call("POST", &format!("/api/crew/background/{id}/run-now"), None)
+        .await;
+    assert_eq!(
+        (status, &answer["code"]),
+        (403, &json!("policy_denied")),
+        "{answer}"
+    );
+    assert_eq!(
+        answer["message"],
+        "A watch crew's command runs on its schedule; Run now does not start a run for it."
+    );
+
+    // Turning it off is recorded in the history the read serves, in the same switch.
+    let (status, _) = app
+        .call("POST", &format!("/api/crew/background/{id}/disable"), None)
+        .await;
+    assert_eq!(status, 200);
+    let (status, history) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{id}/watch/changes"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{history}");
+    assert_eq!(history["total"], 1);
+    assert_eq!(history["changes"][0]["kind"], "turned_off");
+    assert_eq!(history["changes"][0]["action"], "none");
+    assert!(history["changes"][0]["exit_code"].is_null());
+}
+
 /// Run now starts one run by hand: the route hands the core's own refusal and plain reason back, and every refusal leaves no
 /// run behind.
 #[tokio::test]
@@ -328,7 +514,7 @@ async fn run_now_refuses_what_the_core_refuses_with_the_cores_reason() {
         "This background crew is off. Turn it on, then start a run."
     );
 
-    // On, but a dependency update has no listener, so nothing can start it yet.
+    // On, but a dependency update starts only when its listener fires: Run now has no update to start.
     assert_eq!(
         app.call("POST", &format!("/api/crew/background/{id}/enable"), None)
             .await
@@ -345,7 +531,7 @@ async fn run_now_refuses_what_the_core_refuses_with_the_cores_reason() {
     );
     assert_eq!(
         body["message"],
-        "A dependency update crew cannot run yet: Orbyn has nothing that can start it."
+        "A dependency update crew starts when an update appears; Run now has no update to start."
     );
 
     // A crew that is not there is refused before anything is read.
@@ -406,6 +592,7 @@ fn an_agent_is_refused_every_background_change_by_path() {
         "/api/crew/background/t-1/disable",
         "/api/crew/background/t-1/delete",
         "/api/crew/background/t-1/run-now",
+        "/api/crew/background/runs/t-1/acknowledge",
         "/api/CREW/background//t-1/./enable",
         "/api/crew/background/x/../t-1/delete",
         "/api/crew/background/t-1/start",
@@ -417,7 +604,359 @@ fn an_agent_is_refused_every_background_change_by_path() {
         "/api/crew/background",
         "/api/crew/background/t-1",
         "/api/crew/background/t-1/runs",
+        "/api/crew/background/t-1/watch",
+        "/api/crew/background/t-1/watch/changes",
+        "/api/crew/background/runs/run-1",
     ] {
         assert!(!changes_crew_state(path), "{path}");
     }
+}
+
+/// A crew started by hand and stopped at its budget: one run waits for the person.
+async fn waiting_run(app: &Served) -> (String, String) {
+    let body: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Settled")).unwrap();
+    let crew = app.core.background_create(&body).await.unwrap();
+    app.core.background_set_enabled(&crew.id, true).unwrap();
+    let run = app.core.crew_background_start_run(&crew.id).unwrap();
+    let waiting = app.core.crew_background_spend(&run.id, 8, 0).unwrap();
+    assert!(waiting.review_waiting);
+    (crew.id, run.id)
+}
+
+/// The person settles a waiting review over HTTP: the wait clears, the run keeps its reason, the crew reads nothing waiting,
+/// Review drops it, and the same crew starts again.
+#[tokio::test]
+async fn a_person_acknowledges_a_waiting_review_and_the_crew_may_run_again() {
+    let app = serve("acknowledge").await;
+    let (crew_id, run_id) = waiting_run(&app).await;
+    let crew_path = format!("/api/crew/background/{crew_id}");
+    // Unacknowledged: the crew counts it and Review lists it.
+    let (_, crew) = app.call("GET", &crew_path, None).await;
+    assert_eq!(
+        (crew["state"].as_str(), crew["reviews_waiting"].clone()),
+        (Some("stopped"), json!(1))
+    );
+    let (_, queue) = app.call("GET", "/api/crew/autopilot/review", None).await;
+    assert_eq!(queue["background_runs"].as_array().unwrap().len(), 1);
+
+    let path = format!("/api/crew/background/runs/{run_id}/acknowledge");
+    let (status, settled) = app.call("POST", &path, None).await;
+    assert_eq!(status, 200, "{settled}");
+    assert_eq!(settled["id"], run_id.as_str());
+    assert_eq!(settled["review_waiting"], false);
+    assert_eq!(settled["state"], "stopped");
+    assert_eq!(settled["stop_reason"], "budget");
+    assert!(
+        settled["review_reason"]
+            .as_str()
+            .unwrap()
+            .contains("budget"),
+        "the run keeps why it waited: {settled}"
+    );
+
+    // The crew has nothing waiting, Review drops the run, and the run's own page keeps the reason.
+    let (_, crew) = app.call("GET", &crew_path, None).await;
+    assert_eq!(
+        (crew["state"].as_str(), crew["reviews_waiting"].clone()),
+        (Some("stopped"), json!(0))
+    );
+    let (_, queue) = app.call("GET", "/api/crew/autopilot/review", None).await;
+    assert_eq!(queue["background_runs"], json!([]));
+    let (_, runs) = app.call("GET", &format!("{crew_path}/runs"), None).await;
+    assert_eq!(runs["runs"][0]["review_waiting"], false);
+    assert!(
+        runs["runs"][0]["review_reason"]
+            .as_str()
+            .unwrap()
+            .contains("budget")
+    );
+    // The same crew starts again, at once.
+    let next = app.core.crew_background_start_run(&crew_id).unwrap();
+    assert_eq!(next.state, wire::BackgroundRunState::Running);
+    // One person audit row records what was settled.
+    let audit = fixtures::audit_actions(&app.core, "crew.background");
+    assert_eq!(
+        audit
+            .iter()
+            .filter(|action| action.as_str() == "crew.background.run.acknowledge")
+            .count(),
+        1,
+        "{audit:?}"
+    );
+}
+
+/// A run that does not wait has nothing to settle: the refusal is plain and nothing changes.
+#[tokio::test]
+async fn acknowledging_a_run_that_is_not_waiting_is_refused_plainly() {
+    let app = serve("acknowledge-refused").await;
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/crew/background/runs/nothing/acknowledge",
+            None,
+        )
+        .await;
+    assert_eq!((status, &body["code"]), (404, &json!("not_found")));
+
+    let body: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Running")).unwrap();
+    let crew = app.core.background_create(&body).await.unwrap();
+    app.core.background_set_enabled(&crew.id, true).unwrap();
+    let run = app.core.crew_background_start_run(&crew.id).unwrap();
+    let path = format!("/api/crew/background/runs/{}/acknowledge", run.id);
+    let (status, body) = app.call("POST", &path, None).await;
+    assert_eq!((status, &body["code"]), (400, &json!("invalid_input")));
+    assert_eq!(
+        body["message"],
+        "this run is not waiting for the person's review"
+    );
+    // Wrong method is not a route.
+    let (status, _) = app.call("GET", &path, None).await;
+    assert!(matches!(status, 404 | 405), "{status}");
+    // Nothing changed and nothing was audited.
+    let (_, runs) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{}/runs", crew.id),
+            None,
+        )
+        .await;
+    assert_eq!(runs["runs"][0]["state"], "running");
+    let audit = fixtures::audit_actions(&app.core, "crew.background");
+    assert!(
+        audit
+            .iter()
+            .all(|action| action.as_str() != "crew.background.run.acknowledge"),
+        "{audit:?}"
+    );
+}
+
+/// The acknowledgement is a `Person` route: the service token alone, or a wrong key, is refused and changes nothing.
+#[tokio::test]
+async fn acknowledging_needs_the_person_key_and_changes_nothing_without_it() {
+    let app = serve_keyed("acknowledge-key").await;
+    let (crew_id, run_id) = waiting_run(&app).await;
+    let path = format!("/api/crew/background/runs/{run_id}/acknowledge");
+    let (status, _) = app.call_as("POST", &path, None, None, None).await;
+    assert_eq!(status, 401, "the service token comes first");
+    for key in [None, Some("wrong")] {
+        let (status, body) = app.call_as("POST", &path, None, Some("token"), key).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (403, &json!("person_required")),
+            "{key:?}"
+        );
+    }
+    // Every refused call left the review waiting and wrote no row.
+    let (_, crew) = app
+        .call("GET", &format!("/api/crew/background/{crew_id}"), None)
+        .await;
+    assert_eq!(crew["reviews_waiting"], json!(1));
+    assert!(
+        fixtures::audit_actions(&app.core, "crew.background")
+            .iter()
+            .all(|action| action.as_str() != "crew.background.run.acknowledge")
+    );
+    // The key this launch holds settles it.
+    let (status, settled) = app
+        .call_as("POST", &path, None, Some("token"), Some("the-key"))
+        .await;
+    assert_eq!(status, 200, "{settled}");
+    assert_eq!(settled["review_waiting"], false);
+    let (_, crew) = app
+        .call("GET", &format!("/api/crew/background/{crew_id}"), None)
+        .await;
+    assert_eq!(crew["reviews_waiting"], json!(0));
+}
+
+/// A run the disk guard refused before it started reads over HTTP as a stopped run with its `reason_code`, so the
+/// web can draw "Not started · Disk"; a run that did start carries no code.
+#[tokio::test]
+async fn a_not_started_run_reads_its_reason_code_over_http() {
+    let app = serve("not-started").await;
+    let body: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Refused")).unwrap();
+    let crew = app.core.background_create(&body).await.unwrap();
+    app.core.background_set_enabled(&crew.id, true).unwrap();
+    let running = app.core.crew_background_start_run(&crew.id).unwrap();
+    let why = "Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again.";
+    let stopped = app
+        .core
+        .store
+        .end_background_run_not_started(&running.id, "disk_low", why, "crew")
+        .unwrap()
+        .expect("the running run");
+    assert_eq!(stopped.reason_code.as_deref(), Some("disk_low"));
+
+    let (status, listed) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{}/runs", crew.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{listed}");
+    assert_eq!(listed["total"], 1);
+    let run = &listed["runs"][0];
+    assert_eq!(run["id"].as_str(), Some(running.id.as_str()));
+    assert_eq!(run["state"].as_str(), Some("stopped"));
+    assert_eq!(run["reason_code"].as_str(), Some("disk_low"));
+    assert!(run["stop_reason"].is_null());
+    assert_eq!(run["review_waiting"], false);
+    assert_eq!(run["review_reason"].as_str(), Some(why));
+    assert_eq!(
+        (run["turns_spent"].clone(), run["minutes_spent"].clone()),
+        (json!(0), json!(0))
+    );
+    assert_eq!(run["budget"], json!({ "turns": 8, "minutes": 20 }));
+
+    // A run that started reads no code, so the web only draws the row for a start that never happened.
+    app.core.crew_background_start_run(&crew.id).unwrap();
+    let (_, listed) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/{}/runs", crew.id),
+            None,
+        )
+        .await;
+    assert_eq!(listed["total"], 2);
+    assert_eq!(listed["runs"][0]["state"].as_str(), Some("running"));
+    assert!(listed["runs"][0]["reason_code"].is_null());
+}
+
+/// The run read "Open the run" opens: one run with the crew it belongs to, its own state, times, reason and spend, and never
+/// another crew's name. A finished run, the running run of another crew, a not-started run and an unknown id each answer
+/// with their exact status and code.
+#[tokio::test]
+async fn a_run_read_returns_its_own_run_and_crew_over_http() {
+    use orbyn_core::crew::BackgroundEnd;
+
+    let app = serve("run-detail").await;
+    let alpha: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Alpha")).unwrap();
+    let alpha = app.core.background_create(&alpha).await.unwrap();
+    app.core.background_set_enabled(&alpha.id, true).unwrap();
+    let beta: wire::BackgroundCrewCreate = serde_json::from_value(app.body("Beta")).unwrap();
+    let beta = app.core.background_create(&beta).await.unwrap();
+    app.core.background_set_enabled(&beta.id, true).unwrap();
+    let beta_run = app.core.crew_background_start_run(&beta.id).unwrap();
+
+    // A running run: its own id and crew, the crew's name and template, and nothing guessed about its end.
+    let running = app.core.crew_background_start_run(&alpha.id).unwrap();
+    let (status, detail) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/runs/{}", running.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["crew_id"], alpha.id);
+    assert_eq!(detail["name"], "Alpha");
+    assert_eq!(detail["template"], "dependency_bump");
+    assert_eq!(detail["run"]["id"], running.id);
+    assert_eq!(detail["run"]["crew_id"], alpha.id);
+    assert_eq!(detail["run"]["state"], "running");
+    assert!(detail["run"]["ended_at"].is_null());
+    assert!(detail["run"]["stop_reason"].is_null());
+    assert!(detail["run"]["reason_code"].is_null());
+    assert_eq!(detail["run"]["turns_spent"], 0);
+    assert_eq!(detail["run"]["minutes_spent"], 0);
+    assert_eq!(
+        detail["run"]["budget"],
+        json!({ "turns": 8, "minutes": 20 })
+    );
+    assert_eq!(detail["run"]["review_waiting"], false);
+    assert_eq!(detail["run"]["started_at"], running.started_at);
+    assert_eq!(detail["run"]["updated_at"], running.updated_at);
+    assert!(
+        !detail.to_string().contains("Beta"),
+        "one crew's run never shows another crew: {detail}"
+    );
+
+    // A finished run: the same run read again carries its end and its waiting review.
+    let finished = app
+        .core
+        .crew_background_end_run(&running.id, BackgroundEnd::NeedsReview)
+        .unwrap();
+    let (status, detail) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/runs/{}", finished.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["run"]["state"], "needs_review");
+    assert_eq!(
+        detail["run"]["ended_at"].as_str(),
+        finished.ended_at.as_deref()
+    );
+    assert_eq!(detail["run"]["review_waiting"], true);
+    assert!(detail["run"]["stop_reason"].is_null());
+    assert!(detail["run"]["reason_code"].is_null());
+
+    // A not-started run: stopped with its code and no stop reason, and the disk guard's sentence as why it waited.
+    let refused = app.core.crew_background_start_run(&alpha.id).unwrap();
+    let why = "Not started: not enough free space. Free space and try again.";
+    let refused = app
+        .core
+        .store
+        .end_background_run_not_started(&refused.id, "disk_low", why, "crew")
+        .unwrap()
+        .expect("the running run");
+    assert_eq!(refused.reason_code.as_deref(), Some("disk_low"));
+    let (status, detail) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/runs/{}", refused.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["run"]["state"], "stopped");
+    assert_eq!(detail["run"]["reason_code"], "disk_low");
+    assert!(detail["run"]["stop_reason"].is_null());
+    assert_eq!(detail["run"]["review_reason"], why);
+    assert_eq!(detail["run"]["review_waiting"], false);
+    assert!(detail["run"]["ended_at"].is_string());
+
+    // The other crew's running run reads its own name, and not this crew's.
+    let (status, detail) = app
+        .call(
+            "GET",
+            &format!("/api/crew/background/runs/{}", beta_run.id),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{detail}");
+    assert_eq!(detail["name"], "Beta");
+    assert_eq!(detail["crew_id"], beta.id);
+    assert_eq!(detail["run"]["state"], "running");
+    assert!(!detail.to_string().contains("Alpha"), "{detail}");
+
+    // An unknown run is not found, with the plain code.
+    let (status, body) = app
+        .call("GET", "/api/crew/background/runs/nothing", None)
+        .await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (404, Some("not_found")),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn the_run_read_is_hidden_with_the_crew_flag_off() {
+    let app = serve_with(
+        "run-detail-off",
+        Access::new("token", vec![], None).with_dev_person_override(true),
+        false,
+    )
+    .await;
+    let (status, body) = app
+        .call("GET", "/api/crew/background/runs/run-1", None)
+        .await;
+    assert_eq!(
+        (status, body["code"].as_str()),
+        (404, Some("not_found")),
+        "{body}"
+    );
 }

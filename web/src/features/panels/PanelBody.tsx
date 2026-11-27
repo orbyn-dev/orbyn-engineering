@@ -12,13 +12,13 @@ import { FileTab } from "./files/FileTab";
 import { ReviewPanel } from "./review/ReviewPanel";
 
 /** What the open tab shows. The side chat and linked threads are the thread's own and arrive as `content`. */
-export function PanelBody({ tab, thread, content }: { tab: RightTab; thread: Thread; content: { side?: ReactNode; linked?: ReactNode } }) {
+export function PanelBody({ tab, thread, content, repoName }: { tab: RightTab; thread: Thread; content: { side?: ReactNode; linked?: ReactNode }; /** The repository's name for a tab of another repository's file. */ repoName?: string }) {
   if (tab === "browser") return <BrowserPanel threadId={thread.id} />;
   if (tab === "diff") return <DiffPanel threadId={thread.id} />;
-  if (isFileTab(tab)) return <FileTab key={tab} id={tab} threadId={thread.id} />;
+  if (isFileTab(tab)) return <FileTab key={tab} id={tab} threadId={thread.id} {...(repoName === undefined ? {} : { repoName })} />;
   if (tab === "activity") return <ActivityPanel key={thread.id} threadId={thread.id} />;
   if (tab === "tools") return <ToolsTab key={thread.id} threadId={thread.id} engine={thread.engine} />;
-  if (tab === "devices") return <DevicesPanel key={thread.id} />;
+  if (tab === "devices") return <DevicesPanel key={thread.id} threadId={thread.id} />;
   if (tab === "library") return <LibraryPanel key={thread.id} threadId={thread.id} typeIntoTerminal={insertIntoTerminal} />;
   if (tab === "review") return <ReviewPanel key={thread.id} threadId={thread.id} />;
   return content[tab as "side" | "linked"];

@@ -6,7 +6,8 @@ import type { BackgroundCrew } from "../../../generated/BackgroundCrew";
 import type { BackgroundRun } from "../../../generated/BackgroundRun";
 import { heldRow } from "../autopilot/approvals/held";
 import type { AutopilotAreaRow } from "../../../generated/AutopilotAreaRow";
-import { autonomyItems, backgroundItems, heldItems, mainItems, only, rank, stopItems, viewOf } from "./assemble";
+import type { NeedsYouItem } from "../../../generated/NeedsYouItem";
+import { autonomyItems, backgroundItems, couldNotStopItems, heldItems, mainItems, only, rank, stopItems, viewOf, watchItems, WORKER_MAY_RUN } from "./assemble";
 import type { NeedsItem } from "./model";
 
 const NOW = Date.parse("2026-11-12T15:04:00");
@@ -28,6 +29,22 @@ const bgRun = (over: Partial<BackgroundRun> = {}): BackgroundRun => ({
 });
 
 const limits = { inARow: 3, inARun: 20 };
+
+const stuckItem = (over: Partial<NeedsYouItem> = {}): NeedsYouItem => ({
+  id: "b-verifying",
+  kind: "could_not_stop",
+  project_id: "p-app",
+  crew_id: "crew-redirect-0001",
+  since: "2026-11-07T14:40:00Z",
+  dismissible: false,
+  reason: "The worker could not be stopped. Stop it again.",
+  name: "Add tests for the redirect, including //evil.com",
+  engine: "codex",
+  model: "GPT-5.5",
+  task_kind: "test",
+  question_hidden: false,
+  ...over,
+});
 
 describe("each source becomes one inbox row", () => {
   it("a held command that still waits is an approval with Approve and Deny; a decided or expired one is not an item", () => {
@@ -64,6 +81,52 @@ describe("each source becomes one inbox row", () => {
       ["background:r4", "background", "Needs approval", "Checks failed twice", "Background crew · Fix failing CI", "bg"],
     ]);
     expect(items.every((one) => one.risk === null)).toBe(true);
+  });
+
+  it("a watch that turned failing and one whose checks could not run are two rows, each opened at its own watch", () => {
+    const items = watchItems({
+      items: [
+        { id: "bg-watch-redirect", kind: "watch_failing", project_id: "p", crew_id: "bg-watch-redirect", since: "2026-11-07T14:02:00Z", dismissible: false, reason: "The watch’s command is failing.", question_hidden: false },
+        { id: "bg-watch-lock", kind: "watch_could_not_run", project_id: "p", crew_id: "bg-watch-lock", since: "2026-11-07T12:02:00Z", dismissible: false, reason: "3 checks in a row could not run: timed out.", question_hidden: false },
+      ],
+      names: { "bg-watch-redirect": "Redirect tests", "bg-watch-lock": "Lockfile check" },
+    });
+    expect(items.map((one) => [one.id, one.kind, one.title, one.ref])).toEqual([
+      ["watch:bg-watch-redirect", "background", "Watch failing: Redirect tests", "bg-watch-redirect"],
+      ["watch:bg-watch-lock", "background", "Watch could not run: Lockfile check", "bg-watch-lock"],
+    ]);
+    expect(items[0]?.from).toMatch(/^Watch · Redirect tests · turned failing /);
+    expect(items[1]?.from).toMatch(/^Watch · Lockfile check · 3 checks in a row · one row since /);
+    expect(items[0]?.cost).toBe("The watch’s command is failing. This is raised once for this change and is meant not to repeat while the check keeps failing. It resolves itself when a check passes.");
+    expect(items[1]?.cost).toBe("3 checks in a row could not run: timed out. One row for the whole stretch: it is updated at each later check, not repeated, and it resolves itself when a check passes.");
+    expect(items.map((one) => one.actions)).toEqual([[{ key: "open", label: "Open", primary: true }], [{ key: "open", label: "Open", primary: true }]]);
+    expect(items.every((one) => one.risk === null && one.undo === null)).toBe(true);
+  });
+
+  it("a task whose worker could not be stopped names and routes itself from the item, with Stop again and Open task", () => {
+    const items = couldNotStopItems({ items: [stuckItem()] });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: "stuck:b-verifying",
+      kind: "could_not_stop",
+      title: "Add tests for the redirect, including //evil.com",
+      from: "codex · GPT-5.5",
+      engine: "codex",
+      cost: "The worker could not be stopped. Stop it again.",
+      since: Date.parse("2026-11-07T14:40:00Z"),
+      ref: "b-verifying",
+      project: "p-app",
+    });
+    expect(items[0]!.actions).toEqual([
+      { key: "stop-again", label: "Stop again", primary: true },
+      { key: "open", label: "Open task" },
+    ]);
+  });
+
+  it("names a stopped task with no name by its id and keeps the item's own line", () => {
+    const [one] = couldNotStopItems({ items: [stuckItem({ name: "", engine: null, model: null, reason: null })] });
+    expect(one).toMatchObject({ title: "Task b-verifying", from: "Task b-verifying", cost: WORKER_MAY_RUN });
+    expect(one).not.toHaveProperty("engine");
   });
 
   it("a daily-cap stop shows the core's reason verbatim and says to wait for the reset; the lifetime stop keeps its words", () => {

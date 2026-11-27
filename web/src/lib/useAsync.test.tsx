@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readKept, writeKept } from "./keptData";
-import { useAsync } from "./useAsync";
+import { type LoadContext, useAsync } from "./useAsync";
 
 describe("useAsync", () => {
   it("keeps fresh data cleared while a queued event follows a foreground read", async () => {
@@ -60,6 +60,7 @@ describe("useAsync", () => {
     act(() => resolvers.b?.("b result"));
     await waitFor(() => expect(result.current.data).toBe("b result"));
     act(() => resolvers.a?.("a result"));
+    // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
     await new Promise((resolve) => setTimeout(resolve));
     expect(result.current.data).toBe("b result");
   });
@@ -235,6 +236,85 @@ describe("useAsync", () => {
       // The parked read died with the screen: the late save must not wake it.
       act(() => setData("late save"));
       expect(reads).toHaveLength(2);
+    });
+  });
+
+  describe("keepOnManual", () => {
+    type Read = { context: LoadContext; resolve: (value: string) => void; reject: (error: unknown) => void };
+    const gated = () => {
+      const reads: Read[] = [];
+      const load = (_signal: AbortSignal, context: LoadContext) =>
+        new Promise<string>((resolve, reject) => reads.push({ context, resolve, reject }));
+      return { reads, load };
+    };
+    const options = { fresh: true, keepOnManual: true };
+    const shown = async (reads: Read[], result: { current: { data: string | null } }) => {
+      await waitFor(() => expect(reads).toHaveLength(1));
+      await act(async () => reads[0]?.resolve("prior account"));
+      expect(result.current.data).toBe("prior account");
+    };
+
+    it("keeps the figures through a person's refresh, while it runs and after it fails", async () => {
+      const { reads, load } = gated();
+      const { result } = renderHook(() => useAsync("limits", load, options));
+      await shown(reads, result);
+      let pending!: Promise<void>;
+      act(() => { pending = result.current.reloadNow(); });
+      await waitFor(() => expect(reads).toHaveLength(2));
+      expect(reads[1]?.context).toEqual({ background: false, force: true });
+      expect(result.current).toMatchObject({ status: "ready", data: "prior account", refreshing: true });
+      await act(async () => { reads[1]?.reject(new Error("down")); await pending; });
+      expect(result.current).toMatchObject({ status: "error", data: "prior account", refreshing: false });
+    });
+
+    it("still blanks on an event read, because the figures may be another account's", async () => {
+      const { reads, load } = gated();
+      const { result } = renderHook(() => useAsync("limits", load, options));
+      await shown(reads, result);
+      let pending!: Promise<void>;
+      act(() => { pending = result.current.refreshQuietly(); });
+      await waitFor(() => expect(reads).toHaveLength(2));
+      // An event is not a person: it asks without force and shows nothing while it runs.
+      expect(reads[1]?.context).toEqual({ background: true, force: false });
+      expect(result.current).toMatchObject({ status: "loading", data: null, refreshing: true });
+      await act(async () => { reads[1]?.reject(new Error("down")); await pending; });
+      expect(result.current).toMatchObject({ status: "error", data: null, refreshing: false });
+    });
+
+    it("blanks for a reload the screen starts itself, without a refresh control", async () => {
+      const { reads, load } = gated();
+      const { result } = renderHook(() => useAsync("limits", load, options));
+      await shown(reads, result);
+      let pending!: Promise<void>;
+      act(() => { pending = result.current.reload(); });
+      await waitFor(() => expect(reads).toHaveLength(2));
+      expect(reads[1]?.context).toEqual({ background: false, force: false });
+      expect(result.current).toMatchObject({ status: "loading", data: null });
+      await act(async () => { reads[1]?.reject(new Error("down")); await pending; });
+      expect(result.current).toMatchObject({ status: "error", data: null });
+    });
+
+    it("shows the current account's figures after a failed event read, with no stale mix", async () => {
+      const { reads, load } = gated();
+      const { result } = renderHook(() => useAsync("limits", load, options));
+      await shown(reads, result);
+      let pending!: Promise<void>;
+      act(() => { pending = result.current.refreshQuietly(); });
+      await waitFor(() => expect(reads).toHaveLength(2));
+      await act(async () => { reads[1]?.reject(new Error("down")); await pending; });
+      expect(result.current.data).toBeNull();
+      act(() => { void result.current.reloadNow(); });
+      await waitFor(() => expect(reads).toHaveLength(3));
+      await act(async () => reads[2]?.resolve("current account"));
+      expect(result.current).toMatchObject({ status: "ready", data: "current account", error: null });
+    });
+
+    it("drops the figures for another key, however the read was made", async () => {
+      const { reads, load } = gated();
+      const { result, rerender } = renderHook(({ id }) => useAsync(id, load, options), { initialProps: { id: "engine:codex" } });
+      await shown(reads, result);
+      rerender({ id: "engine:claude" });
+      expect(result.current).toMatchObject({ status: "loading", data: null });
     });
   });
 

@@ -281,7 +281,7 @@ fn reveal_command(file: &Path) -> (&'static str, Vec<OsString>) {
     }
 }
 
-fn scope_of(root: &Path, thread: &Thread) -> WriteScope {
+fn scope_of(data_dir: &Path, root: &Path, thread: &Thread) -> WriteScope {
     let checkout = PathBuf::from(&thread.cwd);
     WriteScope {
         excluded: if checkout == root {
@@ -291,6 +291,7 @@ fn scope_of(root: &Path, thread: &Thread) -> WriteScope {
         },
         engine_cwd: checkout.clone(),
         checkout,
+        data_dir: Some(data_dir.to_path_buf()),
     }
 }
 
@@ -523,16 +524,22 @@ fn navigation_file(scope: &WriteScope, target: &Path) -> Option<String> {
 }
 
 impl Core {
-    /// Resolve navigation coordinates without granting a new filesystem root.
+    /// Resolve navigation coordinates without granting a new filesystem root. A multi-repository
+    /// thread resolves them in the repository asked for (its primary one when none is named), never in
+    /// the task folder: its worktrees are the checkouts. `cwd` stays the folder the caller knows, so a
+    /// thread that moved meanwhile is `StaleOwner`.
     pub async fn resolve_thread_path(
         &self,
         id: &str,
         request: &ResolveThreadPath,
     ) -> Result<ResolvedThreadPath> {
-        let (thread, scope) = self.file_scope(id)?;
-        if thread.cwd != request.cwd {
+        // The fence is the thread's own stored folder, which is what the caller names. Which checkout
+        // the path is resolved in is the repository scope's question.
+        let stored = self.store.thread(id)?;
+        if stored.cwd != request.cwd {
             return Err(CoreError::StaleOwner);
         }
+        let (thread, scope) = self.file_scope(id)?;
         if request.path.len() > 4096 || request.path.is_empty() {
             return Err(CoreError::Invalid(
                 "That path is outside this checkout.".into(),
@@ -569,7 +576,7 @@ impl Core {
         // resolve it.
         if crate::project::outside_files::reaches_remote(&target) {
             return Ok(ResolvedThreadPath {
-                cwd: thread.cwd,
+                cwd: stored.cwd,
                 checkout_path: None,
                 repository_path: None,
             });
@@ -599,11 +606,14 @@ impl Core {
                 .filter(|path| !path.as_os_str().is_empty())
                 .map(|path| path.to_string_lossy().replace('\\', "/"))
         };
-        if self.store.thread(id)?.cwd != request.cwd {
+        // The thread may have moved while the path was resolved; the answer is only good for the
+        // folder the caller named, which stays the thread's even when the checkout is a repository's.
+        let current = self.store.thread(id)?;
+        if current.cwd != request.cwd {
             return Err(CoreError::StaleOwner);
         }
         Ok(ResolvedThreadPath {
-            cwd: thread.cwd,
+            cwd: current.cwd,
             checkout_path,
             repository_path,
         })
@@ -615,7 +625,7 @@ impl Core {
         if !self.store.project(&thread.project_id)?.trusted {
             return Err(CoreError::FolderUntrusted);
         }
-        let scope = scope_of(&self.workspace.root()?, &thread);
+        let scope = scope_of(&self.config.data_dir, &self.workspace.root()?, &thread);
         Ok((thread, scope))
     }
 
@@ -936,6 +946,7 @@ mod tests {
             checkout: root.clone(),
             engine_cwd: root,
             excluded: Vec::new(),
+            data_dir: None,
         };
         assert!(open_inside(&scope, "image.png", &fifo).is_err());
     }
@@ -956,6 +967,7 @@ mod tests {
             checkout: dir.path().to_path_buf(),
             engine_cwd: dir.path().to_path_buf(),
             excluded: Vec::new(),
+            data_dir: None,
         };
         for bad in [
             ".git/config",
@@ -967,6 +979,25 @@ mod tests {
             assert!(inside(&scope, bad).is_err(), "{bad}");
         }
         assert!(inside(&scope, "src/a.rs").is_ok());
+    }
+
+    #[test]
+    fn protected_account_files_are_refused_by_checkout_reads() {
+        let dir = crate::testing::TempDir::new();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(data.join("workspace/repo/p")).unwrap();
+        let protected = data.join("account-keys-default.store");
+        std::fs::write(&protected, "secret").unwrap();
+        let scope = WriteScope {
+            checkout: crate::util::canonicalize(dir.path()).unwrap(),
+            engine_cwd: crate::util::canonicalize(dir.path()).unwrap(),
+            excluded: Vec::new(),
+            data_dir: Some(data.clone()),
+        };
+        let relative = "data/account-keys-default.store";
+        assert!(inside(&scope, relative).is_err());
+        assert!(open_inside(&scope, relative, &protected).is_err());
+        assert!(inside(&scope, "data/workspace/repo/p/file.txt").is_ok());
     }
 
     #[cfg(unix)]
@@ -982,6 +1013,7 @@ mod tests {
             checkout: root.clone(),
             engine_cwd: root,
             excluded: Vec::new(),
+            data_dir: None,
         };
         assert!(inside(&scope, "meta/config").is_err());
         assert!(inside(&scope, "cfg").is_err());
@@ -1004,6 +1036,7 @@ mod tests {
             checkout: checkout.clone(),
             engine_cwd: checkout.clone(),
             excluded: vec![checkout.join("repo")],
+            data_dir: None,
         };
         use std::os::unix::fs::symlink;
         // A link out of the checkout, absolute or relative to its own folder.

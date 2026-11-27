@@ -5,17 +5,20 @@ import { inDesktopApp, onShellChange, readShellStatus } from "../api/shell";
 import { SyncTitleButton, useSignedInAccount } from "../features/account";
 import { attentionRank, EnvironmentIdentity } from "../features/workspace";
 import { useAsync } from "../lib/useAsync";
-import { navigate } from "../product/state/route";
 import { useReadingNav } from "./readingNav";
-import { toggleSidebarDrawer, useSidebarDrawer } from "../product/shell/sidebarDrawer";
+import { commandShortcut, formatShortcut, useCommand } from "../product/shell/shortcuts";
+import { togglePhoneSidebar, toggleSidebarDrawer } from "../product/shell/sidebarDrawer";
 import type { LayoutWidth } from "../lib/useLayout";
 import { useUi } from "../product/state/ui";
+import { useWaitingThreadIds } from "../product/state/waitingThreads";
 import { useWorkspace } from "../product/state/workspace";
 import { goBack, goForward, useNavHistory } from "./navHistory";
 import { attachBarDrag } from "./barDrag";
+import { WindowControls } from "./WindowControls";
+import { WindowMenu } from "./WindowMenu";
 
 const INTERACTIVE =
-  "a,button,input,select,textarea,summary,label,[role=button],[role=tab],[role=menuitem],[contenteditable=true],[tabindex]:not([tabindex='-1'])";
+  "a,button,input,select,textarea,summary,label,.window-controls,[role=button],[role=tab],[role=menuitem],[contenteditable=true],[tabindex]:not([tabindex='-1'])";
 
 /**
  * The whole top strip drags the window, but the bar floats over the page, so its own box
@@ -44,8 +47,9 @@ function useDragStrip(layer: React.RefObject<HTMLDivElement | null>) {
 }
 
 /**
- * Publishes the width the bar's right end takes (the environment pill, the ledger's waiting count) as `--bar-end-w`,
- * so a page header's own right-hand actions stop short of it instead of sitting under it.
+ * Publishes the width the bar's right end takes (the environment pill, the ledger's waiting count, and on Windows
+ * the Menu button and the window controls) as `--bar-end-w`, so a page header's own right-hand actions stop short
+ * of it instead of sitting under it.
  */
 function useBarEndWidth(node: React.RefObject<HTMLSpanElement | null>) {
   useEffect(() => {
@@ -66,26 +70,31 @@ function useBarEndWidth(node: React.RefObject<HTMLSpanElement | null>) {
   }, [node]);
 }
 
-/** True in the desktop app on macOS, where the window's traffic lights sit over the title bar. */
-function useTrafficLights(): boolean {
+/** The integrated bar for this window's frame: macOS traffic lights, Windows controls, or the native frame. */
+export function useWindowFrame(): "lights" | "controls" | null {
   const [attached, setAttached] = useState(inDesktopApp());
   const info = useAsync("environment-identity", (signal) => api.info(signal));
   useEffect(() => {
     let live = true;
-    const read = () => void readShellStatus().then(() => live && setAttached(inDesktopApp()), () => undefined);
+    // A shell-changed event reads past any read in flight: that answer may hold the older facts.
+    const read = (fresh = false) => void readShellStatus(undefined, fresh).then(() => live && setAttached(inDesktopApp()), () => undefined);
     read();
-    const stop = onShellChange(read);
+    const stop = onShellChange(() => read(true));
     return () => {
       live = false;
       stop();
     };
   }, []);
-  return attached && info.data?.platform === "macos";
+  if (!attached) return null;
+  if (info.data?.platform === "macos") return "lights";
+  if (info.data?.platform === "windows") return "controls";
+  return null;
 }
 
 /** Threads waiting on the person: an approval, a question or a limit. */
 function useWaitingCount(): number {
   const threads = useWorkspace((state) => state.threads);
+  const waiting = useWaitingThreadIds();
   return useMemo(
     () =>
       Object.values(threads).filter(
@@ -93,9 +102,9 @@ function useWaitingCount(): number {
           !thread.lifecycle?.archived_at &&
           !thread.lifecycle?.settled_at &&
           thread.lifecycle?.relation !== "side" &&
-          attentionRank(thread) === 0,
+          attentionRank(thread, waiting.has(thread.id)) === 0,
       ).length,
-    [threads],
+    [threads, waiting],
   );
 }
 
@@ -103,15 +112,19 @@ function useWaitingCount(): number {
 export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: boolean }) {
   const phone = layout === "phone";
   const small = layout === "small";
-  const drawerOpen = useSidebarDrawer((state) => state.open);
-  const closeDrawer = useSidebarDrawer((state) => state.close);
-  const lights = useTrafficLights();
+  const frame = useWindowFrame();
+  const lights = frame === "lights";
+  const controls = frame === "controls";
   const toggleSidebar = useUi((state) => state.toggleSidebar);
   const reading = useUi((state) => state.workspaceLayout === "reading");
   const toggleReadingNav = useReadingNav((state) => state.toggle);
   const ledger = useUi((state) => state.workspaceLayout === "ledger");
   const waiting = useWaitingCount();
   const account = useSignedInAccount();
+  // The person's keys, so a tooltip shows the chord a command really answers to.
+  const keymap = useAsync("keybindings", (signal) => api.keybindings(signal), { keep: true });
+  const reloadKeymap = keymap.reload;
+  useCommand("keybindings.reload", () => void reloadKeymap());
 
   // What the shell puts on screen, so the button and its label never disagree with the sidebar.
   const shown = navShown;
@@ -131,11 +144,27 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
   const trail = useNavHistory();
   const dragLayer = useRef<HTMLDivElement>(null);
   useDragStrip(dragLayer);
-  // Only where the system bar is gone: Windows and Linux keep their native frame, and a drag band there would be a second one.
-  useEffect(() => (lights && dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), [lights]);
+  // The integrated bar drags the window where the system bar is gone: macOS traffic lights and Windows controls.
+  useEffect(() => (frame && dragLayer.current ? attachBarDrag(dragLayer.current) : undefined), [frame]);
+  // Windows draws a 32 px bar (Engineer Designs v287): the root says so, and the bar and page header heights follow it.
+  useEffect(() => {
+    if (!controls) return undefined;
+    const root = document.documentElement;
+    root.dataset.windowFrame = "windows";
+    return () => { delete root.dataset.windowFrame; };
+  }, [controls]);
   const end = useRef<HTMLSpanElement>(null);
   useBarEndWidth(end);
   const sidebarLabel = shown ? "Hide sidebar" : "Show sidebar";
+  // A command the saved keys do not name keeps its built-in key; one they remove has none, so its title says no key.
+  const titled = (label: string, command: string, builtIn: string) => {
+    const rules = keymap.data?.rules;
+    const key = rules?.some((rule) => rule.command === command) ? commandShortcut(rules, command) : builtIn;
+    return key ? `${label} (${formatShortcut(key)})` : label;
+  };
+  const sidebarTitle = titled(sidebarLabel, "sidebar.toggle", "mod+b");
+  const backTitle = titled("Back", "navigation.back", "mod+[");
+  const forwardTitle = titled("Forward", "navigation.forward", "mod+]");
 
   // One 44px bar in every layout (the v60 frames): it floats over the top of the page, where the page's own header
   // carries the title, chips and actions on the same centre line, with the sidebar shown or not. Only the phone,
@@ -146,6 +175,7 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
       data-nav={shown && !small ? "shown" : "hidden"}
       data-bar={row ? "row" : "float"}
       data-lights={lights || undefined}
+      data-frame={controls ? "windows" : undefined}
     >
       <div ref={dragLayer} className="titlebar-drag" aria-hidden />
       {lights ? <span className="titlebar-lights" aria-hidden /> : null}
@@ -153,14 +183,16 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
         type="button"
         className="tbi"
         aria-label={sidebarLabel}
+        title={sidebarTitle}
         aria-expanded={shown}
         data-sidebar-toggle
         onClick={
           phone
             ? // The phone draws the sidebar as its home page and as a full-screen sheet over any other
               // page: this closes the sheet, leaves the home page where the sidebar already is, or opens
-              // the sheet over the page, so the places in it are reachable from anywhere.
-              drawerOpen ? closeDrawer : shown ? () => navigate({ name: "new", projectId: null }) : toggleSidebarDrawer
+              // the sheet over the page, so the places in it are reachable from anywhere. The sidebar
+              // shortcut runs the same function.
+              () => togglePhoneSidebar(shown)
             : small
               ? // On a small window it is a drawer over the thread.
                 toggleSidebarDrawer
@@ -171,10 +203,10 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
       >
         <PanelLeft size={16} aria-hidden />
       </button>
-      <button type="button" className="tbi" aria-label="Back" aria-disabled={!trail.back} data-dim={!trail.back || undefined} onClick={() => trail.back && goBack()}>
+      <button type="button" className="tbi" aria-label="Back" title={backTitle} aria-disabled={!trail.back} data-dim={!trail.back || undefined} onClick={() => trail.back && goBack()}>
         <ChevronLeft size={16} aria-hidden />
       </button>
-      <button type="button" className="tbi" aria-label="Forward" aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
+      <button type="button" className="tbi" aria-label="Forward" title={forwardTitle} aria-disabled={!trail.forward} data-dim={!trail.forward || undefined} onClick={() => trail.forward && goForward()}>
         <ChevronRight size={16} aria-hidden />
       </button>
       <span ref={end} className="titlebar-end">
@@ -186,6 +218,8 @@ export function TitleBar({ layout, navShown }: { layout: LayoutWidth; navShown: 
             {waiting} waiting on you
           </span>
         ) : null}
+        {controls ? <WindowMenu /> : null}
+        {controls ? <WindowControls /> : null}
       </span>
     </header>
   );

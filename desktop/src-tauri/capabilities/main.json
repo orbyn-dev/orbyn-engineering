@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The static startup document can retry its service, show its log and quit; the bundled product document can ask the person to approve one held command (crew_presence) and read this launch's person key (person_key) and open the native folder dialog (pick_folder). Each command also checks its own origin at run time, so neither document can call the other's commands.",
+  "description": "The static startup document can retry its service, show its log and quit; the bundled product document can ask the person to approve one held command (crew_presence), read this launch's person key (person_key), open the native folder dialog (pick_folder), run the web Menu button's items (window_menu_run), set the Maximize button's rectangle (window_set_maximize_rect) and use Snap Shot's state, configure, capture, take, discard and setup commands and listen for its events. Each command also checks its own origin at run time, so neither document can call the other's commands.",
   "windows": [
     "main"
   ],
@@ -12,6 +12,16 @@
     "allow-quit-core",
     "allow-crew-presence",
     "allow-person-key",
-    "allow-pick-folder"
+    "allow-pick-folder",
+    "allow-snapshot-state",
+    "allow-snapshot-configure",
+    "allow-snapshot-capture",
+    "allow-snapshot-take",
+    "allow-snapshot-discard",
+    "allow-snapshot-setup",
+    "allow-window-menu-run",
+    "allow-window-set-maximize-rect",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten"
   ]
 }

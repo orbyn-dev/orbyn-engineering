@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { createPortal } from "react-dom";
 import type { Project, Thread } from "../../../api/types";
 import { compactAge, elapsed } from "../../../lib/format";
+import { isUnmanaged, unmanagedReason } from "../../../product/engines/unmanaged";
 import { runStateLabels } from "../../../product/runs/stateLabels";
 import { useNow } from "../../../lib/useNow";
 import { routeHref } from "../../../product/state/route";
@@ -13,6 +14,7 @@ import { IssueMark } from "../../issues";
 import { createLongPress } from "./longPress";
 import { createSwipeReveal } from "./swipeReveal";
 import { threadRunState } from "./RunState";
+import { useThreadWaiting } from "../../../product/state/waitingThreads";
 
 const DONE_WINDOW_MS = 5 * 60_000;
 const HOVER_DELAY_MS = 150;
@@ -32,7 +34,7 @@ interface RowStatus {
   /** Trailing text: a short status word, or the relative age. */
   text: ReactNode;
   /** Why the person is needed, for lists that show only that: lower case, or null. */
-  reason: "approval" | "question" | "limit" | null;
+  reason: "approval" | "question" | "limit" | "terminal" | null;
   running: boolean;
 }
 
@@ -40,6 +42,16 @@ function useRowStatus(thread: Thread): RowStatus {
   const active = thread.active_run;
   const now = useNow(active !== null);
   const approvals = useWorkspace((state) => state.approvals.data);
+  const terminalWaits = useThreadWaiting(thread.id);
+  if (terminalWaits && active?.state !== "awaiting_approval") {
+    // An engine console in a terminal of this thread waits for the person (docs/cli-agent-attention.md).
+    return {
+      glyph: <span className="status-dot tone-warn" aria-hidden />,
+      text: <span className="row-status tone-warn">Terminal</span>,
+      reason: "terminal",
+      running: false,
+    };
+  }
   if (active) {
     if (active.state === "awaiting_approval") {
       const asking = approvals && !approvals.some((approval) => approval.thread_id === thread.id);
@@ -207,7 +219,7 @@ export function ThreadRow({
     (state) => state.managed.data?.targets.find((t) => t.project_id === thread.project_id)?.branch ?? null,
   );
   const branch = thread.worktree?.branch ?? projectBranch;
-  const unmanaged = engine?.capabilities.managed === false;
+  const unmanaged = isUnmanaged(engine);
   const projectName = thread.scratch ? "No project" : (project?.name ?? "Unknown project");
   const engineName = engine?.name ?? thread.engine;
   const [hover, setHover] = useState<DOMRect | null>(null);
@@ -483,7 +495,7 @@ export function ThreadRow({
         {wokeMark}
         {pinMark}
         {unmanaged ? (
-          <span className="thread-row-project">Unmanaged</span>
+          <span className="thread-row-project" title={unmanagedReason(engine)}>Unmanaged</span>
         ) : thread.scratch || showProject || (ledger && !status.reason && !status.running) ? (
           <span className="thread-row-project">{projectName}</span>
         ) : null}

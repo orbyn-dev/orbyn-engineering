@@ -9,6 +9,7 @@ use std::time::Duration;
 use orbyn_contracts::Thread;
 use orbyn_contracts::{PermissionMode, UpdateThread};
 
+use crate::agents::driver::EngineDriver;
 use crate::agents::engines::{EngineConfig, EngineManager};
 use crate::agents::usage::UsageCenter;
 use crate::browser::preview::PreviewManager;
@@ -17,20 +18,25 @@ use crate::conversation::runs::{RunManager, RunServices};
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::ApprovalGate;
 use crate::governance::computer::{ComputerBackend, ComputerConfig, ComputerGateway, LocalBackend};
+use crate::host::blocks::BlockStore;
 use crate::host::shell::ShellBridge;
 use crate::host::terminal::TerminalManager;
 use crate::operations::updates::UpdateCenter;
 use crate::project::project_setup::SetupManager;
 use crate::project::projects::ClonePool;
 use crate::project::workspace::Workspace;
+use crate::source_control::branch_names::{Naming, NamingMode};
 use crate::source_control::git;
-use crate::store::{NewSetup, NewThread, Recovery, Store};
+use crate::store::{AuditRecord, NewSetup, NewThread, Recovery, Store};
 use crate::tools::mcp::McpService;
 use crate::tools::skills::SkillService;
 use crate::util::new_id;
 
 /// A wait of this length covers an unattended person without a run hanging forever.
 pub const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+/// How long a new worktree's custom branch name waits for the engine. Thread creation does
+/// not wait past it: the worktree's purpose is used as the complete name instead.
+const BRANCH_NAME_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Where the service keeps its data unless told otherwise, so the CLI finds it too.
 pub fn default_data_dir() -> Option<PathBuf> {
@@ -84,6 +90,10 @@ pub struct CoreConfig {
     pub account_backend: crate::account::AccountBackendKind,
     /// Whether the Crew tools exist. Ships `false`: Crew is Preview, with no screen yet.
     pub crew_preview: bool,
+    /// Debug builds only: whether the test seam `POST /api/crew/dev/seed-proposal` is registered
+    /// (`ORBYN_DEV_SEED_PROPOSALS` at service start). A release build has no field and no route.
+    #[cfg(debug_assertions)]
+    pub dev_seed_proposals: bool,
     /// Whether the Code Mode tools (`orbyn_code_search`, `orbyn_code_describe`, `orbyn_code_run`) exist. Ships `false`.
     pub code_mode: bool,
     /// Whether the issue routes exist (docs/issues.md). Ships `false`: every issue route answers 404.
@@ -123,6 +133,8 @@ impl CoreConfig {
             account_gate: crate::account::AccountGate::default(),
             account_backend: crate::account::AccountBackendKind::default(),
             crew_preview: false,
+            #[cfg(debug_assertions)]
+            dev_seed_proposals: false,
             code_mode: false,
             issues: false,
             multi_repo: false,
@@ -150,12 +162,17 @@ pub struct Core {
     pub terminals: Arc<TerminalManager>,
     pub(crate) setups: Arc<SetupManager>,
     pub updates: Arc<UpdateCenter>,
-    pub shell: ShellBridge,
+    pub shell: Arc<ShellBridge>,
+    /// W10: one active waiting item per terminal, with the per-thread and
+    /// per-service caps, so a clear can name an item another watcher dropped.
+    pub(crate) attention: Arc<crate::agents::attention::AttentionHub>,
     /// A person's approvals given in the desktop app, in memory only.
     pub(crate) presence: crate::host::presence::PresenceBook,
     pub usage: Arc<UsageCenter>,
     pub clones: ClonePool,
     pub previews: PreviewManager,
+    /// Local AVDs and simulators, their actions and one writer per device (`devices`).
+    pub devices: Arc<crate::devices::Devices>,
     /// For requests a person asked for, such as reading the ACP registry.
     pub http: reqwest::Client,
     pub recovery: Recovery,
@@ -204,6 +221,15 @@ pub struct Core {
     _lock: OwnerLock,
 }
 
+/// A title a caller or person set, as opposed to the default the store fills in. Semantic
+/// branch naming uses it; a default title names nothing, so the purpose is the seed instead.
+fn real_title(title: Option<&str>) -> Option<String> {
+    title
+        .map(str::trim)
+        .filter(|title| !title.is_empty() && *title != crate::agents::titles::NEW_THREAD_TITLE)
+        .map(str::to_owned)
+}
+
 impl Core {
     /// Opens the data directory, takes its owner lock and fences dead owners.
     pub fn open(config: CoreConfig) -> Result<Self> {
@@ -219,6 +245,7 @@ impl Core {
 
     pub fn open_with(config: CoreConfig, backend: Arc<dyn ComputerBackend>) -> Result<Self> {
         std::fs::create_dir_all(&config.data_dir)?;
+        restrict_data_dir(&config.data_dir);
         let lock = take_owner_lock(&config.data_dir)?;
         let timings = crate::operations::local_trace::LocalTrace::open(&config.data_dir)?;
         // A preview outlives no process, so any profile here is a leftover.
@@ -232,7 +259,9 @@ impl Core {
         }
         let gate = Arc::new(ApprovalGate::new(store.clone(), config.approval_timeout));
         let questions = Arc::new(QuestionDesk::new(store.clone(), config.approval_timeout));
-        let terminals = Arc::new(TerminalManager::default());
+        let terminals = Arc::new(TerminalManager::with_blocks(Arc::new(BlockStore::new(
+            store.clone(),
+        ))));
         let setups = Arc::new(SetupManager::new(store.clone())?);
         let http = reqwest::Client::builder()
             .user_agent(concat!("orbyn/", env!("CARGO_PKG_VERSION")))
@@ -253,7 +282,11 @@ impl Core {
             config.workspace_url.clone(),
             config.library_bundle.clone(),
         )?);
-        let skills = Arc::new(SkillService::new(store.clone(), workspace.clone()));
+        let skills = Arc::new(SkillService::new(
+            store.clone(),
+            workspace.clone(),
+            config.data_dir.clone(),
+        ));
         let computer = Arc::new(ComputerGateway::new(store.clone(), gate.clone(), backend));
         let mcp = Arc::new(McpService::new(
             gate.clone(),
@@ -274,6 +307,7 @@ impl Core {
             base_url: config.base_url.clone(),
             scm_reads: scm_reads.clone(),
             explorer: explorer.clone(),
+            data_dir: config.data_dir.clone(),
             runs_dir: config.data_dir.join("runs"),
             renders_dir: crate::conversation::renders::renders_root(&config.data_dir),
             setups: setups.clone(),
@@ -312,11 +346,13 @@ impl Core {
             terminals,
             setups,
             updates,
-            shell: ShellBridge::default(),
+            shell: Arc::new(ShellBridge::default()),
+            attention: Arc::default(),
             presence: crate::host::presence::PresenceBook::default(),
             usage,
             clones: ClonePool::default(),
             previews: PreviewManager::default(),
+            devices: Arc::new(crate::devices::Devices::new()),
             http,
             recovery,
             keybinding_writer,
@@ -363,6 +399,9 @@ impl Core {
         // No verification is alive yet, so a Crew claim found now is from one that died. Cleared
         // here, before any run can end and claim another.
         core.store.clear_crew_claims()?;
+        // A Codex worker's home outlives no task. Anything left from the last process whose
+        // task is not live is removed before a new worker can use the folder.
+        core.sweep_crew_codex_homes();
         core.crew_backtest_recover();
         core.code_runs_recover();
         core.repos_recover();
@@ -472,7 +511,7 @@ impl Core {
                 .store
                 .project(request.project_id.as_deref().unwrap_or_default())?,
         };
-        self.engines.driver(&request.engine)?;
+        let driver = self.engines.driver(&request.engine)?;
         self.check_engine_enabled(&request.engine, &project.id)?;
         if let Some(profile) = request.skill_profile.as_deref()
             && profile != crate::tools::skills::DEFAULT_PROFILE
@@ -490,7 +529,20 @@ impl Core {
                         "Worktrees need a Git repository.".into(),
                     ));
                 }
-                let options = self.worktree_options(&project.id, &request)?;
+                let mut options = self.worktree_options(&project.id, &request)?;
+                // A reused worktree keeps the branch it already has, so its name is not
+                // written. The purpose is checked first, so a purpose Git would refuse
+                // never spends an engine call.
+                let named = options.naming.mode == NamingMode::Custom
+                    && !git::reuses_worktree(Path::new(&project.path), purpose).await?;
+                if named {
+                    if !git::valid_purpose(purpose) {
+                        return Err(CoreError::Invalid(git::PURPOSE_RULE.into()));
+                    }
+                    options.naming.custom = self
+                        .custom_branch_name(&project.id, purpose, &request, driver.as_ref())
+                        .await?;
+                }
                 Some(git::create_worktree(Path::new(&project.path), purpose, &options).await?)
             }
             None => None,
@@ -600,16 +652,102 @@ impl Core {
                 .to_owned())
         };
         Ok(git::WorktreeOptions {
-            prefix: text("branch_name_prefix")?,
+            naming: Naming {
+                mode: NamingMode::parse(&text("branch_naming_mode")?),
+                prefix: text("branch_name_prefix")?,
+                custom: None,
+            },
             base: request.base_branch.clone(),
             from_origin: self.preference("new_worktrees_start_from_origin", Some(project_id))?
                 == serde_json::json!(true),
             submodules: text("worktree_submodules")?,
+            seed: real_title(request.branch_name_seed.as_deref())
+                .or_else(|| real_title(request.title.as_deref())),
         })
     }
 
+    /// The name an engine writes for custom branch naming, from the request's
+    /// `branch_name_seed` (or its title, then the worktree's purpose) and the project's
+    /// `branch_name_instructions`. `None` keeps the purpose as the complete name: no
+    /// instruction is set, the engine's one-shot path refuses or fails, its reply is not
+    /// one valid ref, or the wait runs out. A model that cannot answer never fails the
+    /// thread. The name is still checked against the project's branches when it is used.
+    async fn custom_branch_name(
+        &self,
+        project_id: &str,
+        purpose: &str,
+        request: &orbyn_contracts::CreateThread,
+        driver: &dyn EngineDriver,
+    ) -> Result<Option<String>> {
+        let engine = request.engine.as_str();
+        let instructions = self
+            .preference("branch_name_instructions", Some(project_id))?
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        if instructions.is_empty() {
+            return Ok(None);
+        }
+        let message = real_title(request.branch_name_seed.as_deref())
+            .or_else(|| real_title(request.title.as_deref()))
+            .unwrap_or_else(|| purpose.to_owned());
+        let model = crate::agents::text_models::text_model_for(
+            &self.store,
+            &self.engines,
+            engine,
+            Some(project_id),
+            request.model.as_deref(),
+        )
+        .await
+        .ok()
+        .flatten()
+        .map(|choice| choice.model);
+        // The attempt is audited before it is tried, as the title call's is, so an engine
+        // that refuses the one-shot still leaves the row that says usage was asked for.
+        self.store.append_audit(&AuditRecord {
+            actor: "system:branch_name".into(),
+            action: "engine.one_shot".into(),
+            target: engine.to_owned(),
+            decision: None,
+            source: "system".into(),
+            thread_id: None,
+            run_id: None,
+            detail: serde_json::json!({
+                "purpose": "branch_name",
+                "model": model,
+                "project_id": project_id,
+            }),
+        })?;
+        let prompt =
+            crate::source_control::branch_names::generation_prompt(&instructions, &message);
+        let reply = match tokio::time::timeout(
+            BRANCH_NAME_TIMEOUT,
+            driver.one_shot(&prompt, model.as_deref()),
+        )
+        .await
+        {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "the engine could not write a branch name");
+                return Ok(None);
+            }
+            Err(_) => {
+                tracing::warn!("the engine did not answer the branch-name prompt in time");
+                return Ok(None);
+            }
+        };
+        match crate::source_control::branch_names::generated_name(&reply) {
+            Some(name) => Ok(Some(name)),
+            None => {
+                tracing::warn!("the engine's branch name was not one valid ref");
+                Ok(None)
+            }
+        }
+    }
+
     pub async fn thread_diff(&self, thread_id: &str) -> Result<Vec<orbyn_contracts::FileDiff>> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         let project = self.store.project(&thread.project_id)?;
         if !project.is_git {
             let Some(root) =
@@ -638,7 +776,7 @@ impl Core {
         &self,
         thread_id: &str,
     ) -> Result<Option<orbyn_contracts::JjStatus>> {
-        let thread = self.store.thread(thread_id)?;
+        let thread = self.scoped_thread(thread_id)?;
         let project = self.store.project(&thread.project_id)?;
         if project.is_git {
             return Ok(None);
@@ -675,6 +813,22 @@ impl Drop for OwnerLock {
         }
     }
 }
+
+/// Keeps the data folder owner-only: the account files and `service.json` sit
+/// directly in it. Windows keeps the per-user app-data ACL.
+#[cfg(unix)]
+fn restrict_data_dir(data_dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let Ok(meta) = std::fs::metadata(data_dir) else {
+        return;
+    };
+    if meta.permissions().mode() & 0o777 != 0o700 {
+        let _ = std::fs::set_permissions(data_dir, std::fs::Permissions::from_mode(0o700));
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_data_dir(_: &Path) {}
 
 /// One live owner per data directory: a second process must not fence the first.
 fn take_owner_lock(data_dir: &Path) -> Result<OwnerLock> {
@@ -742,6 +896,35 @@ fn clean_stale_run_dirs(runs_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_data_directory_is_created_private_and_tightened_when_it_exists() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = crate::testing::TempDir::new();
+        let fresh = dir.path().join("fresh");
+        let mut config = CoreConfig::new(fresh.clone(), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert_eq!(
+            std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        drop(core);
+
+        let existing = dir.path().join("existing");
+        std::fs::create_dir(&existing).unwrap();
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut config = CoreConfig::new(existing.clone(), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        assert_eq!(
+            std::fs::metadata(&existing).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        drop(core);
+    }
 
     #[test]
     fn the_data_directory_has_one_owner_until_its_guard_is_dropped() {
@@ -963,6 +1146,165 @@ mod preference_consumer_tests {
         )
         .unwrap();
         assert_eq!(current(), "none");
+        core.shutdown().await;
+    }
+
+    /// A real `Core` with one trusted Git project, for worktree naming through `create_thread`.
+    async fn naming_core(dir: &TempDir) -> (Core, String) {
+        let library = crate::testing::library(&dir.path().join("library"));
+        let root = dir.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        for args in [
+            vec!["init", "-q", "-b", "main"],
+            vec![
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.test",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "Initial",
+            ],
+        ] {
+            git::git(&root, &args).await.unwrap();
+        }
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Core::open(config).unwrap();
+        core.workspace
+            .setup(orbyn_contracts::WorkspaceSetup {
+                url: None,
+                adopt_path: Some(library.to_string_lossy().into_owned()),
+            })
+            .await
+            .unwrap();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: root.to_str().unwrap(),
+                name: "Project",
+                is_git: true,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        core.store.trust_project(&project.id, "t").unwrap();
+        (core, project.id)
+    }
+
+    fn set_naming(core: &Core, mode: &str) {
+        core.set_preferences(None, &[("branch_naming_mode".into(), json!(mode))].into())
+            .unwrap();
+    }
+
+    async fn make_worktree_thread(
+        core: &Core,
+        project_id: &str,
+        purpose: &str,
+        title: Option<&str>,
+    ) -> orbyn_contracts::Thread {
+        let request: orbyn_contracts::CreateThread = serde_json::from_value(json!({
+            "project_id": project_id,
+            "engine": "codex",
+            "title": title,
+            "worktree": purpose,
+        }))
+        .unwrap();
+        core.create_thread(request).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn static_naming_keeps_the_prefix_and_the_purpose() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        core.set_preferences(
+            None,
+            &[("branch_name_prefix".into(), json!("team/feat"))].into(),
+        )
+        .unwrap();
+        let thread = make_worktree_thread(&core, &project, "fix-login", Some("Add login")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "team/feat/fix-login");
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn semantic_naming_slugs_the_title_and_numbers_collisions() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        set_naming(&core, "semantic");
+
+        let thread =
+            make_worktree_thread(&core, &project, "signup-one", Some("Add sign-up screen")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/add-sign-up-screen");
+        // The same title twice makes two branches rather than reusing one.
+        let thread =
+            make_worktree_thread(&core, &project, "signup-two", Some("Add sign-up screen")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/add-sign-up-screen-2");
+
+        // A default title names nothing, so the purpose is the seed.
+        let thread = make_worktree_thread(&core, &project, "wire-login", Some("New thread")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/wire-login");
+        // A real title no slug can keep falls back to the purpose too.
+        let thread = make_worktree_thread(&core, &project, "fix-parser", Some("!!! ???")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "feat/fix-parser");
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn semantic_naming_uses_the_branch_name_seed_and_the_title_stays_default() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        set_naming(&core, "semantic");
+        let request: orbyn_contracts::CreateThread = serde_json::from_value(json!({
+            "project_id": project,
+            "engine": "codex",
+            "branch_name_seed": "Add sign-up screen",
+            "worktree": "wire-login",
+        }))
+        .unwrap();
+        let thread = core.create_thread(request).await.unwrap();
+        assert_eq!(thread.title, "New thread");
+        assert_eq!(thread.worktree.unwrap().branch, "feat/add-sign-up-screen");
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn custom_naming_uses_the_purpose_as_the_complete_branch_name() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        set_naming(&core, "custom");
+
+        // The title is not involved, and the name carries no prefix.
+        let thread =
+            make_worktree_thread(&core, &project, "fix-signup", Some("Add sign-up screen")).await;
+        assert_eq!(thread.worktree.unwrap().branch, "fix-signup");
+
+        // A purpose at the worktree-name limit is still the whole branch name.
+        let longest = "b".repeat(64);
+        let thread = make_worktree_thread(&core, &project, longest.as_str(), None).await;
+        assert_eq!(thread.worktree.unwrap().branch, longest);
+        core.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn an_unusable_branch_prefix_is_refused_rather_than_replaced() {
+        let dir = TempDir::new();
+        let (core, project) = naming_core(&dir).await;
+        core.set_preferences(
+            None,
+            &[("branch_name_prefix".into(), json!("feat..x"))].into(),
+        )
+        .unwrap();
+        let request: orbyn_contracts::CreateThread = serde_json::from_value(json!({
+            "project_id": project,
+            "engine": "codex",
+            "worktree": "fix-login",
+        }))
+        .unwrap();
+        let error = core.create_thread(request).await.unwrap_err();
+        assert_eq!(error.code(), "invalid_input");
+        assert!(error.to_string().contains("branch name"), "{error}");
         core.shutdown().await;
     }
 }

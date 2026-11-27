@@ -11,6 +11,7 @@ import { PageBar } from "../../product/ui/PageBar";
 import { IconButton } from "../../ui/controls";
 import { issuesApi, markNotOffered, useApiVersion, useTrackers } from "./api";
 import type { IssueList, IssueQuery, IssueSummary, TrackerKind, TrackerRow } from "./contract";
+import { NewIssue } from "./IssueCreate";
 import { IssueDetail } from "./IssueDetail";
 import { IssueRows, IssuesHead, IssuesSkeleton, LoadMoreRow } from "./IssueRows";
 import { NoIssues, NoMatch, NotConnected, NotReported, Unreachable } from "./IssueStates";
@@ -151,11 +152,16 @@ function IssuesList({ trackers }: { trackers: TrackerRow[] }) {
       {loading || read.refreshing ? <i className="iss-spin spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
     </IconButton>
   );
+  // The page bar's one action (issue-write-new): it reads the trackers the list already has, and Check the list re-reads this list.
+  const newIssue = <NewIssue trackers={trackers} preferred={query.tracker} onCheckList={() => void read.reload()} />;
+  // The no-issues block says issues are created in the tracker itself, and no pass-186 frame draws a create control there, so the
+  // page bar's is not drawn until the list has a row. (A no-match result keeps it: the list is not empty, the filter is.)
+  const noIssues = read.status === "ready" && !filtered && issues.length === 0;
   const status = loading ? "Loading" : read.refreshing ? "Refreshing" : loadedAt ? `Updated ${relativeTime(new Date(loadedAt).toISOString(), now).toLowerCase()}` : "";
 
   return (
     <>
-      <PageBar actions={phone ? refresh : <><span className="iss-upd" role="status">{status}</span>{refresh}</>}>
+      <PageBar actions={phone ? refresh : <>{noIssues ? null : newIssue}<span className="iss-upd" role="status">{status}</span>{refresh}</>}>
         <h1 tabIndex={-1} data-page-title>Issues</h1>
       </PageBar>
       <IssuesToolbar
@@ -204,6 +210,8 @@ export function IssuesPage() {
   const route = useRoute();
   const { rows, settled } = useTrackers();
   const detail = route.name === "issues" && route.tracker !== undefined && route.scope !== undefined && route.key !== undefined ? { tracker: route.tracker, scope: route.scope, key: route.key } : null;
+  // The Facts show the host the service reports for this issue's tracker, from the rows this page already reads.
+  const host = detail && rows ? rows.find((row) => row.tracker === detail.tracker)?.host ?? null : null;
   const body = !settled ? null : rows === null ? (
     <>
       <PageBar><h1 tabIndex={-1} data-page-title>Issues</h1></PageBar>
@@ -215,7 +223,7 @@ export function IssuesPage() {
       <NotConnected rows={rows} />
     </>
   ) : detail ? (
-    <IssueDetail key={`${detail.tracker}:${detail.scope}:${detail.key}`} tracker={detail.tracker} scope={detail.scope} issueKey={detail.key} />
+    <IssueDetail key={`${detail.tracker}:${detail.scope}:${detail.key}`} tracker={detail.tracker} scope={detail.scope} issueKey={detail.key} host={host} />
   ) : (
     <IssuesList trackers={rows} />
   );

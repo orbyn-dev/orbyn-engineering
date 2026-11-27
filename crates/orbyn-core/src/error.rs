@@ -48,6 +48,8 @@ pub enum CoreError {
     FileConflict { revision: Option<String> },
     #[error("This file is too large to open here: {size} bytes, over the {limit} byte limit.")]
     FileTooLarge { size: u64, limit: u64 },
+    #[error("The Snap Shot's {field} is over the {limit} character limit.")]
+    SourceTooLarge { field: &'static str, limit: usize },
     #[error("{0} other thread(s) work in this folder, so restoring could lose their work.")]
     SharedDirectory(usize),
     #[error("finish or stop active runs first")]
@@ -107,6 +109,11 @@ pub enum CoreError {
     UpdateFailed(String),
     #[error("{0}")]
     PolicyDenied(String),
+    /// A Crew start the disk guard refused, kept apart from a plain denial so a background listener records `disk_low`
+    /// instead of the generic word. The person still reads the guard's own sentence, and a route still answers
+    /// `policy_denied` with 403 as it did before.
+    #[error("{0}")]
+    DiskLow(String),
     /// The engine does not have the session a run tried to resume.
     #[error("the engine no longer has this session")]
     SessionLost,
@@ -228,6 +235,7 @@ impl CoreError {
             Self::NotFastForward(_) => "not_fast_forward",
             Self::FileConflict { .. } => "file_conflict",
             Self::FileTooLarge { .. } => "file_too_large",
+            Self::SourceTooLarge { .. } => "source_too_large",
             Self::SharedDirectory(_) => "shared_directory",
             Self::RunsActive => "runs_active",
             Self::Updating => "updating",
@@ -248,7 +256,7 @@ impl CoreError {
             Self::UnsupportedOption(_) => "unsupported_option",
             Self::UpdateUnavailable(_) => "update_unavailable",
             Self::UpdateFailed(_) => "update_failed",
-            Self::PolicyDenied(_) => "policy_denied",
+            Self::PolicyDenied(_) | Self::DiskLow(_) => "policy_denied",
             Self::StaleOwner => "stale_owner",
             Self::RunClosed => "run_closed",
             Self::CrewTaskBusy(_) => "task_busy",
@@ -285,10 +293,11 @@ impl CoreError {
             Self::NotFound(_) => 404,
             Self::Updating => 503,
             Self::Invalid(_) | Self::CloneRefused(_) | Self::PermissionModeUnsupported(_) => 400,
-            Self::FileTooLarge { .. } => 413,
+            Self::FileTooLarge { .. } | Self::SourceTooLarge { .. } => 413,
             Self::FolderUntrusted
             | Self::FolderUntrustedInit
             | Self::PolicyDenied(_)
+            | Self::DiskLow(_)
             | Self::WorkspaceRefused(_)
             | Self::AccountDisabled
             | Self::ReauthRequired
@@ -391,6 +400,10 @@ impl CoreError {
                 size: *size,
                 limit: *limit,
             },
+            Self::SourceTooLarge { field, limit } => Self::SourceTooLarge {
+                field,
+                limit: *limit,
+            },
             Self::SharedDirectory(n) => Self::SharedDirectory(*n),
             Self::RunsActive => Self::RunsActive,
             Self::Updating => Self::Updating,
@@ -415,6 +428,7 @@ impl CoreError {
             Self::UpdateUnavailable(s) => Self::UpdateUnavailable(s.clone()),
             Self::UpdateFailed(s) => Self::UpdateFailed(s.clone()),
             Self::PolicyDenied(s) => Self::PolicyDenied(s.clone()),
+            Self::DiskLow(s) => Self::DiskLow(s.clone()),
             Self::SessionLost => Self::SessionLost,
             Self::StaleOwner => Self::StaleOwner,
             Self::RunClosed => Self::RunClosed,

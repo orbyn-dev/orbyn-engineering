@@ -24,6 +24,7 @@ use crate::app::Core;
 use crate::crew::autopilot::ledger;
 use crate::crew::autopilot::{IN_A_ROW, IN_A_RUN, Mode, ModeScope, RULES, review_window};
 use crate::crew::background::parse_wire;
+use crate::crew::needs_you::Scope;
 use crate::crew::{key_needles, redact, withhold};
 use crate::error::{CoreError, Result};
 use crate::store::{AutopilotEvent, EVENT_KINDS, MergeEntry, MergeRecord};
@@ -193,17 +194,28 @@ impl Scrub {
         ledger::safe_masked(value, &self.needles, &self.person)
     }
 
-    /// The row's keys as shown, its values as they are (already masked by `fields`).
+    /// The row's keys as shown, its values as they are (already masked by `fields`). Two keys
+    /// can hide down to the same label (two Stripe keys are both `[hidden: API key]`); a map
+    /// holds one value per key, so the repeats get a suffix instead of one value disappearing.
     fn mask_keys(&self, value: Value) -> Value {
         match value {
             Value::Array(items) => {
                 Value::Array(items.into_iter().map(|v| self.mask_keys(v)).collect())
             }
-            Value::Object(map) => Value::Object(
-                map.into_iter()
-                    .map(|(k, v)| (self.person.labelled(&k), self.mask_keys(v)))
-                    .collect(),
-            ),
+            Value::Object(map) => {
+                let mut shown = serde_json::Map::with_capacity(map.len());
+                for (key, value) in map {
+                    let label = self.person.labelled(&key);
+                    let mut unique = label.clone();
+                    let mut suffix = 2;
+                    while shown.contains_key(&unique) {
+                        unique = format!("{label} ({suffix})");
+                        suffix += 1;
+                    }
+                    shown.insert(unique, self.mask_keys(value));
+                }
+                Value::Object(shown)
+            }
             other => other,
         }
     }
@@ -286,6 +298,9 @@ fn log_row(event: &AutopilotEvent, scrub: &Scrub) -> wire::AutopilotLogRow {
         tier: str_of(&body, "tier"),
         rule: str_of(&body, "rule"),
         mode: str_of(&body, "mode"),
+        title: str_of(&body, "title"),
+        asker_engine: str_of(&action, "asker_engine"),
+        asker_model: str_of(&action, "asker_model"),
         action_kind: str_of(&action, "kind"),
         target: str_of(&action, "target"),
         paths: action
@@ -640,6 +655,12 @@ impl Core {
             next_offset,
             background_runs,
             background_total: to_u32(background_total),
+            // KC3: the Inbox's waits, from the one needs-you field the queue already read.
+            waiting_elsewhere: all
+                .waiting_elsewhere
+                .into_iter()
+                .map(|(kind, count)| wire::AutopilotWaitingElsewhere { kind, count })
+                .collect(),
             now_unix: now,
         })
     }
@@ -718,6 +739,11 @@ impl Core {
         let commit = self
             .crew_answer_review(task_id, answer, &target, now)
             .await?;
+        // A person's local revert is a lesson of its own (source 2), written after the branch moved; a forge revert
+        // only queues the corrective PR, so nothing is reverted yet and nothing is learned. Neither can fail the act.
+        if matches!(answering, Answering::Revert) && commit.is_some() {
+            self.learn_person_merge_revert(task_id);
+        }
         // A forge revert queues a corrective PR: show exactly which commit will be pushed onto which base.
         let correction = if matches!(answering, Answering::Revert) {
             self.store.crew_forge_correction(task_id)?
@@ -1015,7 +1041,8 @@ impl Core {
         })
     }
 
-    /// What merged, what was reverted and what waits for review in the last `hours` (1 to 720; 24 when absent).
+    /// What merged, what was reverted and what waits for review in the last `hours` (1 to 720; 24 when absent). The
+    /// `needs_person` count is the one needs-you field (KC3), not a recount of this digest's merge records.
     pub fn autopilot_digest(&self, now: i64, hours: Option<u32>) -> Result<wire::AutopilotDigest> {
         self.crew_preview_only()?;
         let hours = hours.unwrap_or(24);
@@ -1066,10 +1093,9 @@ impl Core {
             .iter()
             .filter(|m| m.due_unix.is_some_and(|due| now > due))
             .count();
-        let needs_person = merges
-            .iter()
-            .filter(|m| m.needs_person.is_some() && m.review_state != "reverted")
-            .count();
+        // KC3: what waits for a person is the one needs-you field, the same read the Inbox, the Taskboard, the Review queue and
+        // the dashboard take (dismissals included), not a count of this digest's own merge records that could drift from it.
+        let needs_person = self.needs_you_all(Scope::Device)?.len();
         let mut digest = wire::AutopilotDigest {
             since_unix: since,
             until_unix: now,
@@ -1150,6 +1176,41 @@ fn watch_row(record: &MergeRecord, scrub: &Scrub) -> wire::AutopilotWatchRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_keys_that_mask_to_the_same_label_are_both_kept() {
+        let scrub = Scrub {
+            needles: Vec::new(),
+            person: std::sync::Arc::new(crate::redaction::Redactor::with(
+                &std::collections::BTreeSet::new(),
+                Vec::new(),
+            )),
+        };
+        // Two different keys of the same built-in format: both show as the same label, and the
+        // old map kept only the second.
+        let row = scrub.mask_keys(serde_json::json!({
+            "AKIAIOSFODNN7EXAMPLE": "first",
+            "ASIAIOSFODNN7EXAMPLE": "second",
+        }));
+        let keys: Vec<&str> = row
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys.len(), 2, "neither key may hide the other: {row}");
+        assert!(
+            keys.iter()
+                .all(|key| key.contains("[hidden: AWS access key]")),
+            "{row}"
+        );
+        assert_ne!(keys[0], keys[1], "the repeat got a suffix: {row}");
+        let shown = row.to_string();
+        assert!(
+            shown.contains(r#""first""#) && shown.contains(r#""second""#),
+            "both values stay: {row}"
+        );
+    }
 
     #[test]
     fn a_page_is_bounded() {

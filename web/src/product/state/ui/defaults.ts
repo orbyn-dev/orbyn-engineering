@@ -15,6 +15,7 @@ export const defaults: Prefs = {
   panelMaximized: false,
   panelWidth: null,
   sideChat: null,
+  devices: { open: [], active: null, names: {}, float: null },
   layouts: {},
   layoutKey: DRAFT_LAYOUT,
   sidebarCollapsed: false,
@@ -66,6 +67,7 @@ export const defaults: Prefs = {
   threadSound: false,
   inAppNotifications: false,
   taskRunNotifications: true,
+  crewNotifications: true,
   confirmUnpin: false,
   confirmArchive: false,
   confirmDelete: true,
@@ -77,6 +79,14 @@ export const defaults: Prefs = {
   environmentThemeAppliedAt: 0,
   environmentIdentification: "artwork",
   welcomeDone: false,
+  snapshotEnabled: false,
+  snapshotShortcut: { kind: "chord", key: "9", mod: true, shift: true, alt: false, ctrl: false },
+  snapshotIncludeAccessibility: false,
+  snapshotPlaySound: true,
+  snapshotSound: "soft-pop",
+  snapshotFlash: true,
+  snapshotAnimations: true,
+  snapshotExcludedApps: [],
 };
 
 export const layoutDefaults: ThreadLayout = {

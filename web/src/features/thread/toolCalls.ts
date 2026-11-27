@@ -2,6 +2,7 @@ import { prettyJson } from "../../lib/format";
 import { outputSpans } from "../../lib/ansi";
 import type { ReasoningItem, ToolItem } from "../../product/timeline/types";
 import { baseName, callOutcome, parsed, paths, toolFailed, traceTool } from "../../product/timeline/toolTrace";
+import { crewStartOutcome, isCrewStartTool } from "../crew";
 
 /** The kind of row a tool call is drawn as; each has its own icon, words and block. */
 export type CallKind =
@@ -298,6 +299,11 @@ export function callLabel(item: ToolItem, cwd: string | null): CallLabel {
       return { verb: "Fetched", object: url ? hostOf(url) : "a page", note: null, fill: false };
     }
     case "mcp": {
+      // A crew start is the one tool a lead thread draws as its own task, not as a server call.
+      if (isCrewStartTool(item.name)) {
+        const outcome = crewStartOutcome(item.args);
+        return { verb: outcome ? "Start task:" : "Start task", object: outcome, note: null, fill: false };
+      }
       const { server, tool } = mcpParts(item.name);
       const first = firstScalar(body);
       return { verb: server, object: tool || null, note: first ? `· “${first}”` : null, fill: false };
@@ -457,6 +463,28 @@ export function runOutcomes(run: CallRun, live: boolean, cancelled: boolean): Ru
   if (noResult) return { failed: 0, text: noResult === 1 ? "1 no result reported" : `${noResult} no results reported` };
   if (unknown) return { failed: 0, text: unknown === 1 ? "1 outcome unknown" : `${unknown} outcomes unknown` };
   return null;
+}
+
+/** The count line under a turn's work: every call, then the outcomes the engine reported for them. */
+export function turnOutcomeText(items: readonly ToolItem[], live: boolean, interrupted: boolean): string {
+  let succeeded = 0;
+  let failed = 0;
+  let noResult = 0;
+  let unknown = 0;
+  for (const item of items) {
+    if (callState(item, live, interrupted) === "running") continue;
+    const outcome = callOutcome(item, interrupted);
+    if (outcome === "success") succeeded += 1;
+    else if (outcome === "failed") failed += 1;
+    else if (outcome === "no-result") noResult += 1;
+    else unknown += 1;
+  }
+  const parts = [pluralize(items.length, "tool call", "tool calls")];
+  if (succeeded) parts.push(`${succeeded} succeeded`);
+  if (failed) parts.push(`${failed} failed`);
+  if (noResult) parts.push(noResult === 1 ? "1 no result reported" : `${noResult} no results reported`);
+  if (unknown) parts.push(unknown === 1 ? "1 outcome unknown" : `${unknown} outcomes unknown`);
+  return parts.join(" · ");
 }
 
 /** Only http and https pages open in the Browser panel; an agent can name any address. */

@@ -100,9 +100,11 @@ it("reverting writes the hunk back through the file route at the revision read, 
   await waitFor(() => expect(save).toHaveBeenCalledWith("t", { path: "auth/redirect.ts", content: BEFORE, base_revision: "r1" }));
   const toast = await screen.findByRole("status");
   expect(toast).toHaveTextContent("Hunk reverted in auth/redirect.ts.");
-  expect(toast).toHaveTextContent("Undo · 10 s");
+  // The message offers Undo and counts down. Which second a loaded machine reads is the clock's business, so wait for the
+  // affordance instead of pinning a second here; the test below reads the count itself under fake timers.
+  const undo = await within(toast).findByRole("button", { name: /^Undo · \d+ s$/ });
   await waitFor(() => expect(diff.mock.calls.length).toBeGreaterThan(1));
-  await user.click(within(toast).getByRole("button", { name: /^Undo/ }));
+  await user.click(undo);
   await waitFor(() => expect(save).toHaveBeenLastCalledWith("t", { path: "auth/redirect.ts", content: DISK, base_revision: "r2" }));
   expect(screen.queryByRole("status")).toBeNull();
 });
@@ -115,8 +117,15 @@ it("the undo message counts down and goes away after 10 seconds,", async () => {
   await user.click(screen.getByRole("button", { name: "Revert hunk" }));
   await user.click(within(await screen.findByRole("dialog", { hidden: true })).getByRole("button", { name: "Revert hunk" }));
   const toast = await screen.findByRole("status");
+  // A countdown's exact second belongs to the clock, not to the product, so read how far it has counted and hold it to taking
+  // a second off while seconds pass, then to leaving when the ten are up. Pinning "7 s" failed whenever a loaded machine lost
+  // a second before the reading.
+  const counted = () => Number(/Undo · (\d+) s/.exec(toast.textContent ?? "")?.[1] ?? NaN);
+  const started = counted();
+  expect(started).toBeGreaterThan(0);
+  expect(started).toBeLessThanOrEqual(10);
   for (let tick = 0; tick < 3; tick += 1) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-  expect(toast).toHaveTextContent("Undo · 7 s");
+  expect(counted()).toBeLessThan(started);
   for (let tick = 0; tick < 8; tick += 1) await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
   expect(screen.queryByRole("status")).toBeNull();
 });
@@ -148,8 +157,28 @@ it("a write the service refuses as stale reads the same", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("The file has changed since this diff was read. Nothing was changed.");
 });
 
+it("labels the line-save hint for a Windows client", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  const user = userEvent.setup();
+  setup();
+  await open();
+  await user.click(screen.getAllByRole("button", { name: "Edit this line" })[2]!);
+  expect(screen.getByText("Esc cancels · Ctrl+↵ saves to the file")).toBeInTheDocument();
+});
+
+it("uses the Mac user agent for the line-save hint when navigator.platform is empty", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+  const user = userEvent.setup();
+  setup();
+  await open();
+  await user.click(screen.getAllByRole("button", { name: "Edit this line" })[2]!);
+  expect(screen.getByText("Esc cancels · ⌘↵ saves to the file")).toBeInTheDocument();
+});
+
 // hunk-edit, hunk-edit-error
 it("the pencil turns the line into a field; ⌘↵ writes only that line, Esc cancels", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   const user = userEvent.setup();
   const { save } = setup();
   await open();

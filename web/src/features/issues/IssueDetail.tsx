@@ -14,15 +14,14 @@ import { Markdown } from "../content";
 import { issuesApi, useApiVersion, useEditOffered } from "./api";
 import { capText, closedWords, isIssueKey, isTracker, pullWord, stateWord, trackerName } from "./model";
 import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
+import { CommentBox } from "./IssueComment";
 import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
 import { IssueGlyph } from "./IssueGlyph";
+import { Person } from "./IssuePerson";
+import { ReactionBar } from "./IssueReactions";
 import { IssueStateButton } from "./IssueStateMenu";
 import { reloadIssueLinks, useIssueThreads } from "./links";
 import { StartThreadDialog } from "./StartThreadDialog";
-
-export function Person({ login }: { login: string }) {
-  return <span className="iss-person"><span className="iss-avatar" aria-hidden>{login.slice(0, 2).toUpperCase()}</span>{login}</span>;
-}
 
 function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
   const { threadIds, loaded, failed, retry } = useIssueThreads(issue);
@@ -81,12 +80,12 @@ function PullRow({ pull }: { pull: LinkedPullRequest }) {
 
 /** What the tracker reports of its own accord, in its order. No CI or checks status: the contract carries none. */
 function LinkedPullRequests({ pulls }: { pulls: LinkedPullRequest[] }) {
+  // Shown only when the tracker reports a pull request: an empty card on every issue says nothing.
+  if (pulls.length === 0) return null;
   return (
     <section className="iss-card" role="group" aria-label="Linked pull requests">
-      <h2>{pulls.length > 0 ? `Linked pull requests · ${pulls.length}` : "Linked pull requests"}</h2>
-      {pulls.length === 0 ? <p className="iss-quiet">No pull request is linked to this issue.</p> : (
-        <ul className="iss-prs">{pulls.map((pull, at) => <PullRow key={`${at}:${pull.repository}#${pull.number}`} pull={pull} />)}</ul>
-      )}
+      <h2>{`Linked pull requests · ${pulls.length}`}</h2>
+      <ul className="iss-prs">{pulls.map((pull, at) => <PullRow key={`${at}:${pull.repository}#${pull.number}`} pull={pull} />)}</ul>
     </section>
   );
 }
@@ -101,13 +100,14 @@ function Entry({ issue }: { issue: Detail }) {
   );
 }
 
-/** The post with the description editor: the header's pencil, and the editor in place of the text while it is open. */
+/** The post with the description editor and the reaction bar: the header's pencil, and the editor in place of the text while it is open. */
 function EditableEntry({ issue, edit }: { issue: Detail; edit: EditProps }) {
   const { pencil, editor, editing } = useDescriptionEditor(edit);
   return (
     <article className="iss-entry">
       <header>{issue.author ? <Person login={issue.author.login} /> : <span className="iss-quiet">Unknown author</span>}<span className="iss-quiet">opened {relativeTime(issue.created_at).toLowerCase()}</span>{pencil}</header>
       {editing ? editor : <div className="iss-body"><Markdown text={issue.body} remoteImages="link" /></div>}
+      <ReactionBar issue={issue} write={edit.write} writing={edit.writing} />
     </article>
   );
 }
@@ -124,16 +124,20 @@ export function Body({ issue, page = false, edit }: { issue: Detail; page?: bool
           <div className="iss-body"><Markdown text={comment.body} remoteImages="link" /></div>
         </article>
       ))}
+      {/* The page adds the comment box; the panel tab stays read only. */}
+      {page && edit ? <CommentBox issue={issue} write={edit.write} writing={edit.writing} /> : null}
     </div>
   );
 }
 
-function Facts({ issue, edit }: { issue: Detail; edit: EditProps }) {
+/** The issue's facts. `host` is the host the tracker reports for its connection, shown as text only when there is one. */
+function Facts({ issue, edit, host }: { issue: Detail; edit: EditProps; host?: string | null }) {
   return (
     <section className="iss-card" role="group" aria-label="Facts">
       <dl>
         <dt>State</dt><dd><IssueStateButton issue={issue} write={edit.write} writing={edit.writing} /></dd>
         <dt>Tracker</dt><dd>{trackerName(issue.tracker)}</dd>
+        {host ? <><dt>Host</dt><dd>{host}</dd></> : null}
         <dt>Author</dt><dd>{issue.author?.login ?? "Unknown"}</dd>
         <dt>Assignees</dt><dd>{issue.assignees.length === 0 ? <span className="iss-quiet">None</span> : issue.assignees.map((who) => <Person key={who.login} login={who.login} />)}<PickerEditor kind="assignees" {...edit} /></dd>
         <dt>Labels</dt><dd>{issue.labels.length === 0 ? <span className="iss-quiet">None</span> : issue.labels.map((label, at) => <span key={`${at}:${label.name}`} className="iss-label">{label.name}</span>)}<PickerEditor kind="labels" {...edit} /></dd>
@@ -146,7 +150,7 @@ function Facts({ issue, edit }: { issue: Detail; edit: EditProps }) {
 }
 
 /** One issue as a page. Start a thread is a click; the state, description, labels and assignees are written only when the service offers them, one write at a time. */
-export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; scope: string; issueKey: string }) {
+export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: string; scope: string; issueKey: string; host?: string | null }) {
   const version = useApiVersion();
   const phone = useLayoutWidth() === "phone";
   const [starting, setStarting] = useState(false);
@@ -157,7 +161,7 @@ export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; sco
   });
   const waited = useWaited(read.status === "loading");
   // One write at a time on this page, whichever control makes it: a second click, or another control, while one is in flight is
-  // refused and calls nothing. The answer is the updated issue and replaces what is shown; the state a write leaves out is kept.
+  // refused and calls nothing. The answer is the updated issue and replaces what is shown; the fields a write leaves out are kept.
   const [writing, setWriting] = useState(false);
   const locked = useRef(false);
   const shown = useRef(read.data);
@@ -168,7 +172,9 @@ export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; sco
     setWriting(true);
     try {
       const next = await call();
-      read.setData({ ...next, states: next.states ?? shown.current?.states });
+      // States and the reaction counts come from some answers only (a plain detail read carries no reactions), so a write must not
+      // empty what the page already showed: the bar would blink off after an unrelated edit.
+      read.setData({ ...next, states: next.states ?? shown.current?.states, reactions: next.reactions ?? shown.current?.reactions });
       void reloadIssueLinks(version);
       return next;
     } finally {
@@ -205,7 +211,7 @@ export function IssueDetail({ tracker, scope, issueKey }: { tracker: string; sco
               <Body issue={read.data} page edit={{ issue: read.data, offered, write, writing }} />
             </div>
             <aside className="iss-right">
-              <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} />
+              <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} host={host} />
               <LinkedThreads issue={read.data} onStart={() => setStarting(true)} />
             </aside>
           </div>

@@ -2,8 +2,10 @@
  * MOCK of the Crew dashboard's reads, for tests and the dev-only Preview frames `#/preview/crew/dash-*` (Crew Designs, "23. Dashboard").
  * The app's own client is the real one in src/features/crew/dashboard/contract.ts, which has no `history` read at all: nothing here ships.
  * `history` answers the planned `GET /api/crew/dashboard` of docs/crew-dashboard.md on the sample the designs draw (orbyn-engineering:
- * 38 merges in 60 days, 27 of them without the person, 2 reverted). `trust`, `areas`, `thresholds` and `areaHistory` answer from the same
- * sample, so the page can be seen offline. Sample figures: nothing here was measured.
+ * 38 merges in 60 days, 27 of them without the person, 2 reverted), with the KC3 live row: the default repository has two waits and two
+ * working workers, and every other repository has none. The `crew-dashboard-live-truncated` scenario leaves one running worker and
+ * `truncated: true`; `crew-dashboard-live-none` answers as an older service with no `live` key at all. `trust`, `areas`, `thresholds` and
+ * `areaHistory` answer from the same sample, so the page can be seen offline. Sample figures: nothing here was measured.
  */
 import { ApiFailure } from "../src/api/client.ts";
 import type { AutopilotAreaHistory } from "../src/generated/AutopilotAreaHistory.ts";
@@ -12,6 +14,7 @@ import type { AutopilotAreas } from "../src/generated/AutopilotAreas.ts";
 import type { AutopilotThresholds } from "../src/generated/AutopilotThresholds.ts";
 import type { AutopilotTrust } from "../src/generated/AutopilotTrust.ts";
 import type { DashboardClient, DashboardHistory, HistoryMerge, Period } from "../src/features/crew/dashboard/contract.ts";
+import type { MockResponse } from "./api.ts";
 
 /** The projects the frames name. Ids are the names. */
 export const SAMPLE_PROJECTS = [
@@ -46,7 +49,13 @@ const BASE: Record<string, DashboardHistory> = {
       { title: "Rename the legacy returnTo helper", at: NOW - 25 * 86_400, by: "auto", certain: true },
       { title: "Rotate the signing key", at: NOW - 54 * 86_400, by: "person", certain: null },
     ],
-    recent: [], truncated: false,
+    recent: [],
+    live: {
+      needs_you: [{ kind: "task_needs_person", count: 1 }, { kind: "merge_waiting", count: 1 }],
+      working: [{ why: "verifying", count: 1 }, { why: "retry", count: 1 }],
+      truncated: false,
+    },
+    truncated: false,
   },
   "orbyn-planner": {
     project: "orbyn-planner", days: 60, as_of: NOW, min_rate_sample: 10, min_median_sample: 5,
@@ -66,12 +75,15 @@ const BASE: Record<string, DashboardHistory> = {
       { title: "Rename a test helper", engine: "claude", at: NOW - 18 * 86_400, needed: "nothing", checks: "passed" },
       { title: "Add a seed script", engine: "codex", at: NOW - 19 * 86_400, needed: "approval", checks: "passed" },
     ] satisfies HistoryMerge[],
+    live: { needs_you: [], working: [], truncated: false },
     truncated: false,
   },
   "orbyn-engine": {
     project: "orbyn-engine", days: 60, as_of: NOW, min_rate_sample: 10, min_median_sample: 5,
     merges: 0, unaided: 0, reverted: 0, reverted_auto: 0, reverted_by_person: 0,
-    cycle: null, weeks: [], engines: [], areas: [], reverts: [], recent: [], truncated: false,
+    cycle: null, weeks: [], engines: [], areas: [], reverts: [], recent: [],
+    live: { needs_you: [], working: [], truncated: false },
+    truncated: false,
   },
   "orbyn-docs": {
     project: "orbyn-docs", days: 60, as_of: NOW, min_rate_sample: 10, min_median_sample: 5,
@@ -83,18 +95,36 @@ const BASE: Record<string, DashboardHistory> = {
       { name: "codex", model: "GPT-5.5", merges: 5, unaided: 4, reverted: 0, cost: tokens(380_000) },
     ],
     areas: [{ name: "guides", merges: 14, unaided: 12, reverted: 0 }],
-    reverts: [], recent: [], truncated: false,
+    reverts: [], recent: [],
+    live: { needs_you: [], working: [], truncated: false },
+    truncated: false,
   },
 };
 
 const scale = (n: number, factor: number) => Math.round(n * factor);
 
-/** The 60-day sample, or the same repository over 30 or 90 days: fewer or more weeks, counts scaled with them. */
-export function sampleHistory(project: string, days: Period): DashboardHistory {
+/** The live row a scenario asks for: the default, one running worker cut short, or none at all as an older service sends. */
+function withLiveScenario(answer: DashboardHistory, scenario: string): DashboardHistory {
+  if (scenario === "crew-dashboard-live-none") {
+    const older = { ...answer };
+    delete older.live;
+    return older;
+  }
+  if (scenario === "crew-dashboard-live-truncated") {
+    return {
+      ...answer,
+      live: { needs_you: answer.live?.needs_you ?? [], working: [{ why: "running", count: 1 }], truncated: true },
+    };
+  }
+  return answer;
+}
+
+/** The 60-day sample, or the same repository over 30 or 90 days: fewer or more weeks, counts scaled with them. The live row is never scaled. */
+export function sampleHistory(project: string, days: Period, scenario = ""): DashboardHistory {
   const base = Object.hasOwn(BASE, project) ? BASE[project] : undefined;
   if (!base) throw new ApiFailure("not_found", "No such project.", 404);
-  if (days === 60) return structuredClone(base);
-  if (base.weeks.length === 0) return { ...structuredClone(base), days };
+  if (days === 60) return withLiveScenario(structuredClone(base), scenario);
+  if (base.weeks.length === 0) return withLiveScenario({ ...structuredClone(base), days }, scenario);
   const factor = days / 60;
   const wanted = Math.max(1, Math.round(base.weeks.length * factor));
   const earlier = Array.from({ length: Math.max(0, wanted - base.weeks.length) }, (_, i) => ({ start: base.weeks[0]!.start - (i + 1) * WEEK, merges: 2, unaided: 1, reverted: 0 }));
@@ -102,7 +132,7 @@ export function sampleHistory(project: string, days: Period): DashboardHistory {
   const merges = kept.reduce((sum, week) => sum + week.merges, 0);
   const ratio = base.merges > 0 ? merges / base.merges : 0;
   const reverted = Math.min(merges, kept.reduce((sum, week) => sum + week.reverted, 0));
-  return {
+  return withLiveScenario({
     ...structuredClone(base),
     days,
     merges,
@@ -114,8 +144,27 @@ export function sampleHistory(project: string, days: Period): DashboardHistory {
     engines: base.engines.map((row) => ({ ...row, merges: scale(row.merges, ratio), unaided: scale(row.unaided, ratio), reverted: Math.min(scale(row.merges, ratio), row.reverted), cost: row.cost ? { ...row.cost, amount: scale(row.cost.amount, ratio) } : null })),
     areas: base.areas.map((row) => ({ ...row, merges: scale(row.merges, ratio), unaided: scale(row.unaided, ratio), reverted: Math.min(scale(row.merges, ratio), row.reverted) })),
     reverts: base.reverts.filter((row) => NOW - row.at <= days * 86_400),
-  };
+  }, scenario);
 }
+
+/** The service's project ids, for the page's own route, against this sample's names. */
+const SAMPLE_ID = new Map([["p-app", "orbyn-engineering"]]);
+
+/** `GET /api/crew/dashboard` on the sample, for the mock API (tests and the live settings route). */
+export const dashboardMock = {
+  handle(scenario: string, method: string, path: string, query: URLSearchParams): MockResponse | null {
+    if (method !== "GET" || path !== "/api/crew/dashboard") return null;
+    const asked = query.get("project") ?? "";
+    const requested = Number(query.get("days") ?? 60);
+    const days: Period = requested === 30 || requested === 90 ? requested : 60;
+    try {
+      return { status: 200, body: sampleHistory(SAMPLE_ID.get(asked) ?? asked, days, scenario) };
+    } catch (error) {
+      const failure = error as { code?: string; message?: string; status?: number };
+      return { status: failure.status ?? 404, body: { code: failure.code ?? "not_found", message: failure.message ?? "No such project." } };
+    }
+  },
+};
 
 const trustOf = (history: DashboardHistory): AutopilotTrust => {
   const row = (name: string, merges: number, reverts: number) => ({ name, rate: { merges, reverts, revert_permille: merges > 0 ? Math.round((reverts / merges) * 1000) : 0, counts: merges >= 10 } });
@@ -150,7 +199,7 @@ export interface CrewDashboardMock extends DashboardClient {
   failNext(): void;
 }
 
-export function createCrewDashboardMock(init: { delayMs?: number; failAll?: boolean; never?: boolean; withHistory?: boolean; noAreas?: boolean } = {}): CrewDashboardMock {
+export function createCrewDashboardMock(init: { delayMs?: number; failAll?: boolean; never?: boolean; withHistory?: boolean; noAreas?: boolean; scenario?: string } = {}): CrewDashboardMock {
   const reads: string[] = [];
   let failing = init.failAll === true;
   const gate = async (signal: AbortSignal) => {
@@ -192,7 +241,7 @@ export function createCrewDashboardMock(init: { delayMs?: number; failAll?: bool
     history: init.withHistory === false ? null : async ({ project, days }, signal) => {
       reads.push(`history:${project}:${days}`);
       await gate(signal);
-      return sampleHistory(project, days);
+      return sampleHistory(project, days, init.scenario);
     },
   };
 }

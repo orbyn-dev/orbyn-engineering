@@ -103,6 +103,7 @@ impl Drop for Served {
 
 fn concrete(path: &str) -> String {
     path.replace("{task_id}", "task-1")
+        .replace("{thread_id}", "thread-1")
         .replace("{id}", "task-1")
 }
 
@@ -243,14 +244,28 @@ async fn the_route_table_agrees_with_the_core_marker_and_every_change_names_its_
         found, listed,
         "every Crew route is a read or a change the core marks, and every marked route exists"
     );
-    // The marker the core refuses by path agrees with the methods: nothing but a GET is a read.
+    // The marker the core refuses by path agrees with the methods: nothing but a GET is a read. A path that carries both
+    // a read and a person write is refused whole, because the marker is by path; its GET is listed in READS and answers a
+    // person, but an agent's request to the same path is refused with the write's.
+    let shared: BTreeSet<&str> = reads
+        .iter()
+        .filter(|(_, path)| changes.iter().any(|(_, change)| change == path))
+        .map(|(_, path)| path.as_str())
+        .collect();
     for (method, path) in &found {
         let marked = changes_crew_state(&path.replace("{id}", "task-1"));
-        assert_eq!(
-            marked,
-            method != "GET",
-            "{method} is marked as the core marks it"
-        );
+        if method == "GET" && shared.contains(path.as_str()) {
+            assert!(
+                marked,
+                "{path} shares a person write's path, so it is refused whole"
+            );
+        } else {
+            assert_eq!(
+                marked,
+                method != "GET",
+                "{method} is marked as the core marks it"
+            );
+        }
     }
     // Every change names a guard, and every guard is for a marked change.
     let guarded: BTreeSet<(String, String)> = GUARDS
@@ -823,6 +838,8 @@ async fn the_review_queue_and_the_log_page() {
     assert!(queue["next_offset"].is_null());
     // No background run waits, and the field is still served: the join is read-only and additive.
     assert_eq!(queue["background_runs"], json!([]));
+    // KC3: what waits elsewhere is the one needs-you field; nothing waits for this person here, and the field is served.
+    assert_eq!(queue["waiting_elsewhere"], json!([]));
     let (_, first) = app.call("GET", "/api/crew/approvals?limit=2", None).await;
     assert_eq!(first["rows"].as_array().unwrap().len(), 2);
     assert_eq!(first["total"], 5);
@@ -871,10 +888,11 @@ fn the_wire_types_round_trip_and_carry_no_key_or_secret_field() {
     let change: wire::AutopilotModeChange =
         serde_json::from_value(json!({ "scope": "default", "mode": "on" })).unwrap();
     assert_eq!(change.id, None);
-    assert!(
+    let unknown =
         serde_json::from_value::<wire::AutopilotModeChange>(json!({ "scope": "x", "mode": "on" }))
-            .is_err()
-    );
+            .unwrap_err()
+            .to_string();
+    assert!(unknown.contains("unknown variant `x`"), "{unknown}");
     let body: wire::AutopilotAnswerBody =
         serde_json::from_value(json!({ "merge_commit": "abc1234" })).unwrap();
     assert_eq!(body.text, None);

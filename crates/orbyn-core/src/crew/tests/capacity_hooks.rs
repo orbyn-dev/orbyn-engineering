@@ -15,6 +15,7 @@ use crate::crew::capacity::{
 };
 use crate::crew::fixtures::merge_record;
 use crate::crew::{MergeOutcome, Mode};
+use crate::store::{AutopilotEvent, MergeRecord, StoredHunk};
 
 const NOW: i64 = 1_800_000_000;
 
@@ -121,10 +122,12 @@ async fn with_the_preview_flag_off_the_start_check_does_nothing() {
         .unwrap();
 }
 
-/// Waits for the background provenance write, at most about five seconds.
-async fn hunks_of(w: &World, task: &str) -> Vec<crate::store::StoredHunk> {
+/// Waits for the background provenance write on the harness clock: a test's wait is not a product
+/// budget, and a loaded machine must not turn a slow write into a missing one (#1063, tdd 3.7).
+async fn hunks_of(w: &World, task: &str) -> Vec<StoredHunk> {
     let id = w.core.store.crew_merge(task).unwrap().unwrap().id;
-    for _ in 0..100 {
+    let give_up = std::time::Instant::now() + super::harness::WAIT_LIMIT;
+    while std::time::Instant::now() < give_up {
         let hunks = w.core.store.crew_hunks_of_merge(id).unwrap();
         if !hunks.is_empty() {
             return hunks;
@@ -134,9 +137,10 @@ async fn hunks_of(w: &World, task: &str) -> Vec<crate::store::StoredHunk> {
     Vec::new()
 }
 
-/// Waits for a `provenance_failed` row on the task, at most about five seconds.
-async fn failures_of(w: &World, task: &str) -> Vec<crate::store::AutopilotEvent> {
-    for _ in 0..100 {
+/// Waits for a `provenance_failed` row on the task on the same test clock.
+async fn failures_of(w: &World, task: &str) -> Vec<AutopilotEvent> {
+    let give_up = std::time::Instant::now() + super::harness::WAIT_LIMIT;
+    while std::time::Instant::now() < give_up {
         let rows: Vec<_> = w
             .core
             .store
@@ -153,6 +157,33 @@ async fn failures_of(w: &World, task: &str) -> Vec<crate::store::AutopilotEvent>
     Vec::new()
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list. A read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
+/// The stored hunk for `path`, found by the path it records: a merge can write more than one hunk, and the tests here
+/// name the file they mean rather than its place in the read's path-then-line order.
+fn hunk_at<'a>(hunks: &'a [StoredHunk], path: &str) -> &'a StoredHunk {
+    hunks
+        .iter()
+        .find(|stored| stored.hunk.hunk.path == path)
+        .expect("the stored hunk for that path")
+}
+
+/// The merge a one-link chain stores, so a test does not read place 0 of the chain's list.
+fn one_link(merges: &[MergeRecord]) -> MergeRecord {
+    match merges {
+        [merge] => merge.clone(),
+        _ => panic!("a one-link chain stores one merge, not {}", merges.len()),
+    }
+}
+
 #[tokio::test]
 async fn a_merge_through_the_queue_records_its_hunks_and_with_no_person_commit_or_worker_identity_every_line_is_unknown()
  {
@@ -166,11 +197,11 @@ async fn a_merge_through_the_queue_records_its_hunks_and_with_no_person_commit_o
     assert!(matches!(&outcomes[..], [MergeOutcome::Merged { .. }]));
     let hunks = hunks_of(&m.w, &id).await;
     assert_eq!(hunks.len(), 1, "{hunks:?}");
-    assert_eq!(hunks[0].hunk.hunk.path, "src/feature.txt");
+    let hunk = hunk_at(&hunks, "src/feature.txt");
     // The fake engine's commit carries no worker identity and nothing is recorded as a person's: unconfirmed, counted
     // with the agent's lines and never a person's.
     assert!(matches!(
-        &hunks[0].hunk.author,
+        &hunk.hunk.author,
         Author::Unknown { engine, .. } if engine == "alpha"
     ));
     let rows = m.w.core.store.crew_autopilot_events(&id).unwrap();
@@ -208,7 +239,8 @@ async fn the_hook_reads_the_projects_recorded_person_commits() {
         .unwrap();
     let hunks = m.w.core.store.crew_hunks_of_merge(merge.id).unwrap();
     assert_eq!(hunks.len(), 1, "{hunks:?}");
-    assert_eq!(hunks[0].hunk.author, Author::Person);
+    let hunk = hunk_at(&hunks, "src/feature.txt");
+    assert_eq!(hunk.hunk.author, Author::Person);
 }
 
 #[tokio::test]
@@ -232,10 +264,11 @@ async fn a_failing_provenance_write_is_recorded_in_the_ledger_and_does_not_fail_
     let outcomes = m.process(NOW + 1).await;
     assert!(matches!(&outcomes[..], [MergeOutcome::Merged { .. }]));
     assert_ne!(m.tip().await, before, "the branch moved");
+    // The hunk insert is refused, so the task's ledger holds exactly one provenance failure row.
     let failed = failures_of(&m.w, &id).await;
-    assert_eq!(failed.len(), 1, "the failure path was taken: {failed:?}");
-    assert_eq!(failed[0].body["stage"], "hunks");
-    assert_eq!(failed[0].body["resolved"], false);
+    let failed = one(&failed, "provenance failure row");
+    assert_eq!(failed.body["stage"], "hunks");
+    assert_eq!(failed.body["resolved"], false);
     let merge = m.w.core.store.crew_merge(&id).unwrap().unwrap();
     assert_eq!(merge.review_state, "waiting", "the merge row is intact");
     assert!(
@@ -269,7 +302,7 @@ async fn provenance_for_a_range_git_cannot_read_returns_the_error_the_detached_t
 
 /// Commits `n` files in a chain on the world's repository and stores one merge row per link, each with its real
 /// `before..merge` range, as if `n` merges had landed one after another. Returns the stored merges.
-async fn chained_merges(w: &World, n: usize) -> Vec<crate::store::MergeRecord> {
+async fn chained_merges(w: &World, n: usize) -> Vec<MergeRecord> {
     let repo = w.repo.clone();
     let mut merges = Vec::new();
     for i in 0..n {
@@ -347,9 +380,10 @@ async fn merges_recorded_at_the_same_time_on_one_repository_each_keep_a_note_and
         let body = gitq(&w.repo, &["notes", &notes_ref, "show", &merge.merge_commit]).await;
         let note: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(note["vcs"]["revision"], merge.merge_commit.as_str());
+        // Each link wrote one file, so its merge stores one hunk; the test reads that one, not a list place.
         let stored = w.core.store.crew_hunks_of_merge(merge.id).unwrap();
-        assert_eq!(stored.len(), 1);
-        assert_eq!(stored[0].note_ref.as_deref(), Some(NOTE_REF));
+        let stored = one(&stored, "stored hunk");
+        assert_eq!(stored.note_ref.as_deref(), Some(NOTE_REF));
     }
     // The note history is a straight chain: no write was lost to a race.
     let commits = gitq(&w.repo, &["rev-list", "--count", NOTE_REF]).await;
@@ -373,13 +407,13 @@ async fn a_failure_row_has_a_fixed_reason_and_no_path_and_the_merge_reads_as_not
         .unwrap();
     m.process(NOW + 1).await;
     let failed = failures_of(&m.w, &id).await;
-    assert_eq!(failed.len(), 1, "{failed:?}");
-    let text = failed[0].body.to_string();
+    let failed = one(&failed, "provenance failure row");
+    let text = failed.body.to_string();
     assert!(!text.contains("/secret"), "{text}");
     assert!(!text.contains(&*m.w.repo.to_string_lossy()), "{text}");
-    assert_eq!(failed[0].body["stage"], "hunks");
-    assert_eq!(failed[0].body["resolved"], false);
-    assert_eq!(failed[0].body["coverage"], "Not measured");
+    assert_eq!(failed.body["stage"], "hunks");
+    assert_eq!(failed.body["resolved"], false);
+    assert_eq!(failed.body["coverage"], "Not measured");
     let coverage = m.w.core.crew_review_coverage(&project(&m.w), 0).unwrap();
     assert_eq!((coverage.merges, coverage.not_measured_merges), (0, 1));
     assert_eq!(coverage.agent_lines, 0);
@@ -388,7 +422,7 @@ async fn a_failure_row_has_a_fixed_reason_and_no_path_and_the_merge_reads_as_not
 #[tokio::test]
 async fn a_git_failure_never_puts_git_output_or_a_path_in_the_row() {
     let w = quiet().await;
-    let mut merge = chained_merges(&w, 1).await.remove(0);
+    let mut merge = one_link(&chained_merges(&w, 1).await);
     merge.repo = w
         .repo
         .join("no-such-dir-xyz")
@@ -400,19 +434,15 @@ async fn a_git_failure_never_puts_git_output_or_a_path_in_the_row() {
             .is_err()
     );
     let rows = failures_of(&w, &merge.task_id).await;
-    assert_eq!(rows.len(), 1, "{rows:?}");
-    assert!(!rows[0].body.to_string().contains("no-such-dir-xyz"));
-    assert!(
-        rows[0].body["why"]
-            .as_str()
-            .is_some_and(|why| !why.is_empty())
-    );
+    let row = one(&rows, "provenance failure row");
+    assert!(!row.body.to_string().contains("no-such-dir-xyz"));
+    assert!(row.body["why"].as_str().is_some_and(|why| !why.is_empty()));
 }
 
 #[tokio::test]
 async fn a_failed_record_is_retried_once_the_cause_is_gone_and_is_then_marked_resolved() {
     let w = quiet().await;
-    let merge = chained_merges(&w, 1).await.remove(0);
+    let merge = one_link(&chained_merges(&w, 1).await);
     w.core
         .store
         .reader()
@@ -437,7 +467,20 @@ async fn a_failed_record_is_retried_once_the_cause_is_gone_and_is_then_marked_re
     );
     let rows = failures_of(&w, &merge.task_id).await;
     assert_eq!(rows.len(), 2, "{rows:?}");
-    assert_eq!(rows[1].body["retry_failed"], true);
+    // Each row names itself, so neither is read by its place in the oldest-first ledger.
+    let original = rows
+        .iter()
+        .find(|row| row.body.get("retry_failed").is_none())
+        .expect("the original failure's row");
+    assert_eq!(
+        original.body["resolved"], false,
+        "the original stays unresolved"
+    );
+    let retried = rows
+        .iter()
+        .find(|row| row.body["retry_failed"] == true)
+        .expect("the retry's row");
+    assert_eq!(retried.body["attempt"], 1, "the first retry");
     w.core
         .store
         .reader()
@@ -445,11 +488,15 @@ async fn a_failed_record_is_retried_once_the_cause_is_gone_and_is_then_marked_re
         .unwrap();
     retry_provenance(&w.core.store).await;
     let stored = w.core.store.crew_hunks_of_merge(merge.id).unwrap();
-    assert_eq!(stored.len(), 1);
-    assert_eq!(stored[0].note_ref.as_deref(), Some(NOTE_REF));
+    let stored = one(&stored, "stored hunk");
+    assert_eq!(stored.note_ref.as_deref(), Some(NOTE_REF));
     let rows = failures_of(&w, &merge.task_id).await;
     assert_eq!(rows.len(), 3, "{rows:?}");
-    assert_eq!(rows[2].body["resolved"], true);
+    let resolved = rows
+        .iter()
+        .find(|row| row.body["resolved"] == true)
+        .expect("the resolved row");
+    assert_eq!(resolved.body["stage"], "hunks");
     // Resolved: a further pass changes nothing.
     retry_provenance(&w.core.store).await;
     assert_eq!(failures_of(&w, &merge.task_id).await.len(), 3);
@@ -459,7 +506,7 @@ async fn a_failed_record_is_retried_once_the_cause_is_gone_and_is_then_marked_re
 #[tokio::test]
 async fn recording_the_same_merge_twice_replaces_its_hunks_instead_of_failing() {
     let w = quiet().await;
-    let merge = chained_merges(&w, 1).await.remove(0);
+    let merge = one_link(&chained_merges(&w, 1).await);
     for _ in 0..2 {
         let recorded = record_at_merge(&w.core.store, &merge, &agent(), &[], NOW)
             .await
@@ -473,6 +520,13 @@ async fn recording_the_same_merge_twice_replaces_its_hunks_instead_of_failing() 
 async fn a_failure_is_retried_three_times_then_left_so_it_cannot_hold_back_newer_ones() {
     let w = quiet().await;
     let merges = chained_merges(&w, 2).await;
+    // The cap needs two different tasks: one fails and gives up after its retries, then another fails. Which chain
+    // link either is does not matter, so the test takes one of them and finds the other by its id.
+    let failing = merges.first().expect("a chain merge to fail");
+    let later = merges
+        .iter()
+        .find(|merge| merge.id != failing.id)
+        .expect("the other chain merge");
     w.core
         .store
         .reader()
@@ -481,18 +535,23 @@ async fn a_failure_is_retried_three_times_then_left_so_it_cannot_hold_back_newer
         )
         .unwrap();
     assert!(
-        record_provenance(&w.core.store, &merges[0], agent(), NOW)
+        record_provenance(&w.core.store, failing, agent(), NOW)
             .await
             .is_err()
     );
     for _ in 0..5 {
         retry_provenance(&w.core.store).await;
     }
-    let rows = failures_of(&w, &merges[0].task_id).await;
-    // The original and exactly three failed retries; the last says it gave up.
+    let rows = failures_of(&w, &failing.task_id).await;
+    // The original and exactly three failed retries. The third retry names itself by its attempt, so the list's
+    // oldest-first order is not what the test reads; the count pins that nothing followed it.
     assert_eq!(rows.len(), 4, "{rows:?}");
+    let gave_up = rows
+        .iter()
+        .find(|row| row.body["attempt"] == 3)
+        .expect("the third retry's row");
     assert!(
-        rows[3].body["retry"]
+        gave_up.body["retry"]
             .as_str()
             .unwrap()
             .starts_with("gave up")
@@ -506,7 +565,7 @@ async fn a_failure_is_retried_three_times_then_left_so_it_cannot_hold_back_newer
     );
     // A newer failure is still picked up.
     assert!(
-        record_provenance(&w.core.store, &merges[1], agent(), NOW)
+        record_provenance(&w.core.store, later, agent(), NOW)
             .await
             .is_err()
     );
@@ -515,8 +574,11 @@ async fn a_failure_is_retried_three_times_then_left_so_it_cannot_hold_back_newer
         .store
         .crew_unresolved_provenance_failures(10, 3)
         .unwrap();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].task_id, merges[1].task_id);
+    assert_eq!(pending.len(), 1, "{pending:?}");
+    assert_eq!(
+        one(&pending, "unresolved provenance failure").task_id,
+        later.task_id
+    );
 }
 
 #[tokio::test]
@@ -560,7 +622,7 @@ async fn linked_worktrees_of_one_repository_share_the_note_lock_and_lose_no_note
 #[tokio::test]
 async fn a_retry_failure_row_never_copies_the_why_of_an_old_style_row() {
     let w = quiet().await;
-    let merge = chained_merges(&w, 1).await.remove(0);
+    let merge = one_link(&chained_merges(&w, 1).await);
     // A row as written before the fixed reasons: its `why` is raw git output with an absolute path.
     w.core
         .store
@@ -581,10 +643,14 @@ async fn a_retry_failure_row_never_copies_the_why_of_an_old_style_row() {
     retry_provenance(&w.core.store).await;
     let rows = failures_of(&w, &merge.task_id).await;
     assert_eq!(rows.len(), 2, "{rows:?}");
-    assert_eq!(rows[1].body["retry_failed"], true);
+    let retried = rows
+        .iter()
+        .find(|row| row.body["retry_failed"] == true)
+        .expect("the retry's row");
+    assert_eq!(retried.body["attempt"], 1);
     assert!(
-        !rows[1].body.to_string().contains("/Users/"),
+        !retried.body.to_string().contains("/Users/"),
         "{:?}",
-        rows[1].body
+        retried.body
     );
 }

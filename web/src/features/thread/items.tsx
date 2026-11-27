@@ -35,10 +35,13 @@ import {
   type WorkingRow,
   type WorkItem,
 } from "../../product/timeline/timeline";
-import { workSegments } from "./toolCalls";
+import { useThreadLogs } from "../../product/state/threadLogs";
+import { turnOutcomeText, workSegments } from "./toolCalls";
 import { PlanRow } from "./trail/PlanRow";
 import { TrailRun, trailKeys } from "./trail/ToolTrail";
 import { useThreadOfTimeline } from "./timelineThread";
+import { ClaudeHostActions, useHostFor } from "../enginehost";
+import { isClaudeEngine, useClaudeEnginePath } from "../../product/engines/claudePath";
 import type { ActivityItem, ApprovalItem, DiffSummaryItem, MessageItem, NoticeItem, ReasoningItem, StoppedItem, StoppedTask, ToolItem } from "../../product/timeline/types";
 
 const STEER_MARKS = {
@@ -188,12 +191,35 @@ function Activity({ item }: { item: ActivityItem }) {
   );
 }
 
+/** The two run failures a Claude host owns: one that could not start, and one the host cut mid-run. */
+const CLAUDE_HOST_FAILURES = new Set(["engine_unavailable", "engine_host_stopped"]);
+
+/** The Claude host's two ways out, with the failed run itself and without sending anything. */
+function ClaudeHostFailureActions({ threadId, code }: { threadId: string; code: string | null }) {
+  const thread = useWorkspace((state) => state.threads[threadId]);
+  const engine = useWorkspace((state) => (thread ? state.engines.data?.find((entry) => entry.id === thread.engine) : undefined));
+  const { path } = useClaudeEnginePath();
+  const hostFor = engine?.instance_of ?? thread?.engine ?? null;
+  const host = useHostFor(hostFor);
+  const [error, setError] = useState<string | null>(null);
+  if (!thread || !isClaudeEngine(thread.engine, engine?.instance_of) || path !== "sdk" || !CLAUDE_HOST_FAILURES.has(code ?? "")) return null;
+  return (
+    <div className="notice-actions">
+      <ClaudeHostActions host={host} hostId={host?.id ?? hostFor} onError={setError} showUpdate={false} alwaysRetry />
+      {error ? <span className="field-error" role="alert">{error}</span> : null}
+    </div>
+  );
+}
+
 function Notice({ item }: { item: NoticeItem }) {
   const threadId = useThreadOfTimeline();
   const timestampFormat = useUi((state) => state.timestampFormat);
+  const thread = useWorkspace((state) => (threadId ? state.threads[threadId] : undefined));
+  const engine = useWorkspace((state) => (thread ? state.engines.data?.find((entry) => entry.id === thread.engine) : undefined));
   const preparation = item.code === "workspace_preparation_failed" || item.code === "workspace_preparation_unavailable";
   // A failure with nothing to retry sends the message again instead.
   const resendable = failureWantsResend(item.text);
+  const hostFailure = !!threadId && CLAUDE_HOST_FAILURES.has(item.code ?? "") && !!thread && isClaudeEngine(thread.engine, engine?.instance_of);
   if (item.code === "run_stopped") {
     return (
       <div className="stop-mark" data-minimap={item.key}>
@@ -216,12 +242,13 @@ function Notice({ item }: { item: NoticeItem }) {
       <div>
         <strong>Run failed</strong>
         <p>{item.text}</p>
-        {item.code && !preparation && !resendable ? <Pill>{item.code}</Pill> : null}
+        {item.code && !preparation && !resendable && !hostFailure ? <Pill>{item.code}</Pill> : null}
         {resendable && threadId ? (
           <div className="notice-actions">
             <ResendButton threadId={threadId} seq={item.seq} />
           </div>
         ) : null}
+        {hostFailure && threadId ? <ClaudeHostFailureActions threadId={threadId} code={item.code} /> : null}
         {threadId && item.runId && item.code === "workspace_preparation_failed"
           ? <PreparationRetryButton threadId={threadId} runId={item.runId} /> : null}
       </div>
@@ -407,50 +434,62 @@ function Fold({ fold, live }: { fold: TurnFold; live: boolean }) {
 const NO_TOOLS: ToolItem[] = [];
 
 /** The open-state ids of a turn's tool groups: a group's own, or the row's when it stands alone. */
-function groupIds(entries: readonly TimelineEntry[]): { ids: string[]; groups: number; calls: number } {
+function groupIds(entries: readonly TimelineEntry[]): { ids: string[]; groups: number } {
   let ids: string[] = [];
   let groups = 0;
-  let calls = 0;
   for (const entry of entries) {
     if (entry.kind === "fold") {
       const inner = groupIds(entry.entries);
       ids = ids.concat(inner.ids);
       groups += inner.groups;
-      calls += inner.calls;
     } else if (entry.kind === "work") {
       for (const segment of workSegments(entry.items)) {
         if (!("runs" in segment)) continue;
         for (const run of segment.runs) {
           groups += 1;
-          calls += run.items.length;
           ids.push(run.items.length === 1 ? `tool:${run.key}` : `tg:${run.key}`);
         }
       }
     }
   }
-  return { ids, groups, calls };
+  return { ids, groups };
 }
 
-/** A long turn: how many calls in how many groups, and two quiet buttons to open or fold them all. */
+/**
+ * A finished turn's calls by the outcome the engine reported. The count line belongs to every
+ * turn with tool calls; the bulk controls join it only once there are four or more groups.
+ */
 function GroupControls({ entries }: { entries: readonly TimelineEntry[] }) {
   const { setMany } = useOpenControl();
-  const { ids, groups, calls } = useMemo(() => groupIds(entries), [entries]);
-  if (groups < 4) return null;
+  const threadId = useThreadOfTimeline();
+  const { ids, groups } = useMemo(() => groupIds(entries), [entries]);
+  const tools = useMemo(() => foldTools(entries).filter((item): item is ToolItem => item.kind === "tool"), [entries]);
+  const runId = tools[0]?.runId ?? null;
+  // The fold's own run says whether its calls are still running; the page's live flag also covers
+  // a later run, so it must not decide this. A run with no recorded span has ended.
+  const run = useThreadLogs((state) => (threadId && runId ? (state.logs[threadId]?.runs[runId] ?? null) : null));
+  const live = run !== null && run.endedAt === null;
+  const count = useMemo(() => turnOutcomeText(tools, live, run?.outcome === "cancelled"), [tools, live, run?.outcome]);
+  if (tools.length === 0) return null;
   return (
     <div className="tcmini">
-      <span className="cnt">{`${calls} tool calls in ${groups} groups`}</span>
-      <button type="button" className="lk" onClick={() => setMany(ids, true)}>
-        Expand all
-      </button>
-      <span className="sep" aria-hidden />
-      <button type="button" className="lk" onClick={() => setMany(ids, false)}>
-        Collapse all
-      </button>
+      <span className="cnt">{count}</span>
+      {groups >= 4 ? (
+        <>
+          <button type="button" className="lk" onClick={() => setMany(ids, true)}>
+            Expand all
+          </button>
+          <span className="sep" aria-hidden />
+          <button type="button" className="lk" onClick={() => setMany(ids, false)}>
+            Collapse all
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }
 
-function foldTools(entries: TimelineEntry[]): WorkItem[] {
+function foldTools(entries: readonly TimelineEntry[]): WorkItem[] {
   return entries.flatMap((entry) =>
     entry.kind === "work" ? entry.items : entry.kind === "fold" ? foldTools(entry.entries) : [],
   );

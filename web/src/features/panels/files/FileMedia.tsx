@@ -53,8 +53,8 @@ function FontSample({ url, path }: { url: string; path: string }) {
   );
 }
 
-export function FileMedia({ kind, threadId, path }: { kind: MediaKind; threadId: string; path: string }) {
-  const url = rawUrl(threadId, path);
+export function FileMedia({ kind, threadId, path, repoId }: { kind: MediaKind; threadId: string; path: string; /** Another repository of a multi-repository thread; absent is the thread's own checkout. */ repoId?: string }) {
+  const url = rawUrl(threadId, path, false, repoId);
   const name = path.split("/").at(-1) ?? path;
   switch (kind) {
     case "image":
@@ -83,7 +83,7 @@ export function FileMedia({ kind, threadId, path }: { kind: MediaKind; threadId:
 }
 
 /** Reads a binary or an oversized text file a piece at a time, over byte ranges. */
-export function FileBytes({ threadId, path, size, as }: { threadId: string; path: string; size: number; as: "hex" | "text" }) {
+export function FileBytes({ threadId, path, size, as, repoId }: { threadId: string; path: string; size: number; as: "hex" | "text"; /** Another repository of a multi-repository thread; absent is the thread's own checkout. */ repoId?: string }) {
   const [chunks, setChunks] = useState<Uint8Array[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -93,7 +93,7 @@ export function FileBytes({ threadId, path, size, as }: { threadId: string; path
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(rawUrl(threadId, path), {
+      const response = await fetch(rawUrl(threadId, path, false, repoId), {
         headers: { Range: `bytes=${from}-${from + CHUNK_BYTES - 1}` },
         signal,
       });
@@ -115,7 +115,7 @@ export function FileBytes({ threadId, path, size, as }: { threadId: string; path
     void loadFrom(0, abort.signal);
     return () => abort.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, path]);
+  }, [threadId, path, repoId]);
 
   // A large file is called text without being read, so its first bytes settle it.
   const hex = as === "hex" || chunks[0]?.includes(0) === true;
@@ -159,7 +159,7 @@ export function FileBytes({ threadId, path, size, as }: { threadId: string; path
  * bytes one click away: the hex view reads any file, so a damaged document or a
  * mislabelled archive still shows something instead of a dead end.
  */
-export function BytesFallback({ threadId, path, size }: { threadId: string; path: string; size: number }) {
+export function BytesFallback({ threadId, path, size, repoId }: { threadId: string; path: string; size: number; /** Another repository of a multi-repository thread; absent is the thread's own checkout. */ repoId?: string }) {
   const [showing, setShowing] = useState(false);
   if (!showing) {
     return (
@@ -173,7 +173,7 @@ export function BytesFallback({ threadId, path, size }: { threadId: string; path
       <Button small tone="quiet" onClick={() => setShowing(false)}>
         Back to the reader
       </Button>
-      <FileBytes threadId={threadId} path={path} size={size} as="hex" />
+      <FileBytes threadId={threadId} path={path} size={size} as="hex" repoId={repoId} />
     </div>
   );
 }

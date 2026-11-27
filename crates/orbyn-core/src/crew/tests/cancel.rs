@@ -23,13 +23,17 @@ async fn running() -> (World, String) {
     (w, id)
 }
 
-/// The audit actions about cancelling or force-stopping, oldest first.
+/// The audit actions about cancelling, stopping again or force-stopping, oldest first.
 fn actions(w: &World) -> Vec<String> {
     let mut rows = w.core.store.list_audit(None, 500).unwrap();
     rows.reverse();
     rows.into_iter()
         .map(|row| row.action)
-        .filter(|a| a.starts_with("crew.task.cancel") || a == "run.force_stop")
+        .filter(|a| {
+            a.starts_with("crew.task.cancel")
+                || a.starts_with("crew.task.stop_")
+                || a == "run.force_stop"
+        })
         .collect()
 }
 
@@ -236,8 +240,19 @@ async fn cancelling_while_verifying_drops_the_claim_and_never_settles_as_passed(
     assert_eq!(intent.detail["previous_state"], "verifying");
     assert_eq!(intent.detail["verification_claimed"], true);
     // A verification that finishes later cannot pass, fail or move it, and a new one is not claimed.
-    assert!(w.core.store.pass_crew_task(&id, &[]).is_err());
-    assert!(w.core.store.fail_crew_verification(&id, "f").is_err());
+    for (attempt, to) in [
+        (w.core.store.pass_crew_task(&id, &[]).map(|_| ()), "passed"),
+        (
+            w.core.store.fail_crew_verification(&id, "f").map(|_| ()),
+            "failed",
+        ),
+    ] {
+        let refused = attempt.unwrap_err();
+        assert!(
+            matches!(&refused, CoreError::InvalidTransition { from, to: moved } if (from.as_str(), moved.as_str()) == ("cancelled", to)),
+            "{refused:?}"
+        );
+    }
     assert!(!w.core.store.claim_crew_verification(&id).unwrap());
     w.core.verify_crew_task(&id).await;
     assert_eq!(w.task(&id).state, "cancelled");
@@ -642,13 +657,106 @@ async fn a_second_pass_that_fails_leaves_the_task_cancelled_and_flags_it() {
     assert_eq!(w.task(&id).state, "cancelled");
     assert_eq!(count(&w, "crew.task.cancelled"), 1);
     assert_eq!(count(&w, "crew.task.cancel_failed"), 1);
-    // A retry finds it cancelled: nothing more is written.
+    // The flagged worker shows in the inbox even though the task is cancelled (#1400).
+    let waiting: Vec<_> = w
+        .core
+        .store
+        .crew_could_not_stop(None, None)
+        .unwrap()
+        .into_iter()
+        .map(|waiting| waiting.task.id)
+        .collect();
+    assert_eq!(waiting, std::slice::from_ref(&id));
+
+    // A stop that fails again leaves the flag and answers the 502 again.
+    let error = w
+        .core
+        .crew_cancel_with(
+            &id,
+            None,
+            "user",
+            |_: String| async { Err(CoreError::Internal("stuck".into())) },
+            || {},
+        )
+        .await
+        .unwrap_err();
+    assert!(error.public_message().contains("is cancelled"), "{error}");
+    assert_eq!(count(&w, "crew.task.stop_retry"), 1);
+    assert_eq!(count(&w, "crew.task.cancel_failed"), 2);
+    assert_eq!(
+        w.core.store.crew_could_not_stop(None, None).unwrap().len(),
+        1
+    );
+
+    // Stop again with a stop that works: the worker's run ends, the flag clears, the state and the cancel row are as they were.
+    let worker = w.worker(&id);
+    assert!(w.core.store.thread(&worker).unwrap().active_run.is_some());
+    let done = w.core.crew_cancel_task(&id, None, "user").await.unwrap();
+    assert!(done.already);
+    assert!(w.core.store.thread(&worker).unwrap().active_run.is_none());
+    assert_eq!(w.task(&id).state, "cancelled");
+    assert_eq!(count(&w, "crew.task.stop_retried"), 1);
+    assert_eq!(count(&w, "crew.task.cancelled"), 1);
+    assert!(
+        w.core
+            .store
+            .crew_could_not_stop(None, None)
+            .unwrap()
+            .is_empty()
+    );
+
+    // Once it held, a further cancel writes nothing.
+    let before = actions(&w);
     assert!(
         w.core
             .crew_cancel_task(&id, None, "user")
             .await
             .unwrap()
             .already
+    );
+    assert_eq!(actions(&w), before);
+}
+
+/// A worker record that cannot be read is not "no worker": the retry must fail and keep the flag, never write `stop_retried`.
+#[tokio::test]
+async fn a_worker_record_that_cannot_be_read_does_not_clear_a_failed_stop() {
+    let w = world(true, Arc::new(|_, _| Turn::Hang)).await;
+    let id = routed(&w, "c");
+    let hook = late_worker(&w, &id);
+    w.core
+        .crew_cancel_with(
+            &id,
+            None,
+            "user",
+            |_: String| async { Err(CoreError::Internal("stuck".into())) },
+            hook,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        w.core.store.crew_could_not_stop(None, None).unwrap().len(),
+        1
+    );
+
+    // Damage the task's worker row so that reading it fails (text where a count belongs).
+    let db = rusqlite::Connection::open(w._dir.path().join("data/orbyn.sqlite3")).unwrap();
+    db.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+    db.execute(
+        "UPDATE crew_runs SET attempts = 'not a number' WHERE task_id = ?1",
+        [&id],
+    )
+    .unwrap();
+
+    let error = w
+        .core
+        .crew_cancel_task(&id, None, "user")
+        .await
+        .unwrap_err();
+    assert!(!matches!(error, CoreError::NotFound(_)), "{error}");
+    assert_eq!(count(&w, "crew.task.stop_retried"), 0);
+    assert_eq!(
+        w.core.store.crew_could_not_stop(None, None).unwrap().len(),
+        1
     );
 }
 

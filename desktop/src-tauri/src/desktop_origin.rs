@@ -137,6 +137,12 @@ pub fn is_application(url: &Url) -> bool {
         && url.path() == "/index.html"
 }
 
+/// The bundled product document's one main window is the only caller of the product
+/// commands (`crew_presence`, `person_key`, `pick_folder` and the six `snapshot_*` ones).
+pub fn is_product_caller(label: &str, url: &Url) -> bool {
+    label == "main" && is_application(url)
+}
+
 /// The startup commands (retry, show log, quit) belong only to the separate, static
 /// startup document.
 pub fn is_startup(url: &Url) -> bool {
@@ -377,7 +383,17 @@ mod tests {
                 "allow-pick-folder",
                 "allow-quit-core",
                 "allow-restart-core",
-                "allow-show-core-log"
+                "allow-show-core-log",
+                "allow-snapshot-capture",
+                "allow-snapshot-configure",
+                "allow-snapshot-discard",
+                "allow-snapshot-setup",
+                "allow-snapshot-state",
+                "allow-snapshot-take",
+                "allow-window-menu-run",
+                "allow-window-set-maximize-rect",
+                "core:event:allow-listen",
+                "core:event:allow-unlisten"
             ]
         );
         // The dialog plugin is used from Rust only: no capability hands its commands to a page.
@@ -385,7 +401,7 @@ mod tests {
             !include_str!("../capabilities/main.json").contains("dialog:"),
             "no page may call the dialog plugin"
         );
-        // `pick_folder` is the only handler added for the folder dialog: the handler list is exact.
+        // The handler list is exact: every product command is listed once.
         let main = include_str!("main.rs");
         let list = main
             .split("generate_handler![")
@@ -401,10 +417,19 @@ mod tests {
                 "quit_core",
                 "presence::crew_presence",
                 "person_key::person_key",
-                "folder_picker::pick_folder"
+                "folder_picker::pick_folder",
+                "snapshot::snapshot_state",
+                "snapshot::snapshot_configure",
+                "snapshot::snapshot_capture",
+                "snapshot::snapshot_take",
+                "snapshot::snapshot_discard",
+                "snapshot::snapshot_setup",
+                "window_frame::window_menu_run",
+                "window_frame::window_set_maximize_rect"
             ]
         );
-        // Dragging and zooming by the unified title bar is granted on macOS alone, where the system bar is gone.
+        // Dragging and zooming by the web title bar is granted where the system bar is gone: macOS's
+        // unified frame and Windows's drawn one.
         let macos: serde_json::Value =
             serde_json::from_str(include_str!("../capabilities/main-macos.json")).unwrap();
         assert_eq!(macos["platforms"], serde_json::json!(["macOS"]));
@@ -417,13 +442,29 @@ mod tests {
                 "core:window:allow-internal-toggle-maximize"
             ])
         );
+        let windows: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main-windows.json")).unwrap();
+        assert_eq!(windows["platforms"], serde_json::json!(["windows"]));
+        assert_eq!(windows["windows"], serde_json::json!(["main"]));
+        assert!(windows.get("remote").is_none());
+        assert_eq!(
+            windows["permissions"],
+            serde_json::json!([
+                "core:window:allow-start-dragging",
+                "core:window:allow-internal-toggle-maximize",
+                "core:window:allow-minimize",
+                "core:window:allow-toggle-maximize",
+                "core:window:allow-close",
+                "core:window:allow-is-maximized"
+            ])
+        );
         // The config lists the capabilities that apply: one left out of `app.security.capabilities` is built but never
         // granted, which left the unified title bar unable to move the window.
         let config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(
             config["app"]["security"]["capabilities"],
-            serde_json::json!(["main", "main-macos"])
+            serde_json::json!(["main", "main-macos", "main-windows"])
         );
         // No other capability file grants any of them.
         let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
@@ -443,6 +484,18 @@ mod tests {
                 "restart_core",
                 "show_core_log",
                 "quit_core",
+                "snapshot-state",
+                "snapshot-configure",
+                "snapshot-capture",
+                "snapshot-take",
+                "snapshot-discard",
+                "snapshot-setup",
+                "snapshot_state",
+                "snapshot_configure",
+                "snapshot_capture",
+                "snapshot_take",
+                "snapshot_discard",
+                "snapshot_setup",
             ] {
                 assert!(
                     !text.contains(permission),
@@ -461,8 +514,58 @@ mod tests {
             "crew_presence",
             "person_key",
             "pick_folder",
+            "snapshot_state",
+            "snapshot_configure",
+            "snapshot_capture",
+            "snapshot_take",
+            "snapshot_discard",
+            "snapshot_setup",
+            "window_menu_run",
+            "window_set_maximize_rect",
         ] {
             assert!(build.contains(&format!("\"{command}\"")), "{command}");
+        }
+    }
+
+    #[test]
+    fn the_snapshot_commands_refuse_the_startup_and_preview_documents() {
+        let service = Url::parse("http://127.0.0.1:30001/?token=test").unwrap();
+        let product = application(&service);
+        let snapshot_commands = [
+            "snapshot_state",
+            "snapshot_configure",
+            "snapshot_capture",
+            "snapshot_take",
+            "snapshot_discard",
+            "snapshot_setup",
+        ];
+        for &command in &snapshot_commands {
+            assert!(is_product_caller("main", &product), "{command}");
+            assert!(
+                !is_product_caller("preview-thread-1", &product),
+                "{command} from a preview window"
+            );
+        }
+        for denied in [
+            startup(),
+            restarting(),
+            failed("It stopped.", false),
+            Url::parse("http://127.0.0.1:30001/?token=test").unwrap(),
+            Url::parse("https://example.com/index.html").unwrap(),
+        ] {
+            for &command in &snapshot_commands {
+                assert!(
+                    !is_product_caller("main", &denied),
+                    "{command} from {denied}"
+                );
+            }
+        }
+        let preview = preview(&service, "thread-1", "tab_1").unwrap();
+        for &command in &snapshot_commands {
+            assert!(
+                !is_product_caller("preview-thread-1", &preview),
+                "{command} from a preview window"
+            );
         }
     }
 

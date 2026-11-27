@@ -1,12 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it, vi } from "vitest";
-import { request } from "../../api/client";
+import { afterEach, expect, it, vi } from "vitest";
 import { useRoute } from "../../product/state/route";
+import { installMockFetch } from "../../test-support";
 import { SettingsPage } from "./SettingsPage";
 import { SETTINGS, searchSettings } from "./settingsSearch";
 
-vi.mock("../../api/client", async (original) => ({ ...(await original<object>()), request: vi.fn() }));
+afterEach(() => vi.restoreAllMocks());
 
 it("finds a specific label regardless of word order and excludes desktop controls on web", () => {
   expect(searchSettings("prefix BRANCH", false).map((item) => item.title)).toEqual(["Branch prefix"]);
@@ -18,19 +18,51 @@ it("finds a specific label regardless of word order and excludes desktop control
   expect(searchSettings("Accessibility", true, new Set(["accessibility"]))).toHaveLength(1);
   expect(searchSettings("App updates", true, new Set())).toEqual([]);
   expect(searchSettings("Worktree location", true)).toEqual([]);
+  expect(searchSettings("free disk space", false).map((item) => item.section)).toEqual(["crew"]);
   expect(new Set(SETTINGS.map((item) => item.id)).size).toBe(SETTINGS.length);
+});
+
+it("finds the macOS-only quit confirmation on macOS and nowhere else", () => {
+  expect(searchSettings("quit confirmation", true, undefined, true).map((item) => item.id)).toEqual(["general-quit-confirmation"]);
+  expect(searchSettings("quit confirmation", true, undefined, false)).toEqual([]);
+  expect(searchSettings("quit confirmation", true)).toEqual([]);
+});
+
+it("finds Font smoothing on a Mac client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  expect(searchSettings("font smoothing", true).map((item) => item.title)).toEqual(["Font smoothing"]);
+});
+
+it("leaves Font smoothing out on a Windows client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  expect(searchSettings("font smoothing", true)).toEqual([]);
+});
+
+it("finds Font smoothing through the Mac user agent when navigator.platform is empty", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
+  expect(searchSettings("font smoothing", true).map((item) => item.title)).toEqual(["Font smoothing"]);
+});
+
+it("leaves Font smoothing out for an iPhone user agent that says like Mac OS X", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("");
+  vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)");
+  expect(searchSettings("font smoothing", true)).toEqual([]);
+});
+
+it("finds Open links from other apps here on a Mac client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  expect(searchSettings("links from other apps", true).map((item) => item.id)).toEqual(["chat-open-links-from-other-apps"]);
+});
+
+it("leaves Open links from other apps here out on a Windows client", () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  expect(searchSettings("links from other apps", true)).toEqual([]);
 });
 
 it("navigates from an exact result to an asynchronously loaded row", async () => {
   const user = userEvent.setup();
-  vi.mocked(request).mockImplementation(async (_method, path) => {
-    if (path === "/api/shell") return { attached: false };
-    if (path === "/api/info") return { version: "1", remote: false, platform: "test", environment_label: "Test computer" };
-    const catalog = { version: "fixture", groups: [], metadata_complete: true, selection: { kind: "all_projects" } };
-    if (path === "/api/settings/project-scopes") return catalog;
-    if (path === "/api/settings/preferences/query") return { catalog, rows: [{ key: "branch_name_prefix", value: "feat", default: "feat", mixed: false, project_scoped: true, revision: "fixture", environment: { key: "branch_name_prefix", value: "feat", default: "feat", source: "default", project_scoped: true }, members: [], overrides: [] }] };
-    return [];
-  });
+  installMockFetch();
   window.location.hash = "#/settings/general";
   function Harness() {
     const route = useRoute();

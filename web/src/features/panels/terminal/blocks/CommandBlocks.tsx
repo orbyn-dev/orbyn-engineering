@@ -3,9 +3,12 @@ import { Button } from "../../../../ui/controls";
 import { useNow } from "../../../../lib/useNow";
 import { blocksApi, type BlockTerminal, type CommandBlock, type CommandBlocksApi } from "./blocksContract";
 import { BlockCard, isRunning } from "./BlockCard";
+import { FullscreenStrip } from "./FullscreenStrip";
 
 /** How often the list is read again while a command runs. */
 const POLL_MS = 2000;
+/** While nothing runs the list is still read now and then, so the first command of a quiet terminal, or the next one, appears. */
+const IDLE_POLL_MS = 5000;
 
 export interface CommandBlocksProps {
   threadId: string;
@@ -14,20 +17,21 @@ export interface CommandBlocksProps {
   write?: ((text: string) => void) | undefined;
   /** Sends Ctrl-C to the terminal. */
   interrupt?: (() => void) | undefined;
+  /** Bumped after the drawer cleared this terminal's blocks: the list is read again from the start, so what was dropped is gone. */
+  cleared?: number;
 }
 
 /**
- * The drawer's blocks, one per command. Hidden: with no client installed (the production default) this draws nothing and sends nothing.
- * Every key that comes from the service is kept in a Map or Set, never as an object key.
+ * The drawer's blocks, one per command. The production client draws nothing until it has blocks, so a shell that emits no marks leaves
+ * the terminal exactly as it was. Every key that comes from the service is kept in a Map or Set, never as an object key.
  */
 export function CommandBlocks(props: CommandBlocksProps) {
-  const api = blocksApi();
-  return api ? <Live api={api} {...props} /> : null;
+  return <Live api={blocksApi()} {...props} />;
 }
 
 type Load = { status: "loading" } | { status: "error" } | { status: "ready" };
 
-function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProps & { api: CommandBlocksApi }) {
+function Live({ api, threadId, terminalId, write, interrupt, cleared }: CommandBlocksProps & { api: CommandBlocksApi }) {
   const terminal: BlockTerminal = useRefStable(threadId, terminalId);
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [newest, setNewest] = useState<CommandBlock[]>([]);
@@ -40,6 +44,18 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const paging = useRef(false);
 
+  // The drawer cleared this terminal's blocks: read the list again from the start, so the dropped blocks go, a running block stays,
+  // and an earlier page the old list offered is forgotten.
+  const [topRead, setTopRead] = useState(0);
+  const lastCleared = useRef(cleared);
+  useEffect(() => {
+    if (lastCleared.current === cleared) return;
+    lastCleared.current = cleared;
+    setEarlier([]);
+    setBefore(null);
+    setTopRead((value) => value + 1);
+  }, [cleared]);
+
   const blocks = [...earlier, ...newest.filter((one) => !earlier.some((old) => old.id === one.id))];
   const running = newest.some(isRunning);
   const now = useNow(running);
@@ -47,12 +63,14 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
   // The newest page: at the start, on Try again, and every two seconds while something runs.
   useEffect(() => {
     const controller = new AbortController();
+    const fromTop = attempt === 0 && tick === 0 && topRead === 0;
     api.list(terminal, {}, controller.signal).then(
       (answer) => {
         if (controller.signal.aborted) return;
         setNewest(answer.blocks);
-        // The cursor for earlier pages belongs to the first read; a later read of the newest page leaves it alone.
-        setBefore((old) => (attempt === 0 && tick === 0 ? answer.next_before : old));
+        // The cursor for earlier pages belongs to the first read; a later read of the newest page leaves it alone. After a clear the
+        // reset above has already put it back, and a cleared list is short enough to need no cursor.
+        if (fromTop) setBefore(answer.next_before);
         setLoad({ status: "ready" });
       },
       () => {
@@ -60,13 +78,20 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
       },
     );
     return () => controller.abort();
-  }, [api, terminal, attempt, tick]);
+  }, [api, terminal, attempt, tick, topRead]);
 
+  // The newest page again every 2 s while a block runs and every 5 s otherwise (a terminal whose shell emits marks later, or a next
+  // command). Only the production client reads while idle: the preview mock stays still, and a hidden page reads nothing.
+  const quietClient = api.quietWhenEmpty === true;
   useEffect(() => {
-    if (!running || load.status !== "ready") return;
-    const timer = setTimeout(() => setTick((value) => value + 1), POLL_MS);
-    return () => clearTimeout(timer);
-  }, [running, load.status, tick]);
+    if (load.status === "loading") return;
+    if (load.status === "error" && !quietClient) return;
+    if (!running && !quietClient) return;
+    const timer = setInterval(() => {
+      if (!document.hidden) setTick((value) => value + 1);
+    }, running ? POLL_MS : IDLE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [running, load.status, quietClient]);
 
   const showEarlier = useCallback(async () => {
     if (paging.current || before === null) return;
@@ -90,8 +115,11 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
     });
   const showAll = (id: string) => setExpanded((old) => new Set(old).add(id));
 
-  if (load.status === "loading") return <div className="cb-list" aria-busy="true" />;
+  // The production client draws the terminal alone until it has blocks; only the preview mock shows these loading, empty and error frames.
+  const quiet = api.quietWhenEmpty === true;
+  if (load.status === "loading") return quiet ? null : <div className="cb-list" aria-busy="true" />;
   if (load.status === "error" && blocks.length === 0) {
+    if (quiet) return null;
     return (
       <div className="cb-list">
         <div className="cb-empty">
@@ -104,11 +132,12 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
     );
   }
   if (blocks.length === 0) {
+    if (quiet) return null;
     return (
       <div className="cb-list">
         <div className="cb-empty">
-          <b>Commands Orbyn runs appear here as blocks</b>
-          <span>Each block has the command's exit code and how long it took, and can be copied, run again or sent to the agent.</span>
+          <b>Commands you run here appear as blocks</b>
+          <span>Each block shows the command, its exit code and how long it took, and can be copied or run again. A shell that does not mark its commands shows none.</span>
         </div>
       </div>
     );
@@ -120,25 +149,29 @@ function Live({ api, threadId, terminalId, write, interrupt }: CommandBlocksProp
           Show earlier commands
         </Button>
       )}
-      {blocks.map((block) => (
-        <BlockCard
-          key={block.id}
-          api={api}
-          terminal={terminal}
-          block={block}
-          tick={tick}
-          now={now}
-          selected={selected === block.id}
-          collapsed={collapsed.has(block.id)}
-          showAll={expanded.has(block.id)}
-          onSelect={() => setSelected(block.id)}
-          onToggle={() => toggle(block.id)}
-          onShowAll={() => showAll(block.id)}
-          onCollapseAll={() => setCollapsed(new Set(blocks.map((one) => one.id)))}
-          write={write}
-          interrupt={interrupt}
-        />
-      ))}
+      {blocks.map((block) =>
+        isRunning(block) && block.fullscreen ? (
+          <FullscreenStrip key={block.id} command={block.command} />
+        ) : (
+          <BlockCard
+            key={block.id}
+            api={api}
+            terminal={terminal}
+            block={block}
+            tick={tick}
+            now={now}
+            selected={selected === block.id}
+            collapsed={collapsed.has(block.id)}
+            showAll={expanded.has(block.id)}
+            onSelect={() => setSelected(block.id)}
+            onToggle={() => toggle(block.id)}
+            onShowAll={() => showAll(block.id)}
+            onCollapseAll={() => setCollapsed(new Set(blocks.map((one) => one.id)))}
+            write={write}
+            interrupt={interrupt}
+          />
+        ),
+      )}
     </div>
   );
 }

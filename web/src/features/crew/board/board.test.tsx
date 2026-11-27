@@ -5,6 +5,7 @@ import type { MockApi } from "../../../../mock/api";
 import { MOCK_CREW, MOCK_CREW_TWO } from "../../../../mock/flow";
 import { useConnection } from "../../../product/state/connection";
 import { installMockFetch } from "../../../test-support";
+import { useWrites } from "../writes/store";
 import { BoardView } from "./BoardView";
 import { useBoardFocus } from "./focus";
 import { useBoard } from "./useBoard";
@@ -16,6 +17,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-11-07T15:00:00Z"));
   mock = installMockFetch();
   useConnection.setState({ remote: false });
+  useWrites.setState({ ops: {} });
   window.location.hash = "";
 });
 
@@ -23,6 +25,7 @@ afterEach(() => vi.useRealTimers());
 
 const calls = (part: string) => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes(part));
 const writes = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method && init.method !== "GET");
+const posts = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST");
 const urls = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
 
 async function open(scenario: "crew" | `crew-${string}`) {
@@ -39,6 +42,7 @@ describe("the Taskboard on the board route", () => {
     mock.reset("default");
     const { container } = render(<BoardView />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(calls("/api/crew/flow")).toHaveLength(0);
@@ -87,17 +91,18 @@ describe("the Taskboard on the board route", () => {
     expect(refused).toHaveTextContent("Could not start · Crew workers on Codex are not available yet.");
     expect(refused.querySelector(".bd-amber")).toBeNull();
     // The task that really waits keeps its amber reason.
-    const waiting = needs.getByText("Which target wins when both next and returnTo are set?").closest("li")!;
+    const waiting = needs.getByText("Which target wins when both next and returnTo are set?", { selector: ".bd-t" }).closest("li")!;
     expect(waiting).toHaveAttribute("data-needs");
     expect(waiting.querySelector(".bd-amber")).toHaveTextContent("a person decides");
     expect(waiting).not.toHaveTextContent("Could not start");
   });
 
-  it("shows a needs_person card's reason read-only, as plain text, with no Answer button", async () => {
+  it("shows a needs_person card's question read-only, in one amber line, with no Answer button", async () => {
     await open("crew");
     const needs = within(column(/^Needs you/));
-    expect(needs.getByText("Asked you a question: <b>which target wins</b>?")).toBeVisible();
-    expect(column(/^Needs you/).querySelector(".bd-amber b")).toBeNull();
+    const amber = column(/^Needs you/).querySelector(".bd-amber")!;
+    expect(amber.querySelector("b")).toHaveTextContent("Asked you a question");
+    expect(amber).toHaveTextContent("Asked you a question · Which target wins when both next and returnTo are set?");
     expect(needs.queryByRole("button", { name: /Answer/ })).toBeNull();
   });
 
@@ -174,17 +179,17 @@ describe("the Taskboard on the board route", () => {
     expect(writes()).toHaveLength(0);
   });
 
-  it("draws the card menu with Cancel as a choice for a running task and the rest After the beta and inert", async () => {
+  it("draws the card menu with Cancel as a choice for a running task and the rest Planned and inert", async () => {
     const user = await open("crew");
     await user.click(within(column(/^Running/)).getByRole("button", { name: /^Actions for Use next/ }));
     const menu = await screen.findByRole("menu", { name: "Task actions" });
     const items = within(menu).getAllByRole("menuitem");
     expect(items.map((item) => item.textContent)).toEqual([
       "Cancel",
-      "Reassign engine After the beta",
-      "Message into a lane After the beta",
-      "Add reviewer lane After the beta",
-      "Propose a check After the beta",
+      "Reassign engine Planned",
+      "Message into a lane Planned",
+      "Add reviewer lane Planned",
+      "Propose a check Planned",
     ]);
     expect(items[0]).toBeEnabled();
     for (const item of items.slice(1)) expect(item).toBeDisabled();
@@ -202,12 +207,55 @@ describe("the Taskboard on the board route", () => {
   });
 });
 
+describe("a card whose worker could not be stopped (kc2-close-lead-could-not-stop)", () => {
+  const STUCK = "Add tests for the redirect, including //evil.com";
+  const stuckCard = () => within(column(/^Needs you/)).getByText(STUCK).closest("li")!;
+
+  it("says Could not stop with the service's reason, not a question, and draws Stop again under it", async () => {
+    await open("crew-could-not-stop");
+    const card = stuckCard();
+    expect(card).toHaveTextContent("Could not stop · The worker could not be stopped. Stop it again.");
+    expect(card.querySelector(".bd-amber")).toHaveTextContent("Could not stop · The worker could not be stopped. Stop it again.");
+    expect(within(card).getByRole("button", { name: `Stop again: ${STUCK}` })).toBeEnabled();
+  });
+
+  it("sends one POST to the task's cancel and says what the service answered", async () => {
+    const user = await open("crew-could-not-stop");
+    await user.click(within(stuckCard()).getByRole("button", { name: `Stop again: ${STUCK}` }));
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(String(posts()[0]![0])).toBe("/api/crew/tasks/b-verifying/cancel");
+    expect(await screen.findByText(/^Cancelled\./)).toBeVisible();
+  });
+
+  it("keeps Stop again off from another computer, with the reason", async () => {
+    useConnection.setState({ remote: true });
+    await open("crew-could-not-stop");
+    const stop = within(stuckCard()).getByRole("button", { name: `Stop again: ${STUCK}` });
+    expect(stop).toBeDisabled();
+    expect(stop).toHaveAttribute("title", "Not available from another computer");
+  });
+
+  it("still draws a needs_person card's own amber line, and no Stop again", async () => {
+    await open("crew-could-not-stop");
+    const waiting = within(column(/^Needs you/)).getByText("Which target wins when both next and returnTo are set?", { selector: ".bd-t" }).closest("li")!;
+    expect(waiting.querySelector(".bd-amber")).toHaveTextContent("Asked you a question · Which target wins when both next and returnTo are set?");
+    expect(within(waiting).queryByRole("button", { name: /^Stop again/ })).toBeNull();
+  });
+
+  it("never draws Stop again on a card whose needs_you is unset", async () => {
+    await open("crew");
+    expect(screen.queryByRole("button", { name: /^Stop again/ })).toBeNull();
+  });
+});
+
 describe("useBoard, the next page of a column", () => {
   it("sends one read when showMore is called twice before the first answer", async () => {
     mock.reset("crew-board-many");
     const real = vi.mocked(fetch).getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input).includes("column=running")) await new Promise((resolve) => setTimeout(resolve, 60));
+      if (String(input).includes("column=running")) await gate;
       return real(input, init);
     });
     const { result } = renderHook(() => useBoard({ crew: MOCK_CREW, engine: null, kind: null }));
@@ -216,6 +264,7 @@ describe("useBoard, the next page of a column", () => {
       void result.current.showMore("running");
       void result.current.showMore("running");
     });
+    release();
     await waitFor(() => expect(result.current.cardsOf("running")).toHaveLength(12));
     expect(calls("column=running")).toHaveLength(1);
   });
@@ -231,6 +280,7 @@ describe("a card asked for by a map node", () => {
     await waitFor(() => expect(useBoardFocus.getState().task).toBeNull());
     render(<BoardView />);
     await screen.findByRole("region", { name: /^Queued/ });
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.activeElement?.hasAttribute("data-task")).toBe(false);
   });
@@ -243,6 +293,7 @@ describe("a card asked for by a map node", () => {
     expect(useBoardFocus.getState().task).toBeNull();
     // That crew's board (it holds no task) must not say a card was missing: nothing asked for one.
     await screen.findByText("No tasks yet");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.queryByText(/isn’t on the current page/)).toBeNull();
     await user.selectOptions(screen.getByLabelText("Crew"), MOCK_CREW);

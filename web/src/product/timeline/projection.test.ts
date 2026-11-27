@@ -205,6 +205,19 @@ describe("applyEvents", () => {
     expect(next.items[0]).toMatchObject({ role: "user", attachments: files });
   });
 
+  it("keeps a Snap Shot's source on the sent attachment", () => {
+    const source = { kind: "snap_shot", captured_at: "2026-11-22T14:32:08Z", app_name: "Safari", window_title: "Acme · Sign in" };
+    const log = applyEvents("t", emptyLog, [
+      ev(1, {
+        type: "CUSTOM",
+        name: "user.attachments",
+        value: { attachments: [{ id: "a1", name: "Snap Shot.png", mime: "image/png", size: 5, source }] },
+      }),
+      ev(2, { type: "TEXT_MESSAGE_START", messageId: "u1", role: "user" }),
+    ]);
+    expect(log.items[0]).toMatchObject({ attachments: [{ id: "a1", source }] });
+  });
+
   it("ignores malformed attachment entries", () => {
     const log = applyEvents("t", emptyLog, [
       ev(1, {
@@ -228,6 +241,106 @@ describe("applyEvents", () => {
       }),
     ]);
     expect(log.items[0]).toMatchObject({ kind: "activity", activityType: "search" });
+  });
+});
+
+describe("thread.rewound", () => {
+  const say = (at: number, id: string, role: "user" | "assistant", text: string): WireThreadEvent[] => [
+    ev(at, { type: "TEXT_MESSAGE_START", messageId: id, role }),
+    ev(at + 1, { type: "TEXT_MESSAGE_CONTENT", messageId: id, delta: text }),
+    ev(at + 2, { type: "TEXT_MESSAGE_END", messageId: id }),
+  ];
+  const rewound = (seq: number, value: JsonValue): WireThreadEvent =>
+    ev(seq, { type: "CUSTOM", name: "thread.rewound", value });
+
+  const first = say(1, "a", "user", "first");
+  const removed = say(4, "b", "assistant", "removed");
+  const rewind = rewound(7, { through: 3 });
+  const kept = say(8, "c", "assistant", "kept");
+  const all = [...first, ...removed, rewind, ...kept];
+
+  it("hides what a rewind removed and keeps what came after it", () => {
+    const log = applyEvents("t", emptyLog, all);
+    expect(log.items.map((item) => item.kind === "message" || item.kind === "notice" ? item.text : null)).toEqual([
+      "first",
+      "Continued from before this message in a new session. The engine was given the earlier conversation as text, not its own history.",
+      "kept",
+    ]);
+    // The log itself stays whole; only the view leaves the removed events out.
+    expect(log.events).toHaveLength(all.length);
+    expect(log.timeline.some((entry) => entry.seq === 7)).toBe(true);
+  });
+
+  it("gives the same view however the batches split", () => {
+    const oneShot = applyEvents("t", emptyLog, all);
+    const rewindLast = applyEvents("t", applyEvents("t", emptyLog, [...first, ...removed, ...kept]), [rewind]);
+    const rewindFirst = applyEvents(
+      "t",
+      applyEvents("t", applyEvents("t", applyEvents("t", emptyLog, [rewind]), first), removed),
+      kept,
+    );
+    expect(rewindLast.items).toEqual(oneShot.items);
+    expect(rewindFirst.items).toEqual(oneShot.items);
+    expect(rewindLast.lastSeq).toBe(oneShot.lastSeq);
+    expect(rewindFirst.lastSeq).toBe(oneShot.lastSeq);
+  });
+
+  it("drops every item and usage the removed events produced", () => {
+    const log = applyEvents("t", emptyLog, [
+      ...first,
+      ev(4, { type: "REASONING_MESSAGE_START", messageId: "rs", role: "reasoning" }),
+      ev(5, { type: "TOOL_CALL_START", toolCallId: "c", toolCallName: "Bash" }),
+      ev(6, {
+        type: "ACTIVITY_SNAPSHOT",
+        messageId: "ap",
+        activityType: "approval",
+        content: { id: "ap1", summary: "Run tests", state: "pending" },
+        replace: true,
+      }),
+      ev(7, { type: "CUSTOM", name: "usage", value: { input: 9 } }),
+      rewound(9, { through: 3 }),
+      ev(10, { type: "CUSTOM", name: "usage", value: { input: 3 } }),
+    ]);
+    expect(log.items.map((item) => item.kind)).toEqual(["message", "notice"]);
+    expect(log.usage).toEqual({ input: 3 });
+  });
+
+  it("hides nothing when through is missing or not a finite number", () => {
+    const values: JsonValue[] = [{}, { through: null }, { through: "3" }, { through: Number.NaN }];
+    for (const value of values) {
+      const log = applyEvents("t", emptyLog, [...first, ...removed, rewound(7, value), ...kept]);
+      expect(log.items.flatMap((item) => item.kind === "message" ? [item.text] : [])).toEqual([
+        "first",
+        "removed",
+        "kept",
+      ]);
+    }
+  });
+
+  it("says went back only for a native rewind, naming the engine", () => {
+    const native = applyEvents("t", emptyLog, [rewound(1, { through: 0, native: true })], "Claude Code");
+    expect(native.items[0]).toMatchObject({
+      kind: "notice",
+      text: "Went back to before this message. Claude Code continues in its own session from there.",
+    });
+
+    const handoff = applyEvents("t", emptyLog, [rewound(1, { through: 0 })], "Claude Code");
+    expect(handoff.items[0]).toMatchObject({
+      kind: "notice",
+      text: "Continued from before this message in a new session. Claude Code was given the earlier conversation as text, not its own history.",
+    });
+
+    const notNative = applyEvents("t", emptyLog, [rewound(1, { through: 0, native: "true" })], "Claude Code");
+    expect(notNative.items[0]).toMatchObject({
+      kind: "notice",
+      text: "Continued from before this message in a new session. Claude Code was given the earlier conversation as text, not its own history.",
+    });
+
+    const unnamed = applyEvents("t", emptyLog, [rewound(1, { through: 0, native: true })]);
+    expect(unnamed.items[0]).toMatchObject({
+      kind: "notice",
+      text: "Went back to before this message. The engine continues in its own session from there.",
+    });
   });
 });
 

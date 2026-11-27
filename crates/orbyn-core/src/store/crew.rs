@@ -3,6 +3,8 @@
 //! hash to its own id. The answer key has its own table and its own reader, so the
 //! brief a worker reads comes from a table that cannot hold it (H1).
 
+use std::collections::BTreeMap;
+
 use orbyn_contracts::{
     AnswerKey, Brief, CrewError, CrewMessage, CrewObject, CrewResult, Evidence, Gate, Lease,
     Report, RouteDecision, WorkerObject, canonical_json,
@@ -38,6 +40,8 @@ pub struct CrewTask {
     pub run_id: String,
     pub state: String,
     pub stop_reason: Option<String>,
+    /// The typed detail of an `engine_error` stop, when it has one (KC8): a worker stopped twice.
+    pub stop_detail: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -49,6 +53,7 @@ pub(super) fn task_row(row: &Row<'_>) -> rusqlite::Result<CrewTask> {
         run_id: row.get("run_id")?,
         state: row.get("state")?,
         stop_reason: row.get("stop_reason")?,
+        stop_detail: row.get("stop_detail")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
@@ -207,6 +212,86 @@ pub(super) fn insert_object(
     Ok(())
 }
 
+/// A verified brief and key ready to be stored, built before the transaction like every other crew object.
+struct PreparedCrewTask<'a> {
+    brief: &'a Brief,
+    key: &'a AnswerKey,
+    brief_body: String,
+    key_body: String,
+}
+
+/// Checks a brief and its key and canonicalises both, before the transaction that stores them.
+fn prepare_crew_task<'a>(brief: &'a Brief, key: &'a AnswerKey) -> Result<PreparedCrewTask<'a>> {
+    let brief_object = CrewObject::Brief(brief.clone());
+    let key_object = CrewObject::AnswerKey(key.clone());
+    let brief_body = checked(&brief_object)?;
+    let key_body = checked(&key_object)?;
+    if key.brief != brief.id || key.crew_id != brief.crew_id {
+        return Err(CoreError::Invalid(
+            "crew answer key refused: it belongs to another brief".into(),
+        ));
+    }
+    Ok(PreparedCrewTask {
+        brief,
+        key,
+        brief_body,
+        key_body,
+    })
+}
+
+/// Stores a prepared brief and key, in the state `briefed`. The second value says whether this call created the
+/// task: storing the same task again, with the same key and run, returns it as it is; a different key or run is
+/// refused. Only a created task is counted against the brief's lessons.
+fn insert_crew_task(
+    tx: &Transaction<'_>,
+    prepared: &PreparedCrewTask<'_>,
+    run_id: &str,
+) -> Result<(CrewTask, bool)> {
+    let (brief, key) = (prepared.brief, prepared.key);
+    if let Some(existing) = tx
+        .query_row(
+            "SELECT * FROM crew_tasks WHERE id = ?1",
+            [brief.id.as_str()],
+            task_row,
+        )
+        .optional()?
+    {
+        let stored_key: String = tx.query_row(
+            "SELECT id FROM crew_answer_keys WHERE task_id = ?1",
+            [brief.id.as_str()],
+            |row| row.get(0),
+        )?;
+        // Same brief, but a different key or run: refuse, never return the old one.
+        if stored_key != key.id.as_str() || existing.run_id != run_id {
+            return Err(CoreError::Invalid(format!(
+                "crew task {} already exists with a different {}",
+                existing.id,
+                if stored_key != key.id.as_str() {
+                    "answer key"
+                } else {
+                    "run"
+                }
+            )));
+        }
+        return Ok((existing, false));
+    }
+    let stamp = now();
+    tx.execute(
+        "INSERT INTO crew_tasks (id, crew_id, run_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![brief.id.as_str(), brief.crew_id.as_str(), run_id, stamp],
+    )?;
+    tx.execute(
+        "INSERT INTO crew_briefs (id, body) VALUES (?1, ?2)",
+        params![brief.id.as_str(), prepared.brief_body],
+    )?;
+    tx.execute(
+        "INSERT INTO crew_answer_keys (task_id, id, body) VALUES (?1, ?2, ?3)",
+        params![brief.id.as_str(), key.id.as_str(), prepared.key_body],
+    )?;
+    Ok((find_task(tx, brief.id.as_str())?, true))
+}
+
 impl Store {
     /// Stores a brief and its answer key together, in the state `briefed`. The key's
     /// `brief` must be this brief's id. Storing the same task again, with the same key and
@@ -217,58 +302,40 @@ impl Store {
         key: &AnswerKey,
         run_id: &str,
     ) -> Result<CrewTask> {
-        let brief_object = CrewObject::Brief(brief.clone());
-        let key_object = CrewObject::AnswerKey(key.clone());
-        let brief_body = checked(&brief_object)?;
-        let key_body = checked(&key_object)?;
-        if key.brief != brief.id || key.crew_id != brief.crew_id {
-            return Err(CoreError::Invalid(
-                "crew answer key refused: it belongs to another brief".into(),
-            ));
-        }
+        self.create_crew_task_with_lessons(brief, key, run_id, &[], &[])
+    }
+
+    /// `create_crew_task`, and the brief's lessons counted in that one transaction (KC5 slice 2): each lesson the
+    /// brief carried gets a use and its use time, each one its key check left out grows `left_out_of`. The block
+    /// itself is not stored: it reaches the worker's brief, never the `Brief` object the router and the checks read.
+    pub fn create_crew_task_with_lessons(
+        &self,
+        brief: &Brief,
+        key: &AnswerKey,
+        run_id: &str,
+        used: &[String],
+        left_out: &[String],
+    ) -> Result<CrewTask> {
+        let prepared = prepare_crew_task(brief, key)?;
         self.commit(|tx, _| {
-            if let Some(existing) = tx
-                .query_row(
-                    "SELECT * FROM crew_tasks WHERE id = ?1",
-                    [brief.id.as_str()],
-                    task_row,
-                )
-                .optional()?
-            {
-                let stored_key: String = tx.query_row(
-                    "SELECT id FROM crew_answer_keys WHERE task_id = ?1",
-                    [brief.id.as_str()],
-                    |row| row.get(0),
-                )?;
-                // Same brief, but a different key or run: refuse, never return the old one.
-                if stored_key != key.id.as_str() || existing.run_id != run_id {
-                    return Err(CoreError::Invalid(format!(
-                        "crew task {} already exists with a different {}",
-                        existing.id,
-                        if stored_key != key.id.as_str() {
-                            "answer key"
-                        } else {
-                            "run"
-                        }
-                    )));
+            let (task, created) = insert_crew_task(tx, &prepared, run_id)?;
+            if created {
+                let at = now();
+                if !(used.is_empty() && left_out.is_empty()) {
+                    super::crew_lessons::record_lesson_use(tx, used, left_out, &at)?;
                 }
-                return Ok(existing);
+                // KC5 slice 4: the one EvalHistory sample this task records. Recording only, and a failure is
+                // logged by the sample's own savepoint, never a reason to refuse a start.
+                super::crew_eval_samples::record_start(
+                    tx,
+                    &task.id,
+                    prepared.brief.kind,
+                    used,
+                    left_out,
+                    &at,
+                );
             }
-            let stamp = now();
-            tx.execute(
-                "INSERT INTO crew_tasks (id, crew_id, run_id, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?4)",
-                params![brief.id.as_str(), brief.crew_id.as_str(), run_id, stamp],
-            )?;
-            tx.execute(
-                "INSERT INTO crew_briefs (id, body) VALUES (?1, ?2)",
-                params![brief.id.as_str(), brief_body],
-            )?;
-            tx.execute(
-                "INSERT INTO crew_answer_keys (task_id, id, body) VALUES (?1, ?2, ?3)",
-                params![brief.id.as_str(), key.id.as_str(), key_body],
-            )?;
-            find_task(tx, brief.id.as_str())
+            Ok(task)
         })
     }
 
@@ -277,6 +344,20 @@ impl Store {
             .reader()
             .query_row("SELECT * FROM crew_tasks WHERE id = ?1", [id], task_row)
             .optional()?)
+    }
+
+    /// Every task a lead thread leads, oldest first, whatever its state: `crew_runs.lead_thread_id` is the only link, so a task
+    /// another thread leads is never one. The caller decides which are live.
+    pub fn crew_tasks_led_by(&self, lead_thread_id: &str) -> Result<Vec<CrewTask>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT t.* FROM crew_tasks t
+             JOIN crew_runs r ON r.task_id = t.id
+             WHERE r.lead_thread_id = ?1
+             ORDER BY t.created_at, t.id",
+        )?;
+        let rows = statement.query_map([lead_thread_id], task_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// The brief: what a worker may read. It never carries the key.
@@ -317,6 +398,91 @@ impl Store {
             ))),
         })
         .transpose()
+    }
+
+    /// The brief of every task in `task_ids`, read in one query. A read over a window of merges
+    /// needs these together; one query per merge would cost the same as the merges themselves.
+    pub fn crew_briefs_of_tasks(&self, task_ids: &[String]) -> Result<BTreeMap<String, Brief>> {
+        if task_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let marks = vec!["?"; task_ids.len()].join(",");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, body FROM crew_briefs WHERE id IN ({marks})"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(task_ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(id, body)| {
+                let brief = match read_object(&body)? {
+                    CrewObject::Brief(brief) => brief,
+                    other => {
+                        return Err(CoreError::Internal(format!(
+                            "crew_briefs holds a {}",
+                            other.type_name()
+                        )));
+                    }
+                };
+                Ok((id, brief))
+            })
+            .collect()
+    }
+
+    /// The moment each task's brief was accepted, read in one query.
+    pub fn crew_task_created_at(&self, task_ids: &[String]) -> Result<BTreeMap<String, String>> {
+        if task_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let marks = vec!["?"; task_ids.len()].join(",");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT id, created_at FROM crew_tasks WHERE id IN ({marks})"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(task_ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows.into_iter().collect())
+    }
+
+    /// The answer key of every task in `task_ids`, read in one query. Only the core and the
+    /// verifier call this; no tool returns these to a member.
+    pub fn crew_answer_keys_of_tasks(
+        &self,
+        task_ids: &[String],
+    ) -> Result<BTreeMap<String, AnswerKey>> {
+        if task_ids.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let marks = vec!["?"; task_ids.len()].join(",");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&format!(
+            "SELECT task_id, body FROM crew_answer_keys WHERE task_id IN ({marks})"
+        ))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(task_ids.iter()), |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(id, body)| {
+                let key = match read_object(&body)? {
+                    CrewObject::AnswerKey(key) => key,
+                    other => {
+                        return Err(CoreError::Internal(format!(
+                            "crew_answer_keys holds a {}",
+                            other.type_name()
+                        )));
+                    }
+                };
+                Ok((id, key))
+            })
+            .collect()
     }
 
     /// Appends a message, lease, evidence, gate or result to a task. The object must be

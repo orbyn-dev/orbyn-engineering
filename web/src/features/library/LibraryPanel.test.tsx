@@ -29,10 +29,11 @@ const pickItem = async (user: ReturnType<typeof userEvent.setup>, name: string) 
 const personal = async (user: ReturnType<typeof userEvent.setup>) => user.click(await screen.findByRole("tab", { name: /^Personal/ }));
 
 it("draws nothing, and no error, when the library route answers 404", async () => {
-  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
+  const fetching = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const { container } = render(<LibraryPanel threadId="t1" typeIntoTerminal={typeIn} />);
   await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+  expect(String(fetching.mock.calls[0]?.[0])).toMatch(/\/api\/library/);
   await act(async () => { await Promise.resolve(); });
   expect(container).toBeEmptyDOMElement();
   expect(screen.queryByRole("alert")).toBeNull();
@@ -347,7 +348,7 @@ const openRun = async (user: ReturnType<typeof userEvent.setup>, name = "Test on
 };
 const sheet = async () => (await screen.findByRole("button", { name: "Run anyway" })).closest("dialog")!;
 
-it("asks for a confirm sheet on 409 confirm_required: the grants in words and the set names, never a value or a key", async () => {
+it("asks for a confirm sheet on 409 confirm_required: the grants in words and each set's name with its key names, never a value", async () => {
   const mock = createLibraryMock({ fixtures: withSet() });
   mock.vault.set(`${SET}/API_BASE`, "https://secret.example");
   const run = vi.spyOn(mock, "runWorkflow");
@@ -358,8 +359,11 @@ it("asks for a confirm sheet on 409 confirm_required: the grants in words and th
   expect(confirm.querySelector("h2")?.textContent).toBe("Run “Test one package”?");
   expect(within(confirm).getByText(/saved values of these env sets go into the command’s environment/)).toBeVisible();
   expect(within(within(confirm).getByRole("list", { name: "Env sets applied" })).getByText("work-laptop")).toBeVisible();
+  const keys = within(confirm).getByRole("list", { name: "Keys in work-laptop" });
+  expect(within(keys).getByText("API_BASE")).toBeVisible();
+  expect(within(keys).getByText("API_TOKEN")).toBeVisible();
   expect(confirm.textContent).not.toContain("secret.example");
-  expect(confirm.textContent).not.toContain("API_TOKEN");
+  expect(confirm.textContent).not.toContain("https://secret.example");
   expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
   expect(run).toHaveBeenCalledTimes(1);
   expect(run.mock.calls[0]![3] ?? []).toEqual([]);
@@ -484,10 +488,12 @@ it("copies a repo workflow as a From repo entry that names the sets it resolved"
   await pickItem(user, "Start dev server");
   expect(screen.getByText(/Environment: work-laptop/)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Copy to Personal" }));
+  // The copy switches to the Personal tab when it lands; pick the row only after, or the click races the switch.
+  await screen.findByText(/Copied to Personal/, undefined, { timeout: 10000 });
   await pickItem(user, "Start dev server");
-  expect(await screen.findByRole("heading", { name: /^Start dev server\s*From repo$/ }, { timeout: 3000 })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: /^Start dev server\s*From repo$/ }, { timeout: 10000 })).toBeVisible();
   expect(screen.getByText(/Its next run asks you to confirm first/)).toBeVisible();
-});
+}, 20000);
 
 it("treats a keychain_unavailable on a value save as the Planned note, with the service's words and no error", async () => {
   const mock = createLibraryMock();

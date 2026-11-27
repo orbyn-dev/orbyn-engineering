@@ -129,3 +129,41 @@ describe("repo_id on thread Git calls", () => {
     ]);
   });
 });
+
+describe("run purpose", () => {
+  it("puts purpose on the start body only when a run asks for Orbyn's schema", async () => {
+    const fetchMock = respond(200, { id: "r1" });
+    vi.stubGlobal("fetch", fetchMock);
+    await api.startRun("t1", "why is it slow?");
+    await api.startRun("t1", "why is it slow?", [], { purpose: "terminal_proposal" });
+    const bodies = fetchMock.mock.calls.map((call) => {
+      const [, init] = call as unknown as [string, RequestInit];
+      return JSON.parse(String(init.body)) as unknown;
+    });
+    expect(bodies).toEqual([
+      { prompt: "why is it slow?" },
+      { prompt: "why is it slow?", purpose: "terminal_proposal" },
+    ]);
+  });
+});
+
+describe("repo_id on the browser preview and the outside editor", () => {
+  it("sends repo_id for another repository's file and leaves it out for the primary", async () => {
+    const fetchMock = respond(200, {});
+    vi.stubGlobal("fetch", fetchMock);
+    await api.openPreviewFile("t1", "page.html");
+    await api.openPreviewFile("t1", "page.html", "r2");
+    await api.openInEditor("t1", { path: "a.ts", editor: "vscode" });
+    await api.openInEditor("t1", { path: "a.ts", editor: "vscode", repo_id: "r2" });
+    const sent = fetchMock.mock.calls.map((call) => {
+      const [url, init] = call as unknown as [string, RequestInit];
+      return [init.method, url.replace(/^.*?(?=\/api)/, ""), init.body === undefined ? undefined : JSON.parse(String(init.body))];
+    });
+    expect(sent).toEqual([
+      ["POST", "/api/threads/t1/previews/file", { path: "page.html" }],
+      ["POST", "/api/threads/t1/previews/file", { path: "page.html", repo_id: "r2" }],
+      ["POST", "/api/threads/t1/files/open", { path: "a.ts", editor: "vscode" }],
+      ["POST", "/api/threads/t1/files/open", { path: "a.ts", editor: "vscode", repo_id: "r2" }],
+    ]);
+  });
+});

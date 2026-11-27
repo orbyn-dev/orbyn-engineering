@@ -1,47 +1,48 @@
 /**
- * Photo conversion (parity B8), built hidden. Core does not convert a HEIC photo to JPEG or shrink an oversized one yet, so the
- * web has no client for it: `photoConversionApi()` answers `null` in a production build, the composer then uploads exactly as it
- * does today and sends nothing new. The route it would call is written in docs/attachments-transcripts.md; the mock that draws
- * the frames lives in web/mock/attachments.ts and is installed only by the dev-only preview or by a test.
+ * Photo conversion (parity B8). The real route is `POST /api/threads/{id}/attachments/convert` (see
+ * `photoConversionClient.ts`): the service shrinks a PNG or JPEG over 10 MiB and rewrites one within the limit, decodes a
+ * WebP and writes it again, and refuses HEIC or HEIF until a decoder is linked. `photoConversionApi()` answers the production client by default;
+ * tests and the dev-only preview install another with `setPhotoConversionApi`, and `setPhotoConversionApi(null)` restores
+ * the production client. The mock lives in web/mock/attachments.ts and is installed only by the dev-only preview.
  */
+
+import { realPhotoConversionApi } from "./photoConversionClient";
+import type { ConversionKind, PhotoConversionApi } from "./photoConversionContract";
+
+export type { ConversionKind, ConvertedPhoto, PhotoConversionApi } from "./photoConversionContract";
 
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-/** What came back for a photo the service converted or shrank. The file sent is this one, never the one picked. */
-export interface ConvertedPhoto {
-  id: string;
-  name: string;
-  size: number;
-  original_name: string;
-  original_size: number;
-  action: "converted" | "shrunk";
-}
+/** Name fallbacks when the system gives no type at all, as a phone's file picker sometimes does. */
+const HEIC_NAME = /\.(heic|heif)$/i;
+const WEBP_NAME = /\.webp$/i;
+/** Types the service writes again smaller. A GIF is not one of them: shrinking would drop its frames. */
+const SHRINKABLE: ReadonlySet<string> = new Set(["image/png", "image/jpeg"]);
+/**
+ * Types that go to the route even when small: WebP so the service writes it again from decoded pixels, and HEIC and
+ * HEIF so the service's refusal message is shown instead of a silent upload until a decoder is linked.
+ */
+const CONVERT: ReadonlySet<string> = new Set(["image/heic", "image/heif", "image/webp"]);
 
-export interface PhotoConversionApi {
-  /** Uploads the photo and has the service convert or shrink it. Rejects with `unreadable_image` or `still_too_large`. */
-  convert(threadId: string, file: File, signal: AbortSignal): Promise<ConvertedPhoto>;
-}
-
-export type ConversionKind = "convert" | "shrink";
-
-const HEIC = /\.(heic|heif)$/i;
-/** Types the service can shrink. A GIF is not one of them: shrinking would drop its frames. */
-const SHRINKABLE = new Set(["image/png", "image/jpeg", "image/webp"]);
-
-/** Whether a client would have to convert this photo, shrink it, or leave it alone. Only a hint for the chip. */
+/**
+ * Whether this photo should go to the conversion route: HEIC, HEIF and WebP always, or a PNG or JPEG over the limit to
+ * shrink. `null` means upload it exactly as before.
+ */
 export function conversionKindOf(file: File): ConversionKind | null {
-  if (/^image\/hei[cf]$/i.test(file.type) || (file.type === "" && HEIC.test(file.name))) return "convert";
-  if (SHRINKABLE.has(file.type) && file.size > MAX_IMAGE_BYTES) return "shrink";
+  const type = file.type.toLowerCase();
+  if (CONVERT.has(type)) return "convert";
+  if (type === "" && (HEIC_NAME.test(file.name) || WEBP_NAME.test(file.name))) return "convert";
+  if (SHRINKABLE.has(type) && file.size > MAX_IMAGE_BYTES) return "shrink";
   return null;
 }
 
-let current: PhotoConversionApi | null = null;
+let current: PhotoConversionApi | null = realPhotoConversionApi;
 
 export const photoConversionApi = (): PhotoConversionApi | null => current;
 
-/** Tests and the dev-only preview install a client here; `null` puts back the production default, which sends nothing. */
+/** Tests and the dev-only preview install a client here; `null` puts the production client back. */
 export function setPhotoConversionApi(next: PhotoConversionApi | null): void {
-  current = next;
+  current = next ?? realPhotoConversionApi;
 }
 
 // Dev only: `#/preview/attachments` installs the mock. In a production build the flag is false and the mock is never emitted.

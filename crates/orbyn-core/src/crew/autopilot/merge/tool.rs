@@ -63,7 +63,8 @@ impl Core {
                 Ok(json!(self.crew_process_forge_merges(&target, now).await?))
             }
             MergeOperation::Watch => {
-                self.crew_watch_forge_main(&target, None, now).await?;
+                // Holds the whole watch and correction chain; boxed to keep it off this tool's stack.
+                Box::pin(self.crew_watch_forge_main(&target, None, now)).await?;
                 Ok(json!({"checked": true}))
             }
             MergeOperation::Release => {
@@ -107,7 +108,8 @@ impl Core {
             )),
             "crew_answer_review" => self.crew_merge_comment_fix(&thread, &request.task).await,
             "crew_watch_main" => {
-                self.crew_watch_forge_main(&target, Some(&thread.id), now)
+                // Holds the whole watch and correction chain; boxed to keep it off this tool's stack.
+                Box::pin(self.crew_watch_forge_main(&target, Some(&thread.id), now))
                     .await
                     .map_err(internal)?;
                 Ok(json!({"checked": true}))

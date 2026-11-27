@@ -7,7 +7,9 @@ import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import { Empty } from "../../../product/ui/states";
+import { ForgeComments } from "./ForgeComments";
 import { SendAllDialog } from "./SendAllDialog";
+import { forgeGroups, useForgeComments } from "./useForgeComments";
 
 const NO_CHIPS: never[] = [];
 
@@ -32,7 +34,7 @@ function Item({ threadId, chip, sent, waiting }: { threadId: string; chip: Revie
   return <li className="review-item" data-state={sent ? "open" : "draft"}>
     <div className="review-item-head">
       <button type="button" className="review-path" title={chip.path} aria-label={`Open ${chipLabel(chip)}`}
-        onClick={() => useUi.getState().revealFile(chip.path, chip.line, { threadId, cwd: chip.sourceCwd ?? cwd ?? "" })}>
+        onClick={() => useUi.getState().revealFile(chip.path, chip.line, { threadId, cwd: chip.sourceCwd ?? cwd ?? "" }, chip.repoId)}>
         <bdi>{chipLabel(chip)}</bdi>
       </button>
       {sent ? <span className="review-badge">{waiting ? "Waiting for the agent" : "Sent"}</span>
@@ -58,19 +60,28 @@ function Item({ threadId, chip, sent, waiting }: { threadId: string; chip: Revie
 
 /**
  * Every line comment on this thread's changes. Drafts are the review chips waiting above the composer (file and diff
- * comments alike); Open ones were sent this session. Send all to engine sends the drafts as one message.
+ * comments alike); Open ones were sent this session. Send all to engine sends the drafts the file filter shows as one message, and says how many when the filter hides some. The linked
+ * pull request's forge threads follow under their own groups.
  */
 export function ReviewPanel({ threadId }: { threadId: string }) {
   const thread = useWorkspace((state) => state.threads[threadId]);
+  const forgeRead = useForgeComments(threadId, thread?.project_id ?? "");
   const drafts = reviewDrafts(useComposerChips((state) => state.chips[threadId] ?? NO_CHIPS));
   const open = reviewDrafts(useComposerChips((state) => state.sent[threadId] ?? NO_CHIPS));
   const [file, setFile] = useState("");
   const [confirming, setConfirming] = useState<ReviewChip[] | null>(null);
-  if (drafts.length === 0 && open.length === 0) {
+  const forge = forgeGroups(forgeRead.data);
+  if (!thread) {
+    return drafts.length === 0 && open.length === 0
+      ? <Empty title="No comments yet"><p className="t3">Click a line number in Changes to comment.</p></Empty>
+      : null;
+  }
+  if (drafts.length === 0 && open.length === 0 && forge.open.length === 0 && forge.resolved.length === 0
+    && forgeRead.status === "ready") {
     return <Empty title="No comments yet"><p className="t3">Click a line number in Changes to comment.</p></Empty>;
   }
-  if (!thread) return null;
-  const files = [...new Set([...drafts, ...open].map((chip) => chip.path))];
+  const forgeFiles = [...forge.open, ...forge.resolved].flatMap((item) => item.path === null ? [] : [item.path]);
+  const files = [...new Set([...drafts, ...open].map((chip) => chip.path).concat(forgeFiles))];
   const shown = (list: ReviewChip[]) => list.filter((chip) => file === "" || chip.path === file);
   return <div className="review-panel">
     {files.length > 1 ? <label className="review-filter"><span className="sr-only">Filter by file</span>
@@ -81,7 +92,11 @@ export function ReviewPanel({ threadId }: { threadId: string }) {
     {drafts.length > 0 ? <section aria-label="Drafts">
       <div className="review-group-head">
         <h4>Drafts · {drafts.length}</h4>
-        <Button small tone="primary" icon={<FileDiff size={13} aria-hidden />} onClick={() => setConfirming(drafts)}>Send all to engine</Button>
+        {shown(drafts).length > 0 ? (
+          <Button small tone="primary" icon={<FileDiff size={13} aria-hidden />} onClick={() => setConfirming(shown(drafts))}>
+            {shown(drafts).length === drafts.length ? "Send all to engine" : `Send ${shown(drafts).length} to engine`}
+          </Button>
+        ) : null}
       </div>
       <ul className="review-list">{shown(drafts).map((chip) => <Item key={chip.id} {...{ threadId, chip }} sent={false} waiting={false} />)}</ul>
     </section> : null}
@@ -89,6 +104,7 @@ export function ReviewPanel({ threadId }: { threadId: string }) {
       <div className="review-group-head"><h4>Open · {open.length}</h4></div>
       <ul className="review-list">{shown(open).map((chip) => <Item key={chip.id} {...{ threadId, chip }} sent waiting={thread.active_run !== null} />)}</ul>
     </section> : null}
+    <ForgeComments threadId={threadId} cwd={thread.cwd} file={file} read={forgeRead} onRetry={forgeRead.reload} />
     {confirming ? <SendAllDialog thread={thread} drafts={confirming} onClose={() => setConfirming(null)} /> : null}
   </div>;
 }

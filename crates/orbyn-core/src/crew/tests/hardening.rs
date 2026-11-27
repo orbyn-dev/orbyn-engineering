@@ -226,13 +226,13 @@ async fn every_orbyn_tool_off_the_allow_list_is_refused_to_a_worker() {
         },
         ..worker.clone()
     };
-    let names: Vec<String> = crate::tools::mcp_tools::tool_specs()
+    let names: Vec<String> = crate::tools::mcp_tools::tool_specs(true)
         .map(|spec| spec["name"].as_str().unwrap().to_owned())
         .collect();
     assert!(names.len() > 40, "the registry is read");
     for name in ALLOWED {
         assert!(
-            names.iter().any(|n| n == name),
+            names.iter().any(|n| n == name) || crate::tools::mcp::code::is_tool(name),
             "{name} is no longer a tool"
         );
     }
@@ -302,7 +302,7 @@ fn a_verification_gets_what_is_left_of_the_budget() {
 }
 
 /// A restart leaves tasks `running` or `verifying` with nothing driving them. The next start
-/// verifies the one that was being checked and stops the one whose worker is gone.
+/// verifies the one that was being checked and resumes the builder whose worker is gone, once.
 #[tokio::test]
 async fn a_restart_picks_up_tasks_left_running_or_verifying() {
     use crate::crew::tests::fake::stamper;
@@ -324,6 +324,7 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
                 base_branch: None,
                 effort: None,
                 options: Default::default(),
+                branch_name_seed: None,
             })
             .await
             .unwrap()
@@ -378,11 +379,11 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
     }
     w.core.recover_crew_tasks().await;
     w.until_state(&made[0], "passed").await;
-    w.until_state(&made[1], "stopped").await;
-    assert_eq!(
-        w.task(&made[1]).stop_reason.as_deref(),
-        Some("engine_error")
-    );
+    // The builder whose worker is gone gets the one resume its life has: it stays running, the lost
+    // turn counts (the second restart is `crew::tests::resume`).
+    let run = w.core.store.crew_run(&made[1]).unwrap().unwrap();
+    assert_eq!(w.task(&made[1]).state, "running");
+    assert_eq!(run.resume_count, 1);
 }
 
 /// An attachment tool takes any thread of the project; a worker may use only its own.

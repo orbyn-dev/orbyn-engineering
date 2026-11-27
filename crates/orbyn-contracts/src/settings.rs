@@ -95,6 +95,35 @@ pub struct KeybindingRule {
 }
 
 wire! {
+pub struct KeybindingViewRule {
+    pub key: String,
+    pub command: String,
+    #[serde(default)]
+    pub when: Option<String>,
+    /// Always false in the view (a removed default is not listed); kept so a view rule still reads as a `KeybindingRule`.
+    #[serde(default)]
+    pub remove: bool,
+    /// The rule comes from the person's own file, not the built-in list. Always set in the view.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub custom: Option<bool>,
+    /// The built-in keys of this command in this context; empty when it has no built-in rule. Always set in the view.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub default_keys: Option<Vec<String>>,
+}
+}
+
+wire! {
+/// The body of the reset route.
+pub struct KeybindingReset {
+    pub command: String,
+    #[serde(default)]
+    pub when: Option<String>,
+}
+}
+
+wire! {
 pub struct KeybindingConflict {
     pub key: String,
     pub when: Option<String>,
@@ -106,7 +135,7 @@ wire! {
 pub struct KeybindingsView {
     /// The file, which the person may also edit by hand.
     pub path: String,
-    pub rules: Vec<KeybindingRule>,
+    pub rules: Vec<KeybindingViewRule>,
     /// What could not be read. The rest of the file still applies.
     pub issues: Vec<String>,
     pub conflicts: Vec<KeybindingConflict>,

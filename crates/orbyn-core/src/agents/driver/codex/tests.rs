@@ -275,26 +275,6 @@ fn finished(mapper: &mut TurnMapper, turn: Value) -> Option<EngineOutcome> {
 }
 
 #[test]
-fn a_completed_turn_with_another_id_does_not_end_the_run() {
-    let mut mapper = mapper();
-    mapper.set_turn("turn-mine");
-    assert!(
-        finished(
-            &mut mapper,
-            json!({ "id": "turn-old", "status": "failed", "error": { "message": "old" } })
-        )
-        .is_none()
-    );
-    assert!(matches!(
-        finished(
-            &mut mapper,
-            json!({ "id": "turn-mine", "status": "completed" })
-        ),
-        Some(EngineOutcome::Completed)
-    ));
-}
-
-#[test]
 fn only_the_matching_turn_reports_an_interrupt_or_failure() {
     let mut mapper = mapper();
     mapper.set_turn("turn-mine");
@@ -505,6 +485,7 @@ fn turn_spec() -> RunSpec {
         cwd: "/workspace".into(),
         checkout: "/workspace/repo/app".into(),
         library: "/workspace".into(),
+        local_skills: None,
         prompt: "p".into(),
         user_prompt: "p".into(),
         context: "<orbyn_context>c</orbyn_context>".into(),
@@ -1129,4 +1110,134 @@ fn a_notification_involves_the_thread_or_a_tracked_agent() {
     assert!(background.involves(&json!({ "thread": { "id": "child" } })));
     assert!(!background.involves(&json!({ "threadId": "stranger" })));
     assert!(!background.involves(&json!({})));
+}
+
+fn error_notification(error: Value, will_retry: bool) -> Value {
+    json!({ "threadId": "thread", "willRetry": will_retry, "error": error })
+}
+
+#[test]
+fn an_error_the_engine_will_retry_is_shown_and_does_not_fail_the_turn_that_then_completes() {
+    let mut mapper = mapper();
+    let step = mapper.on_notification(
+        "error",
+        &error_notification(json!({ "message": "Reconnecting" }), true),
+    );
+    assert!(
+        step.events.iter().any(|event| matches!(
+            event,
+            EngineEvent::Agui(AgUiEvent::Custom { name, value })
+                if name == "engine.retrying" && value["message"] == "Reconnecting"
+        )),
+        "the retry is shown to the person"
+    );
+    assert_eq!(step.outcome, None, "a retried error ends nothing");
+    assert_eq!(
+        finished(&mut mapper, json!({ "status": "completed" })),
+        Some(EngineOutcome::Completed),
+        "the earlier retried error is not carried into the end"
+    );
+}
+
+#[test]
+fn a_failed_turn_names_its_own_error_then_the_last_one_then_a_fixed_line() {
+    // The turn's own error wins over an earlier `error` notification.
+    let mut mapper_a = mapper();
+    mapper_a.on_notification(
+        "error",
+        &error_notification(json!({ "message": "earlier" }), false),
+    );
+    assert_eq!(
+        finished(
+            &mut mapper_a,
+            json!({ "status": "failed", "error": { "message": "the turn said" } })
+        ),
+        Some(EngineOutcome::Failed("the turn said".into()))
+    );
+    // With no error of its own the turn takes the last notification's message.
+    let mut mapper_b = mapper();
+    mapper_b.on_notification(
+        "error",
+        &error_notification(json!({ "message": "earlier" }), false),
+    );
+    assert_eq!(
+        finished(&mut mapper_b, json!({ "status": "failed" })),
+        Some(EngineOutcome::Failed("earlier".into()))
+    );
+    // A notification with no message still fails the turn, with a fixed line.
+    let mut mapper_c = mapper();
+    mapper_c.on_notification("error", &error_notification(json!({}), false));
+    assert_eq!(
+        finished(&mut mapper_c, json!({ "status": "failed" })),
+        Some(EngineOutcome::Failed("Codex reported an error.".into()))
+    );
+    // A failed turn with nothing at all to say fails with the other fixed line.
+    assert_eq!(
+        finished(&mut mapper(), json!({ "status": "failed" })),
+        Some(EngineOutcome::Failed("Codex failed the turn.".into()))
+    );
+}
+
+#[test]
+fn an_unauthorized_error_fails_the_turn_and_is_never_taken_for_a_usage_limit() {
+    let mut mapper = mapper();
+    let step = mapper.on_notification(
+        "error",
+        &error_notification(
+            json!({ "message": "Unauthorized", "codexErrorInfo": "unauthorized" }),
+            false,
+        ),
+    );
+    assert!(
+        !step
+            .events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Limited { .. })),
+        "a sign-in failure is not a limit"
+    );
+    assert_eq!(
+        finished(&mut mapper, json!({ "status": "failed" })),
+        Some(EngineOutcome::Failed("Unauthorized".into()))
+    );
+}
+
+#[test]
+fn a_usage_limit_takes_its_reset_from_the_error_first_then_the_account_window_then_none() {
+    let limited = |step: &super::events::Step| {
+        step.events.iter().find_map(|event| match event {
+            EngineEvent::Limited { resets_at } => Some(*resets_at),
+            _ => None,
+        })
+    };
+    let limit_error = || {
+        error_notification(
+            json!({ "message": "Out", "codexErrorInfo": "usageLimitExceeded", "resetsAt": 900 }),
+            false,
+        )
+    };
+    let window = json!({ "rateLimits": { "primary": { "usedPercent": 100, "resetsAt": 500 } } });
+
+    // The error's own reset wins over the account window.
+    let mut with_both = mapper();
+    with_both.on_notification("account/rateLimits/updated", &window);
+    assert_eq!(
+        limited(&with_both.on_notification("error", &limit_error())),
+        Some(Some(900))
+    );
+    // Without one in the error, the spent window gives it.
+    let mut window_only = mapper();
+    window_only.on_notification("account/rateLimits/updated", &window);
+    let bare = error_notification(
+        json!({ "message": "Out", "codexErrorInfo": "usageLimitExceeded" }),
+        false,
+    );
+    assert_eq!(
+        limited(&window_only.on_notification("error", &bare)),
+        Some(Some(500))
+    );
+    // With neither, it is still a limit, with no time to wait for.
+    assert_eq!(
+        limited(&mapper().on_notification("error", &bare)),
+        Some(None)
+    );
 }

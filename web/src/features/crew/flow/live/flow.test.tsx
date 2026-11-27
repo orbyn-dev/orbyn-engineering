@@ -38,6 +38,7 @@ describe("Flow on the real routes", () => {
     mock.reset("default");
     const { container } = render(<FlowView />);
     await waitFor(() => expect(calls("/api/crew/preview")).toHaveLength(1));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(calls("/api/crew/flow")).toHaveLength(0);
@@ -218,6 +219,32 @@ describe("Flow on the real routes", () => {
     expect(writes()).toHaveLength(0);
   });
 
+  it("opens the artifacts view from the zoomed task on its own read, and back", async () => {
+    mock.reset("crew");
+    const user = userEvent.setup();
+    render(<FlowZoom id="task-redirect" onBack={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Artifacts" }));
+    const view = await screen.findByRole("region", { name: "Artifacts" });
+    expect(view).toHaveTextContent("Check 1 of 2");
+    expect(view).toHaveTextContent("test · check-1 · pass");
+    expect(view).toHaveTextContent("2 files · +18 −4");
+    expect(view).toHaveTextContent("0b1e5f0");
+    await user.click(screen.getByRole("button", { name: "Task" }));
+    expect(await screen.findByRole("list", { name: "Stages" })).toBeVisible();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("says the service has no artifacts read, without an error, and keeps its Planned marks", async () => {
+    mock.reset("crew");
+    const user = userEvent.setup();
+    render(<FlowZoom id="task-queued" onBack={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Artifacts" }));
+    expect(await screen.findByText("This service has no artifacts read")).toBeVisible();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(/stay Planned/)).toBeVisible();
+    expect(writes()).toHaveLength(0);
+  });
+
   it("says there are no crews, and a crew with no tasks", async () => {
     await open("crew-empty");
     expect(await screen.findByText("No crews running")).toBeVisible();
@@ -241,6 +268,7 @@ describe("Flow on the real routes", () => {
     const before = calls("/api/crew/flow/").length;
     await act(async () => { vi.advanceTimersByTime(FLOW_REFRESH_MS); });
     await waitFor(() => expect(calls("/api/crew/flow/").length).toBeGreaterThan(before));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
   };
 
@@ -288,23 +316,29 @@ describe("Flow on the real routes", () => {
     const { user } = await open("crew-flow-many");
     await rowsOf();
     // The next page is slow, so the second click arrives while the first is on its way.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
     vi.mocked(fetch).mockImplementation(async (input, init) => {
-      if (String(input).includes("offset=50")) await new Promise((resolve) => setTimeout(resolve, 80));
+      if (String(input).includes("offset=50")) await gate;
       return real(input, init);
     });
     await user.dblClick(screen.getByRole("button", { name: "+10 more" }));
+    release();
     await waitFor(async () => expect(await rowsOf()).toHaveLength(60), { timeout: 8000 });
     expect(urls().filter((url) => url.includes("offset=50"))).toHaveLength(1);
     expect(writes()).toHaveLength(0);
   }, 20_000);
 
-  it("draws Pause crew and Stop crew After the beta, inert", async () => {
+  it("draws Pause crew and Stop crew Planned, inert, and says a task’s Cancel and Re-run checks are built", async () => {
     await open("crew");
     await table();
     for (const name of ["Pause crew", "Stop crew"]) {
       const button = screen.getByRole("button", { name: new RegExp(`^${name}`) });
       expect(button).toBeDisabled();
-      expect(button).toHaveTextContent("After the beta");
+      expect(button).toHaveTextContent("Planned");
+      expect(button.getAttribute("title")).toContain("A task’s Cancel and Re-run checks are built");
+      expect(button.getAttribute("aria-description")).toContain("each asks first");
+      expect(button.getAttribute("title")).not.toContain("when it is wired");
     }
   });
 
@@ -405,6 +439,7 @@ describe("the Crew row of the left bar", () => {
 
   it("draws nothing and asks no route while Crew Preview is off or not known yet", async () => {
     const { container } = render(<CrewNavRow route={{ name: "home" }} />);
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(urls()).toEqual([]);

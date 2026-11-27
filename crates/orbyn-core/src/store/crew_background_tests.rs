@@ -11,6 +11,33 @@ fn store(dir: &TempDir) -> Store {
     Store::open(&dir.path().join("orbyn.sqlite3"), "epoch-a").unwrap()
 }
 
+/// A direct write the table itself refused: a constraint violation from a CHECK, a trigger or a unique
+/// index, not any error. This is the whole claim of these cases: the rule lives in the table, whatever
+/// the caller does, so there is no `CoreError` sentence to name.
+fn refused_by_table(result: rusqlite::Result<usize>, what: &str) {
+    match result {
+        Err(rusqlite::Error::SqliteFailure(error, message)) => assert_eq!(
+            error.code,
+            rusqlite::ErrorCode::ConstraintViolation,
+            "{what}: {message:?}"
+        ),
+        other => panic!("{what} was not refused by a table constraint: {other:?}"),
+    }
+}
+
+/// A store write refused because the audit row it needs was refused: the variant is the store's own
+/// error over the database refusal, and the transaction rolled the change back (asserted beside each).
+fn refused_for_audit(error: crate::error::CoreError) {
+    match error {
+        crate::error::CoreError::Store(rusqlite::Error::SqliteFailure(code, _)) => assert_eq!(
+            code.code,
+            rusqlite::ErrorCode::ConstraintViolation,
+            "the refused audit row is a constraint violation"
+        ),
+        other => panic!("expected the refused audit row, got {other:?}"),
+    }
+}
+
 fn new_crew<'a>(name: &'a str, settings: &'a Value) -> NewBackground<'a> {
     NewBackground {
         project_id: "project-1",
@@ -47,7 +74,7 @@ fn the_table_refuses_a_change_of_budget_template_or_project() {
             &format!("UPDATE crew_background SET {column} WHERE id = ?1"),
             [&crew.id],
         );
-        assert!(result.is_err(), "{column}");
+        refused_by_table(result, column);
     }
     assert_eq!(store.background_crew(&crew.id).unwrap().unwrap(), crew);
 }
@@ -80,7 +107,7 @@ fn the_table_refuses_what_the_core_would_have_refused() {
         "'n', 'flaky_test', 'schedule', '{}', 0, 5",
         "'n', 'flaky_test', 'schedule', '{}', 5, 1441",
     ] {
-        assert!(insert(bad).is_err(), "{bad}");
+        refused_by_table(insert(bad), bad);
     }
 }
 
@@ -99,22 +126,22 @@ fn a_failed_audit_row_rolls_the_change_back() {
              WHEN NEW.action LIKE 'crew.background%' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(
+    refused_for_audit(
         store
             .create_background_crew(&new_crew("Unaudited", &settings), "user")
-            .is_err()
+            .unwrap_err(),
     );
-    assert!(
+    refused_for_audit(
         store
             .update_background_crew(&crew.id, Some("Renamed"), None, "user")
-            .is_err()
+            .unwrap_err(),
     );
-    assert!(
+    refused_for_audit(
         store
             .set_background_enabled(&crew.id, true, "user")
-            .is_err()
+            .unwrap_err(),
     );
-    assert!(store.delete_background_crew(&crew.id, "user").is_err());
+    refused_for_audit(store.delete_background_crew(&crew.id, "user").unwrap_err());
     let (all, total) = store.background_crews_page(None, 50, 0).unwrap();
     assert_eq!(
         (total, all),
@@ -140,13 +167,13 @@ fn a_run_is_refused_the_second_running_row_by_the_table_too() {
          VALUES ('r2', ?1, 'running', 1, 1, 'a', 'a')",
         [&crew.id],
     );
-    assert!(second.is_err(), "one running run per crew");
+    refused_by_table(second, "one running run per crew");
     let bad_stop = store.writer().execute(
         "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at, updated_at, ended_at)
          VALUES ('r3', ?1, 'stopped', 1, 1, 'a', 'a', 'b')",
         [&crew.id],
     );
-    assert!(bad_stop.is_err(), "a stopped run names its reason");
+    refused_by_table(bad_stop, "a stopped run names its reason");
 }
 
 #[test]
@@ -166,7 +193,7 @@ fn a_run_keeps_the_budget_it_was_given() {
             &format!("UPDATE crew_background_runs SET {column} WHERE id = ?1"),
             [&run.id],
         );
-        assert!(result.is_err(), "{column}");
+        refused_by_table(result, column);
     }
     // What a run spends still changes.
     let spent = store.add_background_spend(&run.id, 1, 1).unwrap();
@@ -204,7 +231,7 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
              WHEN NEW.action = 'crew.background.run.spend' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(store.add_background_spend(&run.id, 2, 2).is_err());
+    refused_for_audit(store.add_background_spend(&run.id, 2, 2).unwrap_err());
     unchanged(&store);
     store
         .writer()
@@ -218,7 +245,8 @@ fn a_spend_needs_its_audit_row_and_a_budget_stop_needs_both() {
              WHEN NEW.action = 'crew.background.run.stop' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(store.add_background_spend(&run.id, 10, 0).is_err());
+    // Reaching the budget needs the stop's audit row too, so the spend rolls back with it.
+    refused_for_audit(store.add_background_spend(&run.id, 10, 0).unwrap_err());
     unchanged(&store);
     store
         .writer()
@@ -756,10 +784,10 @@ fn a_refused_start_with_a_task_is_retained_atomically_and_retryable() {
     store.writer().execute_batch(
         "CREATE TRIGGER refuse_review_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'crew.background.run.review' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
     ).unwrap();
-    assert!(
+    refused_for_audit(
         store
             .unwind_background_run(&run.id, "launch refused")
-            .is_err()
+            .unwrap_err(),
     );
     assert_eq!(store.background_run(&run.id).unwrap().unwrap(), run);
     assert_eq!(
@@ -806,7 +834,8 @@ fn the_table_keeps_the_daily_budget_and_the_persons_clock_within_their_bounds() 
              VALUES ('clock', 'p', 'n', 'flaky_test', 'schedule', '{}', 5, 5, ?1, 'a', 'a')",
             [offset],
         );
-        assert!(result.is_err(), "utc_offset_minutes {offset}");
+        let what = format!("utc_offset_minutes {offset}");
+        refused_by_table(result, &what);
     }
 }
 
@@ -899,10 +928,10 @@ fn a_daily_spend_needs_its_audit_row() {
              WHEN NEW.action = 'crew.background.daily.spend' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
         )
         .unwrap();
-    assert!(
+    refused_for_audit(
         store
             .add_background_daily_turn(&crew.id, &run.id, "2026-11-19", "alpha")
-            .is_err()
+            .unwrap_err(),
     );
     assert_eq!(
         store
@@ -949,12 +978,11 @@ fn a_daily_stop_ends_the_run_with_the_sentence_it_was_given() {
             "Engine alpha reached this crew's daily budget: 3 of its 2 turns today. The budget resets at 2026-11-20T00:00:00+11:00."
         )
     );
-    // It is a stop like any other: a second one is refused.
-    assert!(
-        store
-            .end_background_run_daily(&run.id, "again", (3, 12))
-            .is_err()
-    );
+    // It is a stop like any other: a second one names the closed run.
+    assert!(matches!(
+        store.end_background_run_daily(&run.id, "again", (3, 12)),
+        Err(crate::error::CoreError::RunClosed)
+    ));
 }
 
 #[test]
@@ -982,4 +1010,659 @@ fn a_daily_refusal_writes_the_audit_row_that_names_the_engine() {
     assert_eq!(row.target, crew.id);
     assert_eq!(row.detail["reason"], json!("daily budget spent: codex"));
     assert_eq!(row.detail["resets_at"], json!("2026-11-20T00:00:00+11:00"));
+}
+
+#[test]
+fn acknowledging_a_waiting_review_clears_the_wait_and_keeps_the_reason() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Settled", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let run = store.start_background_run(&crew.id).unwrap();
+    let waiting = store.add_background_spend(&run.id, 10, 0).unwrap();
+    assert!(waiting.review_waiting);
+    assert_eq!(store.background_standing(&crew.id).unwrap().1, 1);
+    let reason = waiting.review_reason.clone();
+    assert!(reason.is_some(), "a waiting review says why it waits");
+
+    let settled = store
+        .acknowledge_background_review(&run.id, "user")
+        .unwrap();
+    assert!(!settled.review_waiting);
+    assert!(
+        settled.updated_at >= waiting.updated_at,
+        "the write is stamped"
+    );
+    assert_eq!(
+        settled.review_reason.as_deref(),
+        reason.as_deref(),
+        "the run keeps why it waited"
+    );
+    assert_eq!(
+        (
+            settled.state.as_str(),
+            settled.stop_reason.as_deref(),
+            settled.turns_spent,
+            settled.minutes_spent,
+            settled.budget_turns,
+            settled.budget_minutes,
+            settled.started_at.as_str(),
+            settled.ended_at.clone(),
+        ),
+        (
+            waiting.state.as_str(),
+            waiting.stop_reason.as_deref(),
+            waiting.turns_spent,
+            waiting.minutes_spent,
+            waiting.budget_turns,
+            waiting.budget_minutes,
+            waiting.started_at.as_str(),
+            waiting.ended_at.clone(),
+        ),
+        "nothing but the wait and the stamp changes"
+    );
+    assert_eq!(
+        store.background_standing(&crew.id).unwrap().1,
+        0,
+        "the crew has nothing waiting"
+    );
+
+    // The audit row is the person's, names the crew, and records what was settled before it is cleared.
+    let audits = store.list_audit(None, 50).unwrap();
+    let row = audits
+        .iter()
+        .find(|row| row.action == "crew.background.run.acknowledge")
+        .expect("the acknowledgement is audited");
+    assert_eq!(
+        (row.actor.as_str(), row.source.as_str(), row.target.as_str()),
+        ("user", "user", crew.id.as_str())
+    );
+    assert_eq!(row.detail["run"], run.id);
+    assert_eq!(row.detail["state"], "stopped");
+    assert_eq!(row.detail["stop_reason"], "budget");
+    assert_eq!(row.detail["review_reason"], reason.unwrap());
+
+    // A second acknowledgement has nothing to settle: plain refusal, nothing written.
+    assert!(matches!(
+        store.acknowledge_background_review(&run.id, "user"),
+        Err(crate::error::CoreError::Invalid(_))
+    ));
+    assert_eq!(
+        store
+            .list_audit(None, 100)
+            .unwrap()
+            .iter()
+            .filter(|row| row.action == "crew.background.run.acknowledge")
+            .count(),
+        1,
+        "a refused acknowledgement writes no row"
+    );
+}
+
+#[test]
+fn acknowledging_a_review_that_is_not_waiting_is_refused_plainly_and_writes_nothing() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Refused", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let refused = |error: crate::error::CoreError| {
+        assert!(
+            matches!(&error, crate::error::CoreError::Invalid(why)
+                if why == "this run is not waiting for the person's review"),
+            "{error}"
+        );
+    };
+    // A running run is not waiting.
+    let running = store.start_background_run(&crew.id).unwrap();
+    refused(
+        store
+            .acknowledge_background_review(&running.id, "user")
+            .unwrap_err(),
+    );
+    // A run that stopped for an engine error left nothing to review.
+    let stopped = store
+        .end_background_run(&running.id, RunEnd::Stopped("engine_error"))
+        .unwrap();
+    assert!(!stopped.review_waiting);
+    refused(
+        store
+            .acknowledge_background_review(&stopped.id, "user")
+            .unwrap_err(),
+    );
+    // A run that is not there is not found, not a refusal.
+    assert!(matches!(
+        store.acknowledge_background_review("nothing", "user"),
+        Err(crate::error::CoreError::NotFound(_))
+    ));
+    // Nothing was written: no acknowledgement row, and the run is as it was.
+    assert!(
+        store
+            .list_audit(None, 100)
+            .unwrap()
+            .iter()
+            .all(|row| row.action != "crew.background.run.acknowledge")
+    );
+    let (rows, total) = store.background_runs_page(&crew.id, 10, 0).unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(
+        (rows[0].state.as_str(), rows[0].review_waiting),
+        ("stopped", false)
+    );
+}
+
+#[test]
+fn an_acknowledgement_needs_its_audit_row() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({});
+    let crew = store
+        .create_background_crew(&new_crew("Audited", &settings), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    let run = store.start_background_run(&crew.id).unwrap();
+    let waiting = store.add_background_spend(&run.id, 10, 0).unwrap();
+    assert!(waiting.review_waiting);
+    store
+        .writer()
+        .execute_batch(
+            "CREATE TRIGGER refuse_acknowledge_audit BEFORE INSERT ON audit_events
+             WHEN NEW.action = 'crew.background.run.acknowledge' BEGIN SELECT RAISE(ABORT, 'no audit'); END;",
+        )
+        .unwrap();
+    refused_for_audit(
+        store
+            .acknowledge_background_review(&run.id, "user")
+            .unwrap_err(),
+    );
+    let (rows, _) = store.background_runs_page(&crew.id, 10, 0).unwrap();
+    assert!(
+        rows[0].review_waiting,
+        "no effect without the audit row in the same transaction"
+    );
+}
+
+#[test]
+fn migration_77_keeps_background_rows_and_adds_the_watch_tables() {
+    let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
+    assert!(versions.contains(&77));
+    let before = *versions
+        .iter()
+        .filter(|version| **version < 77)
+        .max()
+        .unwrap();
+
+    let dir = TempDir::new();
+    let path = dir.path().join("old.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 77) {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations VALUES (?1,'fixture')",
+            [version],
+        )
+        .unwrap();
+    }
+    // A crew from before the slice, with a run and its daily row.
+    conn.execute(
+        "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+         budget_turns, budget_minutes, enabled, created_at, updated_at, daily_runs, daily_turns, utc_offset_minutes)
+         VALUES ('old', 'project-1', 'Old', 'fix_failing_ci', 'schedule', '{\"every_hours\":6}',
+                 10, 30, 1, 'created', 'updated', 2, 40, 600)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_background_runs (id, background_id, state, stop_reason, turns_spent, minutes_spent,
+         budget_turns, budget_minutes, review_waiting, review_reason, started_at, updated_at, ended_at)
+         VALUES ('run-1', 'old', 'stopped', 'budget', 10, 30, 10, 30, 1, 'budget', 'started', 'updated', 'ended')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_background_daily (background_id, run_id, day, engine, turns_spent)
+         VALUES ('old', 'run-1', '2026-11-01', 'claude', 10)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = Store::open(&path, "watch-upgrade").unwrap();
+    let upgrade = store.upgrade().expect("an upgrade");
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (before, *versions.last().unwrap()),
+        "every later migration is applied too"
+    );
+
+    // Every column and row of the rebuilt table survived.
+    let crew = store.background_crew("old").unwrap().unwrap();
+    assert_eq!(crew.project_id, "project-1");
+    assert_eq!(crew.name, "Old");
+    assert_eq!(crew.template, "fix_failing_ci");
+    assert_eq!(crew.trigger_kind, "schedule");
+    assert_eq!(crew.trigger_settings, json!({ "every_hours": 6 }));
+    assert_eq!((crew.budget_turns, crew.budget_minutes), (10, 30));
+    assert_eq!((crew.daily_runs, crew.daily_turns), (2, 40));
+    assert_eq!(crew.utc_offset_minutes, 600);
+    assert!(crew.enabled);
+    assert_eq!(
+        (crew.created_at.as_str(), crew.updated_at.as_str()),
+        ("created", "updated")
+    );
+    let run = store.background_run("run-1").unwrap().unwrap();
+    assert_eq!(
+        (
+            run.background_id.as_str(),
+            run.state.as_str(),
+            run.stop_reason.as_deref(),
+            run.turns_spent,
+            run.minutes_spent,
+            run.budget_turns,
+            run.budget_minutes,
+            run.review_waiting,
+            run.review_reason.as_deref(),
+            run.started_at.as_str(),
+            run.updated_at.as_str(),
+            run.ended_at.as_deref(),
+        ),
+        (
+            "old",
+            "stopped",
+            Some("budget"),
+            10,
+            30,
+            10,
+            30,
+            true,
+            Some("budget"),
+            "started",
+            "updated",
+            Some("ended"),
+        )
+    );
+    let daily: u32 = store
+        .reader()
+        .query_row(
+            "SELECT turns_spent FROM crew_background_daily WHERE background_id = 'old' AND run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(daily, 10);
+
+    // The rebuilt parent takes a watch, and its CHECK still refuses an unknown kind.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+             budget_turns, budget_minutes, created_at, updated_at)
+             VALUES ('watch', 'project-1', 'Watch', 'fix_failing_ci', 'watch',
+                     '{\"command\":\"cargo test\",\"every_hours\":6,\"on_failing\":\"needs_you\"}', 1, 1, 'c', 'u')",
+            [],
+        )
+        .unwrap();
+    refused_by_table(
+        store.writer().execute(
+            "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+             budget_turns, budget_minutes, created_at, updated_at)
+             VALUES ('bad', 'project-1', 'Bad', 'fix_failing_ci', 'webhook', '{}', 1, 1, 'c', 'u')",
+            [],
+        ),
+        "a webhook trigger has its own kind",
+    );
+
+    // The two tables exist, with the index later slices read.
+    let exists = |name: &str| -> bool {
+        store
+            .reader()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
+                [name],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    assert!(exists("crew_watch_state") && exists("crew_watch_changes"));
+    assert!(exists("crew_watch_changes_by_crew"));
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_watch_state (background_id, last_result, baseline_done, error_streak, last_state)
+             VALUES ('watch', 'pass', 1, 2, 'passing')",
+            [],
+        )
+        .unwrap();
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_watch_changes (background_id, kind, at_unix, exit_code, action, tail)
+             VALUES ('watch', 'baseline', 1, 0, 'none', 'ok')",
+            [],
+        )
+        .unwrap();
+
+    // The table's own rules still hold: the budget trigger and the case-folded name index.
+    refused_by_table(
+        store.writer().execute(
+            "UPDATE crew_background SET budget_turns = 99 WHERE id = 'old'",
+            [],
+        ),
+        "the budget it was given cannot be changed",
+    );
+    refused_by_table(
+        store.writer().execute(
+            "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+             budget_turns, budget_minutes, created_at, updated_at)
+             VALUES ('same-name', 'project-1', 'OLD', 'fix_failing_ci', 'schedule', '{}', 1, 1, 'c', 'u')",
+            [],
+        ),
+        "the name index is case-folded",
+    );
+
+    // Deleting a crew cascades its runs, its daily rows and its watch rows.
+    store
+        .writer()
+        .execute("DELETE FROM crew_background WHERE id = 'old'", [])
+        .unwrap();
+    store
+        .writer()
+        .execute("DELETE FROM crew_background WHERE id = 'watch'", [])
+        .unwrap();
+    for table in [
+        "crew_background_runs",
+        "crew_background_daily",
+        "crew_watch_state",
+        "crew_watch_changes",
+    ] {
+        let left: u32 = store
+            .reader()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(left, 0, "{table}");
+    }
+}
+
+#[test]
+fn migration_82_keeps_background_rows_and_lets_a_run_never_start() {
+    let versions: Vec<i64> = migrations::MIGRATIONS.iter().map(|(v, _)| *v).collect();
+    assert!(versions.contains(&82));
+    let before = *versions
+        .iter()
+        .filter(|version| **version < 82)
+        .max()
+        .unwrap();
+
+    let dir = TempDir::new();
+    let path = dir.path().join("old.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)").unwrap();
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 82) {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations VALUES (?1,'fixture')",
+            [version],
+        )
+        .unwrap();
+    }
+    // A crew from before the slice, with a run and its daily row.
+    conn.execute(
+        "INSERT INTO crew_background (id, project_id, name, template, trigger_kind, trigger_settings,
+         budget_turns, budget_minutes, enabled, created_at, updated_at, daily_runs, daily_turns, utc_offset_minutes)
+         VALUES ('old', 'project-1', 'Old', 'fix_failing_ci', 'schedule', '{\"every_hours\":6}',
+                 10, 30, 1, 'created', 'updated', 2, 40, 600)",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_background_runs (rowid, id, background_id, state, stop_reason, turns_spent, minutes_spent,
+         budget_turns, budget_minutes, review_waiting, review_reason, started_at, updated_at, ended_at)
+         VALUES (7, 'run-1', 'old', 'stopped', 'budget', 10, 30, 10, 30, 1, 'budget', 'started', 'updated', 'ended')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO crew_background_daily (background_id, run_id, day, engine, turns_spent)
+         VALUES ('old', 'run-1', '2026-11-01', 'claude', 10)",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = Store::open(&path, "not-started-upgrade").unwrap();
+    let upgrade = store.upgrade().expect("an upgrade");
+    assert_eq!(
+        (upgrade.from, upgrade.to),
+        (before, *versions.last().unwrap()),
+        "every later migration is applied too"
+    );
+
+    // Every column and row of the rebuilt run table survived, with no code attached to a run that stopped.
+    let run = store.background_run("run-1").unwrap().unwrap();
+    assert_eq!(
+        (
+            run.background_id.as_str(),
+            run.state.as_str(),
+            run.stop_reason.as_deref(),
+            run.reason_code.as_deref(),
+            run.turns_spent,
+            run.minutes_spent,
+            run.budget_turns,
+            run.budget_minutes,
+            run.review_waiting,
+            run.review_reason.as_deref(),
+            run.started_at.as_str(),
+            run.ended_at.as_deref(),
+        ),
+        (
+            "old",
+            "stopped",
+            Some("budget"),
+            None,
+            10,
+            30,
+            10,
+            30,
+            true,
+            Some("budget"),
+            "started",
+            Some("ended"),
+        )
+    );
+    assert_eq!(run.updated_at, "updated");
+    let rowid: i64 = store
+        .reader()
+        .query_row(
+            "SELECT rowid FROM crew_background_runs WHERE id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        rowid, 7,
+        "the runs page's tie-break rowid survived the rebuild"
+    );
+    // The daily ledger's run link survived the rebuild of both tables, and still cascades.
+    let daily: u32 = store
+        .reader()
+        .query_row(
+            "SELECT turns_spent FROM crew_background_daily WHERE background_id = 'old' AND run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(daily, 10);
+    store
+        .writer()
+        .execute("DELETE FROM crew_background_runs WHERE id = 'run-1'", [])
+        .unwrap();
+    let left: u32 = store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM crew_background_daily WHERE run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(left, 0, "the recreated ledger link still cascades");
+
+    // A run that never started is stopped with the code alone: no stop reason, nothing spent, nobody waiting.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_background_runs (id, background_id, state, reason_code, budget_turns, budget_minutes,
+             started_at, updated_at, ended_at)
+             VALUES ('run-2', 'old', 'stopped', 'disk_low', 10, 30, 's', 's', 's')",
+            [],
+        )
+        .unwrap();
+    let never = store.background_run("run-2").unwrap().unwrap();
+    assert_eq!(
+        (
+            never.state.as_str(),
+            never.stop_reason.as_deref(),
+            never.reason_code.as_deref(),
+            never.review_waiting,
+            never.turns_spent,
+            never.ended_at.is_some(),
+        ),
+        ("stopped", None, Some("disk_low"), false, 0, true)
+    );
+    // The table's own rules still hold: a stopped row needs one of the two reasons and never both, a running row has
+    // neither, and the budget it was given cannot be changed.
+    for (name, sql) in [
+        (
+            "stopped with neither",
+            "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at,
+             updated_at, ended_at) VALUES ('bad-1', 'old', 'stopped', 10, 30, 's', 's', 's')",
+        ),
+        (
+            "stopped with both",
+            "INSERT INTO crew_background_runs (id, background_id, state, stop_reason, reason_code, budget_turns,
+             budget_minutes, started_at, updated_at, ended_at)
+             VALUES ('bad-2', 'old', 'stopped', 'budget', 'disk_low', 10, 30, 's', 's', 's')",
+        ),
+        (
+            "running with a code",
+            "INSERT INTO crew_background_runs (id, background_id, state, reason_code, budget_turns, budget_minutes,
+             started_at, updated_at) VALUES ('bad-3', 'old', 'running', 'disk_low', 10, 30, 's', 's')",
+        ),
+    ] {
+        refused_by_table(store.writer().execute(sql, []), name);
+    }
+    refused_by_table(
+        store.writer().execute(
+            "UPDATE crew_background_runs SET budget_turns = 99 WHERE id = 'run-2'",
+            [],
+        ),
+        "the budget a run was given cannot be changed",
+    );
+
+    // The rebuilt index and link still hold: only one run of a crew runs, and deleting the crew cascades both tables.
+    store
+        .writer()
+        .execute(
+            "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at,
+             updated_at) VALUES ('run-3', 'old', 'running', 10, 30, 'r', 'r')",
+            [],
+        )
+        .unwrap();
+    refused_by_table(
+        store.writer().execute(
+            "INSERT INTO crew_background_runs (id, background_id, state, budget_turns, budget_minutes, started_at,
+             updated_at) VALUES ('run-4', 'old', 'running', 10, 30, 'r', 'r')",
+            [],
+        ),
+        "two runs of one crew ran at once",
+    );
+    store
+        .writer()
+        .execute("DELETE FROM crew_background WHERE id = 'old'", [])
+        .unwrap();
+    for table in ["crew_background_runs", "crew_background_daily"] {
+        let left: u32 = store
+            .reader()
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(left, 0, "{table}");
+    }
+}
+
+#[test]
+fn a_watch_turned_off_writes_one_turned_off_row_in_the_switch() {
+    let dir = TempDir::new();
+    let store = store(&dir);
+    let settings = json!({ "command": "cargo test", "every_hours": 6, "on_failing": "needs_you" });
+    let crew = store
+        .create_background_crew(
+            &NewBackground {
+                project_id: "project-1",
+                name: "Watch",
+                template: "fix_failing_ci",
+                trigger_kind: "watch",
+                trigger_settings: &settings,
+                budget_turns: 10,
+                budget_minutes: 30,
+                daily_runs: 4,
+                daily_turns: 40,
+                utc_offset_minutes: 600,
+            },
+            "user",
+        )
+        .unwrap();
+    assert!(!crew.enabled);
+
+    // An off crew turned off again, or an on crew turned on, writes nothing.
+    store
+        .set_background_enabled(&crew.id, false, "user")
+        .unwrap();
+    store
+        .set_background_enabled(&crew.id, true, "user")
+        .unwrap();
+    assert_eq!(store.watch_changes_page(&crew.id, 10, 0).unwrap().1, 0);
+
+    // The person's Off writes one turned_off row in the same transaction as the switch.
+    store
+        .set_background_enabled(&crew.id, false, "user")
+        .unwrap();
+    let (rows, total) = store.watch_changes_page(&crew.id, 10, 0).unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(
+        (rows[0].kind.as_str(), rows[0].action.as_str()),
+        ("turned_off", "none")
+    );
+    assert_eq!(rows[0].exit_code, None);
+    assert_eq!(rows[0].tail, None);
+
+    // A second off writes no second row, and a crew that is not a watch gets no watch row.
+    store
+        .set_background_enabled(&crew.id, false, "user")
+        .unwrap();
+    assert_eq!(store.watch_changes_page(&crew.id, 10, 0).unwrap().1, 1);
+    let plain = store
+        .create_background_crew(&new_crew("Plain", &json!({})), "user")
+        .unwrap();
+    store
+        .set_background_enabled(&plain.id, true, "user")
+        .unwrap();
+    store
+        .set_background_enabled(&plain.id, false, "user")
+        .unwrap();
+    assert_eq!(store.watch_changes_page(&plain.id, 10, 0).unwrap().1, 0);
 }

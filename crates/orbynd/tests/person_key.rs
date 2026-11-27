@@ -173,8 +173,11 @@ impl Fixture {
         (status, serde_json::from_str(&text).unwrap_or(Value::Null))
     }
 
-    /// Waits for the fake engine's report of what it did with the token alone. Gives up after a minute and says why:
-    /// whether the file never appeared or could not be read as JSON, and what the data dir holds.
+    /// Waits for the fake engine's report of what it did with the token alone. The engine writes it whole after
+    /// every call (`complete: false`, naming the route it is on) and once more when the sweep is done, so a probe a
+    /// slow service is still holding says how far it got instead of leaving nothing. Gives up after a minute and
+    /// says why: whether the file never appeared or could not be read as JSON, how far the sweep got and the route it
+    /// was on, the run's own state, and what the test dir holds.
     async fn probe(&self) -> Value {
         let path = self.dir.path().join("probe.json");
         let mut last = "the file never appeared".to_owned();
@@ -187,7 +190,10 @@ impl Fixture {
                                 "the fake engine's probe failed before any call finished: {fatal}"
                             );
                         }
-                        return report;
+                        if report["complete"] == json!(true) {
+                            return report;
+                        }
+                        last = progress(&report);
                     }
                     Err(error) => last = format!("the file is not JSON yet: {error}"),
                 },
@@ -195,6 +201,7 @@ impl Fixture {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        let state = self.run_state_naming_errors().await;
         let listing: Vec<String> = std::fs::read_dir(self.dir.path())
             .map(|dir| {
                 dir.flatten()
@@ -203,11 +210,44 @@ impl Fixture {
             })
             .unwrap_or_default();
         panic!(
-            "the fake engine wrote no probe report in 60s ({last}); the test dir holds {listing:?}. The engine was \
-             admitted with a thread, so it started or it did not: a service that is down or a run that never spawned \
-             the engine looks the same from here"
+            "the fake engine wrote no complete probe report in 60s ({last}); the run is {state}; the test dir holds \
+             {listing:?}. The engine was admitted with a thread, so it started or it did not: a service that is down, a \
+             run that never spawned the engine, and a request the service never answered look the same from here"
         );
     }
+
+    /// The thread's last run state for a failure message, or why it could not be read. Never panics: the service may
+    /// be the thing that is wrong.
+    async fn run_state_naming_errors(&self) -> String {
+        let path = format!("/api/threads/{}", self.thread);
+        match tokio::time::timeout(Duration::from_secs(2), self.service.get(&path).send()).await {
+            Ok(Ok(response)) => match response.json::<Value>().await {
+                Ok(thread) => thread["last_run_state"]
+                    .as_str()
+                    .unwrap_or("unreadable")
+                    .to_owned(),
+                Err(error) => format!("unreadable: {error}"),
+            },
+            Ok(Err(error)) => format!("unknown, the service did not answer: {error}"),
+            Err(_) => "unknown, the service did not answer in 2s".to_owned(),
+        }
+    }
+}
+
+/// How far a sweep that has not finished got, and the route it was on when the report was last written.
+fn progress(report: &Value) -> String {
+    let calls = report["calls"].as_array();
+    let finished = calls.map_or(0, Vec::len);
+    let failed = calls.map_or(0, |calls| {
+        calls
+            .iter()
+            .filter(|call| call["status"] != 403 || call["code"] != "person_required")
+            .count()
+    });
+    format!(
+        "the engine had finished {finished} calls, {failed} of them not a refusal, and was on {}",
+        report["in_flight"].as_str().unwrap_or("an unknown route"),
+    )
 }
 
 /// Replaces the secrets and any long token-looking run in text a failure message shows, and cuts it to 500 chars.
@@ -238,8 +278,12 @@ fn probe_failures(report: &Value, expected: usize) -> Vec<String> {
     let mut failures = Vec::new();
     if calls.len() != expected {
         failures.push(format!(
-            "the engine reported {} calls, not {expected}; the report holds fatal={}, error calls={}",
+            "the engine reported {} calls, not {expected}{}; the report holds fatal={}, error calls={}",
             calls.len(),
+            report["aborted"]
+                .as_str()
+                .map(|why| format!(" (it stopped after {why})"))
+                .unwrap_or_default(),
             report["fatal"],
             calls.iter().filter(|c| c.get("error").is_some()).count()
         ));
@@ -366,6 +410,34 @@ async fn a_service_without_a_desktop_shell_has_no_key_and_refuses_person_routes(
         }
     }
     assert!(!f.dir.path().join("app/made.txt").exists());
+}
+
+/// A `Person` route that is a `GET` is reachable with `HEAD` too, because the router answers `HEAD` from the `GET` handler. The
+/// key is still needed: a `HEAD` with the token alone must not learn whether the secret pattern exists.
+#[tokio::test]
+async fn a_head_on_a_person_get_route_is_refused_without_the_key() {
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell has a key");
+    let path = "/api/settings/secrets/patterns/x";
+    let url = format!("{}{path}", f.service.url);
+    let client = reqwest::Client::new();
+    for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+        let refused = client
+            .request(method.clone(), &url)
+            .bearer_auth(&f.service.token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status().as_u16(), 403, "{method} without the key");
+        let kept = client
+            .request(method.clone(), &url)
+            .bearer_auth(&f.service.token)
+            .header(KEY_HEADER, &key)
+            .send()
+            .await
+            .unwrap();
+        assert_ne!(kept.status().as_u16(), 403, "{method} with the key");
+    }
 }
 
 /// A refused `Person` call writes one audit row through the real service: the route pattern and the caller class, with no
@@ -934,6 +1006,97 @@ esac
             .exists()
     );
     assert_eq!(current_branch(&folder), "main");
+}
+
+/// A run may keep or lower its thread's permission mode with the service token alone, but raising it is the person's.
+/// The middle modes are the control: an equal mode (`auto`) and both lower modes (`auto_edits`, `supervised`) reach the
+/// handler, while the one-step-looser mode and an empty or garbage key are refused with `person_required`.
+#[tokio::test]
+async fn a_run_can_lower_but_not_raise_its_thread_s_permission_mode() {
+    let f = fixture(true).await;
+    let key = f.service.person_key.clone().expect("a shell gets a key");
+    let runs = format!("/api/threads/{}/runs", f.thread);
+
+    // The thread starts Supervised. With the key, raise it to Auto so the checks below have an equal mode and two
+    // lower ones. The PATCH route is Person as a whole, and the shell's key is the person.
+    let response = f
+        .service
+        .client
+        .patch(format!("{}/api/threads/{}", f.service.url, f.thread))
+        .bearer_auth(&f.service.token)
+        .header(KEY_HEADER, &key)
+        .json(&json!({ "permission_mode": "auto" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let thread = f.service.json(&format!("/api/threads/{}", f.thread)).await;
+    assert_eq!(thread["lifecycle"]["permission_mode"], json!("auto"));
+
+    // FullAccess is one step looser than Auto.
+    let raise = json!({ "prompt": "raise", "permission_mode": "full_access" });
+    let (status, body) = f.call(&runs, raise.clone(), None).await;
+    assert_eq!((status, &body["code"]), (403, &json!("person_required")));
+    // An empty or garbage key is a wrong key, not "no key": both still answer the same refusal.
+    for wrong in ["", "garbage"] {
+        let (status, body) = f.call(&runs, raise.clone(), Some(wrong)).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (403, &json!("person_required")),
+            "{wrong:?}"
+        );
+    }
+    let thread = f.service.json(&format!("/api/threads/{}", f.thread)).await;
+    assert_eq!(
+        thread["lifecycle"]["permission_mode"],
+        json!("auto"),
+        "a refused run moved the mode"
+    );
+
+    // Equal and lower modes pass the person layer. A handler may refuse for another reason, but not with 403.
+    for mode in ["auto", "auto_edits", "supervised"] {
+        let (status, body) = f
+            .call(
+                &runs,
+                json!({ "prompt": "stay", "permission_mode": mode }),
+                None,
+            )
+            .await;
+        assert_ne!(status, 403, "{mode}: {body}");
+        assert_ne!(body["code"], json!("person_required"), "{mode}: {body}");
+        f.service.finished(&f.thread).await;
+    }
+}
+
+/// `CheckoutPull.worktree` has no serde default. A body that omits it is refused by the JSON extractor as
+/// `invalid_input` (400) before the handler runs, so no checkout can move. The explicit `worktree: false` is the
+/// body that would move the project's own checkout, and that reaches the handler and is refused by the person layer.
+#[tokio::test]
+async fn an_omitted_checkout_worktree_is_invalid_input_and_never_moves_the_checkout() {
+    let f = fixture(true).await;
+    let checkout = format!("/api/projects/{}/pulls/12/checkout", f.project);
+
+    let (status, body) = f.call(&checkout, json!({}), None).await;
+    assert_eq!((status, &body["code"]), (400, &json!("invalid_input")));
+
+    let (status, body) = f.call(&checkout, json!({ "worktree": false }), None).await;
+    assert_eq!((status, &body["code"]), (403, &json!("person_required")));
+}
+
+/// The person layer reads a non-empty `resume[]` before the handler parses it. A malformed entry is therefore a
+/// person-action refusal, not invalid input: a token-only caller cannot answer an interrupt whatever the body says.
+#[tokio::test]
+async fn a_malformed_agui_resume_is_refused_before_the_body_is_parsed() {
+    let f = fixture(true).await;
+    let agui = format!("/agui/threads/{}", f.thread);
+    let (status, body) = f
+        .call(
+            &agui,
+            json!({ "threadId": &f.thread, "runId": "run-1", "resume": [{}] }),
+            None,
+        )
+        .await;
+    assert_eq!((status, &body["code"]), (403, &json!("person_required")));
 }
 
 /// A browser cannot set a header on a socket and the key must not be in the URL, so the page offers it as the subprotocol

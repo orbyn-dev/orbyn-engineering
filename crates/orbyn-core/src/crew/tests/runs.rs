@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use orbyn_contracts::{CheckOutcome, ResultState, RunState, StopReason};
+use orbyn_contracts::{CheckOutcome, Evidence, ResultState, RunState, StopReason};
 use serde_json::json;
 
 use super::harness::{KEY_MARKER, Turn, World, brief, key, report, world};
@@ -72,6 +72,8 @@ async fn the_same_failure_changes_approach_once_and_then_stops() {
     let worker = w.worker(&id);
     let prompts = w.sent_to(&worker);
     assert_eq!(prompts.len(), 3, "the brief, a retry and a new approach");
+    // The prompts are the worker's turns in order, and that order is the loop guard's claim: the
+    // brief, then the retry carrying the reason, then the change of approach.
     assert!(prompts[0].contains("Add a parse_duration function."));
     assert!(prompts[1].contains("docs/bad.txt") && prompts[1].contains("Fix this"));
     assert!(prompts[2].contains("different approach"));
@@ -188,10 +190,7 @@ async fn a_pass_carries_its_evidence_and_what_was_not_verified() {
     assert!(result.r#final && result.stop_reason.is_none());
     assert_eq!(result.checks.len(), 3);
     let missing: Vec<&str> = result.not_verified.iter().map(|t| t.as_str()).collect();
-    assert!(
-        missing.iter().any(|t| t.contains("http_probe")),
-        "{missing:?}"
-    );
+    assert!(missing.iter().any(|t| t.contains("preview")), "{missing:?}");
     assert!(missing.contains(&"Windows paths"));
     assert!(result.report.is_some() && result.commit.is_some());
 
@@ -222,6 +221,8 @@ async fn a_turn_without_a_report_is_a_failed_attempt() {
     let id = started(&w).await;
     w.until_state(&id, "passed").await;
     let prompts = w.sent_to(&w.worker(&id));
+    assert_eq!(prompts.len(), 2, "the brief and one retry");
+    // The prompts are the turns in order; the retry after the silent turn is the second.
     assert!(prompts[1].contains("without calling crew_report"));
     assert_eq!(w.core.store.crew_run(&id).unwrap().unwrap().attempts, 2);
 }
@@ -521,6 +522,15 @@ async fn started_with(w: &World, key: serde_json::Value) -> String {
     answer["task"].as_str().unwrap().to_owned()
 }
 
+/// The row of `rows` that recorded `outcome`, found by what it recorded rather than by where the
+/// run's record put it: the attempt order the store chose is not a fixture a test can rely on.
+fn recorded<'a>(rows: &[&'a Evidence], outcome: CheckOutcome) -> &'a Evidence {
+    rows.iter()
+        .copied()
+        .find(|e| e.outcome == outcome)
+        .unwrap_or_else(|| panic!("the evidence that recorded {outcome:?}"))
+}
+
 /// Issue #437: a `schema` check runs on the instance the worker wrote in its checkout and stores
 /// its Evidence: the failing attempt retries with the reason, and the fixed one passes.
 #[tokio::test]
@@ -554,14 +564,14 @@ async fn a_schema_check_runs_on_the_workers_instance_and_records_evidence() {
         .filter(|e| e.check.as_str() == "chk-schema")
         .collect();
     assert_eq!(schema.len(), 2, "{evidence:?}");
-    assert_eq!(
-        (schema[0].outcome, schema[1].outcome),
-        (CheckOutcome::Fail, CheckOutcome::Pass)
-    );
-    assert_eq!(schema[0].command.as_str(), "schema: chk-schema");
+    // The two attempts are read by the outcome they recorded, not by their place in the record.
+    let failed = recorded(&schema, CheckOutcome::Fail);
+    let passed = recorded(&schema, CheckOutcome::Pass);
+    assert_eq!(failed.command.as_str(), "schema: chk-schema");
+    assert_eq!(passed.command.as_str(), "schema: chk-schema");
     // The failing Evidence names the place and never the value the worker wrote.
-    assert!(schema[0].excerpt.contains("/name"), "{}", schema[0].excerpt);
-    assert!(!schema[0].excerpt.contains('7'), "{}", schema[0].excerpt);
+    assert!(failed.excerpt.contains("/name"), "{}", failed.excerpt);
+    assert!(!failed.excerpt.contains('7'), "{}", failed.excerpt);
 }
 
 /// Issue #437: a `secret_scan` fails a changed file that holds a recognised secret, the worker
@@ -593,11 +603,11 @@ async fn a_secret_scan_fails_the_change_and_passes_after_the_retry() {
         .filter(|e| e.check.as_str() == "chk-secret")
         .collect();
     assert_eq!(scans.len(), 2, "{evidence:?}");
-    assert_eq!(
-        (scans[0].outcome, scans[1].outcome),
-        (CheckOutcome::Fail, CheckOutcome::Pass)
-    );
-    assert_eq!(scans[0].command.as_str(), "secret_scan: chk-secret");
+    // The two attempts are read by the outcome they recorded, not by their place in the record.
+    let failed = recorded(&scans, CheckOutcome::Fail);
+    let passed = recorded(&scans, CheckOutcome::Pass);
+    assert_eq!(failed.command.as_str(), "secret_scan: chk-secret");
+    assert_eq!(passed.command.as_str(), "secret_scan: chk-secret");
     for stored in &scans {
         assert!(!stored.excerpt.contains(&secret), "the secret was stored");
     }
@@ -637,6 +647,7 @@ async fn a_repo_required_check_runs_the_repositorys_checks_and_records_evidence(
         .filter(|e| e.check.as_str() == "chk-repo")
         .collect();
     assert_eq!(repo.len(), 1, "{evidence:?}");
-    assert_eq!(repo[0].outcome, CheckOutcome::Pass);
-    assert_eq!(repo[0].command.as_str(), "repo_required: chk-repo");
+    // The one check the repository ran is read by the outcome it recorded, not by its place.
+    let passed = recorded(&repo, CheckOutcome::Pass);
+    assert_eq!(passed.command.as_str(), "repo_required: chk-repo");
 }

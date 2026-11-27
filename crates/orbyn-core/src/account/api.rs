@@ -140,6 +140,10 @@ pub trait AccountApi: Send + Sync {
     /// An authenticator code (six digits) or a recovery code. A new device can still be sent on
     /// to a trusted one ([`SignInOutcome::AwaitingApproval`]).
     async fn second_factor(&self, code: &str) -> Result<SignInOutcome, DeviceError>;
+    /// Gives up a second-factor challenge this device is answering, so a code typed after the
+    /// person cancelled cannot finish the sign-in. A backend that keeps no challenge on this
+    /// side has nothing to do.
+    async fn cancel_second_factor(&self) {}
     /// The new device asks again how its request stands.
     async fn approval_status(&self, request_id: &str) -> Result<ApprovalStatus, DeviceError>;
     /// The new device gives its request up.
@@ -215,6 +219,9 @@ pub fn refusal(error: &DeviceError) -> CoreError {
             "Too many tries. This request is closed.",
             None,
         ),
+        // The request's own clock ended it. Its new device closes it as expired before an error
+        // reaches a screen, so what is left is the trusted side answering one that is gone.
+        DeviceError::ApprovalExpired => ("request_gone", "That request has ended.", None),
         DeviceError::ProofFailed => (
             "check_failed",
             "Couldn't finish checking this device.",

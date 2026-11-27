@@ -8,21 +8,40 @@ import { useWorkspace } from "../../../product/state/workspace";
 import { Button } from "../../../ui/controls";
 import { Dialog } from "../../../ui/Dialog";
 import { FolderBrowser } from "../../../product/ui/FolderBrowser";
-import { dropTrailingSlash, expandHome, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
+import { dropTrailingSlash, expandHome, homePrefix, pathName, replaceHomePrefix, shortenHome, splitPath, withSlash } from "./pathInput";
 import { trackClone } from "../app-chrome/CloneJobs";
+import { canPickFolder, pickFolder } from "../../repos";
+import { checkCloneSource, cloneAddress } from "../../../product/git/cloneSource";
 import "../addProject.css";
 
 export type AddProjectView = "folders" | "new" | "clone";
 
-/** An `owner/name` on GitHub is a clone address too; anything else goes to Git as typed. */
-export function cloneAddress(text: string): string {
-  const typed = text.trim();
-  return /^[\w.-]+\/[\w.-]+$/.test(typed) && !/^\.{1,2}\//.test(typed) ? `https://github.com/${typed}.git` : typed;
+/** A folder this dialog hands Git as typed: a drive path, home, the current folder or a UNC share. */
+const isLocalPath = (address: string) => /^(?:[A-Za-z]:[\\/]|\\\\|~[\\/]|\/|\.{1,2}[\\/])/.test(address);
+
+/**
+ * Why the typed clone source cannot be sent, or null when it can. The Add project flow hands Git any
+ * source it reads: an http(s), ssh or file URL, an scp-like address, an owner/name on GitHub or a local
+ * path, so only what cannot be a source at all is refused. The Repositories dialog's check supplies its
+ * empty-address rule and its space-or-control-character one, which this flow applies to an address but
+ * not to a local path, spaces and all (Git takes a folder with spaces); its https-or-ssh-only rule is
+ * that page's route, not this flow's.
+ */
+export function cloneProblem(text: string): string | null {
+  const address = cloneAddress(text);
+  const checked = checkCloneSource(address);
+  const local = isLocalPath(address);
+  // eslint-disable-next-line no-control-regex
+  const bad = /[\u0000-\u001f\u007f]/.test(address) || (!local && /\s/.test(address));
+  if (!checked.ok && (address === "" || bad)) return checked.reason;
+  // A scheme with nothing after it names no host and no path, so there is nothing to clone.
+  if (!local && /^[A-Za-z][A-Za-z0-9+.-]*:\/\/*$/.test(address)) return "Enter the address to clone from.";
+  return null;
 }
 
 /** The base directory setting, when the person has chosen one. */
 function useBaseDirectory(): string | null {
-  const preferences = useAsync("add-project-base-directory", (signal) => readPreferences(signal));
+  const preferences = useAsync("add-project-base-directory", (signal) => readPreferences(null, signal));
   const value = (Array.isArray(preferences.data) ? preferences.data : []).find((view) => view.key === "add_project_base_directory")?.value;
   return typeof value === "string" && value.trim() ? value : null;
 }
@@ -59,7 +78,8 @@ function Folders({
 }: {
   onNew(): void;
   onClone(): void;
-  onBrowse(): void;
+  /** Opens the in-app folder browser at `from`, the folder the palette field names (null when it is not known yet). */
+  onBrowse(from: string | null): void;
   onClose(): void;
   added: readonly Project[];
   onAdded?(project: Project): void;
@@ -84,6 +104,11 @@ function Folders({
 
   const { dir, leaf } = splitPath(value);
   const expanded = home === null ? null : expandHome(dir, home);
+  // The `~` root is shown in the home folder's own style, so a Windows field reads `~\` and not `~/`.
+  useEffect(() => {
+    if (home === null) return;
+    setValue((current) => (current === "~/" || current === "~\\" ? homePrefix(home) : current));
+  }, [home]);
   const listing = useAsync(`palette-browse:${expanded ?? ""}`, (signal) =>
     expanded === null ? Promise.resolve(null) : api.browse(expanded, signal),
   );
@@ -93,10 +118,12 @@ function Folders({
   }, [listing.data, leaf]);
   const parent = listing.data?.parent ?? null;
   const folderRows = entries.length + (parent ? 1 : 0);
+  // A folder with no subfolders says so, whether or not it also has a row going back up.
+  const noFolders = listing.status === "ready" && listing.data !== null && entries.length === 0;
   const actions = [
     { key: "new", run: onNew },
     { key: "clone", run: onClone },
-    { key: "browse", run: onBrowse },
+    { key: "browse", run: () => void browse() },
   ];
   const rows = folderRows + actions.length;
 
@@ -104,6 +131,23 @@ function Folders({
     setValue(withSlash(home ? shortenHome(path, home) : path));
     setActive(-1);
     setError(null);
+  };
+  // In the desktop app the native folder dialog is the browser: it reaches every drive the system shows. What it picks only fills
+  // the field, so adding is still the person's Enter; cancelling leaves the field and the location as they were. A plain browser
+  // tab has no dialog, so it gets the in-app browser, opened at the folder the field already names.
+  const browse = async () => {
+    if (!canPickFolder()) {
+      onBrowse(expanded);
+      return;
+    }
+    if (busy) return;
+    setError(null);
+    try {
+      const chosen = await pickFolder();
+      if (chosen !== null) enter(chosen);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "The folder dialog did not open. Type the path instead.");
+    }
   };
   const add = async (path: string) => {
     setBusy(true);
@@ -128,7 +172,7 @@ function Folders({
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "o") {
       event.preventDefault();
       event.stopPropagation();
-      onBrowse();
+      void browse();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       setActive(Math.min(rows - 1, Math.max(-1, active + (event.key === "ArrowDown" ? 1 : -1))));
@@ -172,8 +216,6 @@ function Folders({
       ) : null}
       <div className="palette-list">
         {listing.status === "error" ? <p className="sidebar-empty">{listing.error.message}</p> : null}
-        {/* Until the home folder is known nothing was listed, so nothing is empty yet. */}
-        {listing.status === "ready" && listing.data !== null && folderRows === 0 ? <p className="sidebar-empty">No folders here</p> : null}
         {added.length > 0 ? (
           <>
             <div className="palette-group">Added</div>
@@ -191,9 +233,10 @@ function Folders({
         {parent ? (
           <button type="button" data-active={active === 0 || undefined} onMouseMove={() => setActive(0)} onClick={() => enter(parent)}>
             <ArrowUp size={16} aria-hidden />
-            <span className="palette-title">..</span>
+            <span className="palette-title">{pathName(parent)}</span>
           </button>
         ) : null}
+        {noFolders ? <p className="sidebar-empty">{leaf ? "No results" : "No folders here"}</p> : null}
         {entries.map((entry, at) => {
           const row = at + (parent ? 1 : 0);
           return (
@@ -235,6 +278,10 @@ function Folders({
   );
 }
 
+const FIELD_ID = "add-project-field";
+/** A stable id for the dialog's one error line, so the field can describe itself by it. */
+const ERROR_ID = `${FIELD_ID}-error`;
+
 /** One field, Cancel and the confirm: the design's New project and Clone dialogs. */
 function AddDialog({
   title,
@@ -242,6 +289,7 @@ function AddDialog({
   confirm,
   mono,
   hint,
+  check,
   submit,
   onCancel,
 }: {
@@ -250,12 +298,15 @@ function AddDialog({
   confirm: string;
   mono?: boolean;
   hint: ReactNode;
+  /** What is wrong with the typed value, or null when it may be sent: an answer keeps the dialog open and sends nothing. */
+  check?(value: string): string | null;
   submit(value: string): Promise<void>;
   onCancel(): void;
 }) {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
   const live = useRef(true);
   useEffect(
     () => () => {
@@ -265,7 +316,16 @@ function AddDialog({
   );
   const send = async () => {
     const text = value.trim();
+    // The confirm is disabled while the field is empty, so an empty value never reaches this guard.
     if (!text || busy) return;
+    const problem = check?.(text) ?? null;
+    if (problem !== null) {
+      // The dialog answers with the reason and stays open; nothing is sent and the field takes
+      // the focus back, so the address can be fixed where the message points.
+      setError(problem);
+      field.current?.focus();
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -300,9 +360,10 @@ function AddDialog({
           void send();
         }}
       >
-        <label htmlFor="add-project-field">{label}</label>
+        <label htmlFor={FIELD_ID}>{label}</label>
         <input
-          id="add-project-field"
+          id={FIELD_ID}
+          ref={field}
           className={mono ? "dialog-field dialog-field-mono" : "dialog-field"}
           data-dialog-focus
           value={value}
@@ -310,10 +371,15 @@ function AddDialog({
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
-          onChange={(event) => setValue(event.target.value)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? ERROR_ID : undefined}
+          onChange={(event) => {
+            setValue(event.target.value);
+            if (error !== null) setError(null);
+          }}
         />
         {error ? (
-          <p className="field-error" role="alert">
+          <p id={ERROR_ID} className="field-error" role="alert">
             {error}
           </p>
         ) : hint ? (
@@ -343,6 +409,7 @@ export function AddProjectPalette({
 }) {
   const [view, setView] = useState<AddProjectView>(initialView);
   const [browsing, setBrowsing] = useState(false);
+  const [browseFrom, setBrowseFrom] = useState<string | null>(null);
   const [browseError, setBrowseError] = useState<string | null>(null);
   const finishAdd = useFinish(onClose, onAdded);
   // A dialog that added something is done; where the flow goes on, the palette is what is left.
@@ -362,7 +429,7 @@ export function AddProjectPalette({
   const cancel = () => (initialView === "folders" ? setView("folders") : onClose());
   return (
     <>
-      <Folders onNew={() => setView("new")} onClone={() => setView("clone")} onBrowse={() => setBrowsing(true)} onClose={onClose} added={added} onAdded={onAdded} />
+      <Folders onNew={() => setView("new")} onClone={() => setView("clone")} onBrowse={(from) => { setBrowseFrom(from); setBrowsing(true); }} onClose={onClose} added={added} onAdded={onAdded} />
       {view === "new" ? (
         <AddDialog
           title="New project"
@@ -408,6 +475,7 @@ export function AddProjectPalette({
               progress shows in the sidebar until it finishes.
             </>
           }
+          check={cloneProblem}
           submit={async (url) => {
             const job = await api.startClone(cloneAddress(url));
             if (onAdded) setView("folders");
@@ -425,6 +493,7 @@ export function AddProjectPalette({
             </p>
           ) : null}
           <FolderBrowser
+            start={browseFrom}
             actionLabel="Add this folder"
             onChoose={(path) => {
               setBrowseError(null);

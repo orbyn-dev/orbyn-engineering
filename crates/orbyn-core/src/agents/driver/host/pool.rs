@@ -4,18 +4,20 @@
 //! until the person asks again. The idle timeout lives in the connection; the pool only
 //! notices that it ended.
 
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{Mutex, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::connection::{ClosedReason, Connection};
-use super::frames::ErrorKind;
+use super::frames::{ErrorKind, HostSdk};
 use super::process::{ConnectError, HostSpec, Transport, handshake};
 use super::state::{CrashInfo, HostState, Ledger, Restart, Timings};
 use crate::credentials::SpawnSecret;
+use crate::error::CoreError;
 
 /// Hands out the engine's key for one spawn, when the person opted in. It is called for
 /// every start, because a restart needs it again; the value goes into the child's
@@ -25,6 +27,17 @@ pub type SecretSource = Arc<dyn Fn() -> Option<SpawnSecret> + Send + Sync>;
 /// No host can serve the run, with a sentence for the person.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unavailable(pub String);
+
+/// The next automatic restart, while the pool waits to try again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostRestart {
+    /// The restart being waited for, counting from one inside the window.
+    pub attempt: u32,
+    /// The most restarts allowed inside the window.
+    pub limit: u32,
+    /// Whole seconds until the next try; `None` when the pool has no deadline to report.
+    pub next_try_seconds: Option<u32>,
+}
 
 /// A family's host for the UI and the engine log.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,6 +53,22 @@ pub struct HostStatus {
     pub threads: Vec<String>,
     /// What the family's latest finished run failed with; `None` after one that completed.
     pub last_error: Option<ErrorKind>,
+    /// Unix seconds the live host became ready.
+    pub since: Option<i64>,
+    /// The SDK package and version the live host's hello named.
+    pub sdk: Option<HostSdk>,
+    /// The requests the live host's hello says it implements.
+    pub capabilities: Option<Vec<String>>,
+    /// One host process serves every thread of the family.
+    pub pooled: bool,
+    /// Present only while the pool waits to restart.
+    pub restart: Option<HostRestart>,
+    /// Present only for a family that gave up: its restarts inside the window.
+    pub stops_in_window: Option<u32>,
+    /// A Rust driver wraps the host for this family.
+    pub has_driver: bool,
+    /// The host answered that this build carries no SDK for the family.
+    pub sdk_missing: bool,
 }
 
 /// Why the person's stop or restart did nothing.
@@ -63,6 +92,8 @@ struct Inner {
     host_version: Option<String>,
     restart_count: u32,
     last_crash: Option<(CrashInfo, i64)>,
+    /// When the restart being waited for will try next. `None` when no restart waits.
+    next_try_at: Option<Instant>,
 }
 
 pub struct Pool {
@@ -75,6 +106,19 @@ pub struct Pool {
     /// What the latest finished run failed with. Apart from `inner`, so a run that ends never
     /// waits on a start or a stop.
     last_error: std::sync::Mutex<Option<ErrorKind>>,
+    /// Set once a Rust driver is wrapped, so the UI knows a fallback can run the family.
+    wraps_driver: AtomicBool,
+    /// Set when the host answered that this build carries no SDK for the family.
+    sdk_missing: AtomicBool,
+    /// The resumable session of each open run, by engine and thread, for a catalog read
+    /// that can use the live session instead of starting a throwaway agent.
+    sessions: std::sync::Mutex<HashMap<(String, String), String>>,
+    /// The message a Claude rewind resumes at, by engine and its session id: `revert_session`
+    /// names the session, not the thread, and the store hands a point only for the thread's
+    /// current session. One next `open` takes it, and it waits with no expiry: the core hides
+    /// the rewound messages immediately, so the engine must roll them back whenever the
+    /// thread next sends.
+    resume_at: std::sync::Mutex<HashMap<(String, String), String>>,
     shutdown: CancellationToken,
     connections: AtomicU64,
 }
@@ -100,8 +144,13 @@ impl Pool {
                 host_version: None,
                 restart_count: 0,
                 last_crash: None,
+                next_try_at: None,
             }),
             last_error: std::sync::Mutex::new(None),
+            wraps_driver: AtomicBool::new(false),
+            sdk_missing: AtomicBool::new(false),
+            sessions: std::sync::Mutex::new(HashMap::new()),
+            resume_at: std::sync::Mutex::new(HashMap::new()),
             shutdown: CancellationToken::new(),
             connections: AtomicU64::new(0),
         })
@@ -121,9 +170,35 @@ impl Pool {
 
     pub async fn status(&self) -> HostStatus {
         let inner = self.inner.lock().await;
+        let state = self.state();
+        let (since, sdk, capabilities) = match (&state, inner.current.as_ref()) {
+            (HostState::Ready, Some(connection)) if !connection.is_closed() => (
+                Some(connection.started_at()),
+                connection.sdk.clone(),
+                Some(connection.capabilities.clone()),
+            ),
+            _ => (None, None, None),
+        };
+        let restart = match &state {
+            HostState::Restarting { attempt, .. } => Some(HostRestart {
+                attempt: *attempt,
+                limit: u32::try_from(self.timings.max_restarts).unwrap_or(u32::MAX),
+                next_try_seconds: inner.next_try_at.map(|at| {
+                    u32::try_from(
+                        at.saturating_duration_since(Instant::now())
+                            .as_secs()
+                            .max(1),
+                    )
+                    .unwrap_or(u32::MAX)
+                }),
+            }),
+            _ => None,
+        };
+        let stops_in_window = matches!(&state, HostState::Unavailable { .. })
+            .then(|| u32::try_from(inner.ledger.restarts()).unwrap_or(u32::MAX));
         HostStatus {
             family: self.family.clone(),
-            state: self.state(),
+            state,
             host_version: inner.host_version.clone(),
             restart_count: inner.restart_count,
             last_crash: inner.last_crash.clone(),
@@ -136,7 +211,30 @@ impl Pool {
                 .last_error
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
+            since,
+            sdk,
+            capabilities,
+            pooled: true,
+            restart,
+            stops_in_window,
+            has_driver: self.wraps_driver.load(Ordering::Relaxed),
+            sdk_missing: self.sdk_missing.load(Ordering::Relaxed),
         }
+    }
+
+    /// A Rust driver now wraps this pool, so a run has a fallback that is not the host.
+    pub fn mark_wrapped(&self) {
+        self.wraps_driver.store(true, Ordering::Relaxed);
+    }
+
+    /// The host answered that this build carries no SDK for the family.
+    pub fn note_sdk_missing(&self) {
+        self.sdk_missing.store(true, Ordering::Relaxed);
+    }
+
+    /// A run got past the host's SDK load, so this build does carry the SDK.
+    pub fn note_sdk_present(&self) {
+        self.sdk_missing.store(false, Ordering::Relaxed);
     }
 
     /// What a run on this family ended with, for the status: a failure's kind, or `None` for a
@@ -146,6 +244,126 @@ impl Pool {
             .last_error
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = error;
+    }
+
+    /// Records the session a run opened, so a catalog read can name it.
+    pub fn note_session(&self, engine: &str, thread: &str, session: &str) {
+        if session.is_empty() {
+            return;
+        }
+        let previous = if let Ok(mut sessions) = self.sessions.lock() {
+            sessions.insert((engine.to_owned(), thread.to_owned()), session.to_owned())
+        } else {
+            return;
+        };
+        // The thread speaks in a new session now; a point noted for the old one is stale.
+        if let Some(previous) = previous.filter(|previous| previous.as_str() != session) {
+            self.forget_resume_at(engine, &previous);
+        }
+    }
+
+    /// A run ended: its session is no longer open to name. Only its own session is
+    /// removed, so a newer run on the same thread keeps the one it just recorded.
+    pub fn forget_session(&self, engine: &str, thread: &str, session: Option<&str>) {
+        let Some(session) = session else {
+            return;
+        };
+        if let Ok(mut sessions) = self.sessions.lock() {
+            let key = (engine.to_owned(), thread.to_owned());
+            if sessions.get(&key).is_some_and(|id| id.as_str() == session) {
+                sessions.remove(&key);
+            }
+        }
+    }
+
+    /// One open session of `engine`, when a run on it is still live.
+    pub fn open_session(&self, engine: &str) -> Option<String> {
+        self.sessions
+            .lock()
+            .ok()?
+            .iter()
+            .find_map(|((session_engine, _), id)| {
+                if session_engine.as_str() == engine {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+    }
+
+    /// Keeps the message a Claude rewind resumes at. The next run that resumes this
+    /// engine session takes it once; a later run never sees it. It waits with no expiry,
+    /// however late that send comes. A store that cannot record the point is an error, so
+    /// the rewind leaves its handoff instead of claiming a native rollback that no run
+    /// will apply.
+    pub fn note_resume_at(
+        &self,
+        engine: &str,
+        session: &str,
+        at: &str,
+    ) -> crate::error::Result<()> {
+        if session.is_empty() {
+            return Err(CoreError::Invalid(
+                "A Claude rewind needs a session id.".into(),
+            ));
+        }
+        if !crate::agents::claude_history::valid_uuid(at) {
+            return Err(CoreError::Invalid(
+                "A Claude rewind needs a message id.".into(),
+            ));
+        }
+        let mut resume_at = self
+            .resume_at
+            .lock()
+            .map_err(|_| CoreError::Internal("The rewind point store is unavailable.".into()))?;
+        resume_at.insert((engine.to_owned(), session.to_owned()), at.to_owned());
+        Ok(())
+    }
+
+    /// The rewind point for this engine session, if one is waiting. Taking it consumes it,
+    /// so an `open` that fails, or a run that reports its session, leaves it used. Nothing
+    /// ages it out: it stays until the next resume takes it or a clear drops it.
+    pub fn take_resume_at(&self, engine: &str, session: &str) -> Option<String> {
+        if session.is_empty() {
+            return None;
+        }
+        let mut resume_at = self.resume_at.lock().ok()?;
+        resume_at.remove(&(engine.to_owned(), session.to_owned()))
+    }
+
+    /// Drops every waiting point for an engine: a create starts a new session, so no point
+    /// noted for an older one can be the next run's.
+    pub(super) fn clear_resume_at(&self, engine: &str) {
+        if let Ok(mut resume_at) = self.resume_at.lock() {
+            resume_at.retain(|(point_engine, _), _| point_engine.as_str() != engine);
+        }
+    }
+
+    /// Drops one waiting point, when the thread's session id changed under it.
+    pub(super) fn forget_resume_at(&self, engine: &str, session: &str) {
+        if let Ok(mut resume_at) = self.resume_at.lock() {
+            resume_at.remove(&(engine.to_owned(), session.to_owned()));
+        }
+    }
+
+    /// Drops every waiting point for an engine except one session's: a run that resumes
+    /// another session has left the older point behind.
+    pub(super) fn clear_resume_at_except(&self, engine: &str, session: &str) {
+        if let Ok(mut resume_at) = self.resume_at.lock() {
+            resume_at.retain(|(point_engine, point_session), _| {
+                point_engine.as_str() != engine || point_session.as_str() == session
+            });
+        }
+    }
+
+    /// Poisons the rewind store so a test can see `note_resume_at` refuse it.
+    #[cfg(test)]
+    pub(super) fn poison_resume_at(&self) {
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = self.resume_at.lock().expect("the store starts unpoisoned");
+            panic!("poison the rewind point store");
+        }));
+        assert!(poisoned.is_err(), "the rewind store was not poisoned");
     }
 
     fn set(&self, state: HostState) {
@@ -222,6 +440,7 @@ impl Pool {
                 Ok(())
             }
             Err(ConnectError::Mismatch { app, host }) => {
+                inner.next_try_at = None;
                 self.set(HostState::Mismatch { app, host });
                 Err(Unavailable(
                     HostState::Mismatch { app, host }
@@ -260,6 +479,12 @@ impl Pool {
             self.timings.init,
         )
         .await?;
+        // A host that checked its SDK at init says so before any run has asked for it.
+        match ready.sdk_missing {
+            Some(true) => self.note_sdk_missing(),
+            Some(false) => self.note_sdk_present(),
+            None => {}
+        }
         let id = self.connections.fetch_add(1, Ordering::Relaxed) + 1;
         let stop = self.shutdown.child_token();
         let connection = Connection::start(
@@ -282,6 +507,7 @@ impl Pool {
         inner.host_version = Some(connection.host_version.clone());
         inner.current = Some(connection.clone());
         inner.stop = Some(stop);
+        inner.next_try_at = None;
         self.set(HostState::Ready);
         let pool = self.clone();
         tokio::spawn(async move {
@@ -304,13 +530,16 @@ impl Pool {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| i64::try_from(since.as_secs()).unwrap_or(0));
         inner.last_crash = Some((crash, at));
-        match inner.ledger.crashed(Instant::now(), uptime, &self.timings) {
+        let now = Instant::now();
+        match inner.ledger.crashed(now, uptime, &self.timings) {
             Restart::GiveUp => {
+                inner.next_try_at = None;
                 self.set(HostState::Unavailable { reason: error });
                 None
             }
             Restart::After(wait) => {
                 inner.restart_count = inner.restart_count.saturating_add(1);
+                inner.next_try_at = Some(now + wait);
                 self.set(HostState::Restarting {
                     attempt: u32::try_from(inner.ledger.restarts()).unwrap_or(u32::MAX),
                     last_error: error,
@@ -331,6 +560,7 @@ impl Pool {
         }
         inner.current = None;
         inner.stop = None;
+        inner.next_try_at = None;
         match &reason {
             ClosedReason::Idle | ClosedReason::Stopped | ClosedReason::Shutdown => {
                 if !self.state().is_final() {
@@ -372,6 +602,7 @@ impl Pool {
                     return;
                 }
                 Err(ConnectError::Mismatch { app, host }) => {
+                    inner.next_try_at = None;
                     self.set(HostState::Mismatch { app, host });
                     return;
                 }
@@ -390,6 +621,7 @@ impl Pool {
     pub async fn retry(&self) {
         let mut inner = self.inner.lock().await;
         inner.ledger.clear();
+        inner.next_try_at = None;
         if matches!(self.state(), HostState::Unavailable { .. }) {
             self.set(HostState::Crashed);
         }
@@ -398,6 +630,7 @@ impl Pool {
     /// Ends the live host with the pool locked, when the person's stop is allowed to. Runs on it end
     /// as cancelled. A family that is waiting to restart stops waiting; one that gave up stays so.
     async fn stop_locked(&self, inner: &mut Inner, stop_background: bool) -> Result<(), Refusal> {
+        inner.next_try_at = None;
         if let Some(connection) = inner.current.clone() {
             let open = connection.open_background();
             if open > 0 && !stop_background {
@@ -453,7 +686,11 @@ impl Pool {
     /// (it is killed after the grace), and nothing restarts.
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
-        let live = self.inner.lock().await.current.take();
+        let live = {
+            let mut inner = self.inner.lock().await;
+            inner.next_try_at = None;
+            inner.current.take()
+        };
         if let Some(connection) = live {
             let _ = tokio::time::timeout(self.timings.exit_grace * 2, connection.closed()).await;
         }

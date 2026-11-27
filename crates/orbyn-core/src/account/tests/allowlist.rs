@@ -9,7 +9,7 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
     let core = on(&dir, "a");
     let api = Arc::new(FakeDeviceApi::new());
     let foreign = not_allowlisted();
-    assert_eq!(foreign.len(), 53);
+    assert_eq!(foreign.len(), 58);
     let mut sent = Vec::new();
     let mut valid = 0;
     for key in &foreign {
@@ -52,6 +52,7 @@ async fn each_catalog_key_outside_the_allowlist_from_a_peer_is_not_applied_and_i
         "default_model",
         "fallback_model",
         "text_generation_model",
+        "text_generation_models",
         "default_effort",
         "default_thread_env_mode",
         // A peer could turn model calls back on.
@@ -122,12 +123,19 @@ async fn a_peers_keybinding_to_an_approval_command_or_a_dialog_key_is_kept_never
     peer(&api, future(), sent.clone());
     let _worker = start(&core, &api);
     until(&core, |core| {
-        core.keybindings().rules.contains(&good) && online(core)
+        core.keybindings().rules.iter().any(|seen| {
+            seen.key == good.key && seen.command == good.command && seen.when == good.when
+        }) && online(core)
     })
     .await;
     let view = core.keybindings();
     for rule in &bad {
-        assert!(!view.rules.contains(rule), "{rule:?}");
+        assert!(
+            !view.rules.iter().any(|seen| seen.key == rule.key
+                && seen.command == rule.command
+                && seen.when == rule.when),
+            "{rule:?}"
+        );
     }
     assert!(
         !view

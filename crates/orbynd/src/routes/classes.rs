@@ -85,6 +85,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/autopilot/review/{task_id}/looks-good"),
     ("POST", "/api/crew/autopilot/review/{task_id}/revert"),
     ("POST", "/api/crew/background/create"),
+    ("POST", "/api/crew/background/runs/{id}/acknowledge"),
     ("POST", "/api/crew/background/{id}/delete"),
     ("POST", "/api/crew/background/{id}/disable"),
     ("POST", "/api/crew/background/{id}/enable"),
@@ -101,6 +102,17 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/escapes/{id}/check/retry"),
     ("POST", "/api/crew/escapes/{id}/check/withdraw"),
     ("POST", "/api/crew/escapes/{id}/check/approve"),
+    ("POST", "/api/crew/lessons"),
+    ("PATCH", "/api/crew/lessons/{id}"),
+    ("DELETE", "/api/crew/lessons/{id}"),
+    ("POST", "/api/crew/lessons/{id}/disable"),
+    ("POST", "/api/crew/lessons/{id}/enable"),
+    ("POST", "/api/crew/lessons/{id}/undo"),
+    ("POST", "/api/crew/lessons/{id}/promote"),
+    ("POST", "/api/crew/lessons/{id}/demote"),
+    ("PUT", "/api/crew/lessons/settings"),
+    ("POST", "/api/crew/skill-proposals/{id}/approve"),
+    ("POST", "/api/crew/skill-proposals/{id}/dismiss"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/confirm"),
     ("POST", "/api/crew/projects/{id}/pinned-ref/reset"),
     ("POST", "/api/crew/projects/{id}/worker-provider/set"),
@@ -110,15 +122,24 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/crew/tasks/{id}/cancel"),
     ("POST", "/api/crew/tasks/{id}/merge"),
     ("POST", "/api/crew/tasks/{id}/rerun-checks"),
+    ("POST", "/api/crew/tasks/{id}/checks/{check}/decide"),
     ("POST", "/api/crew/tasks/{id}/retry-elsewhere"),
+    ("POST", "/api/crew/lead/{thread_id}/close"),
+    // Code Mode: stopping a live script run is the person's own stop button (docs/code-mode.md).
+    ("POST", "/api/code-runs/{id}/cancel"),
+    // Devices: every action is a Person write (docs/devices.md).
+    ("POST", "/api/devices/{id}/actions"),
     // Engines, updates, workspace and the shell.
     ("POST", "/api/acp/registry/{id}"),
+    ("DELETE", "/api/acp/registry/{id}"),
     ("POST", "/api/engine-host/{family}/restart"),
     ("POST", "/api/engine-host/{family}/stop"),
     ("POST", "/api/engines/custom"),
+    ("DELETE", "/api/engines/custom/{id}"),
     ("POST", "/api/engines/probe-binary"),
     ("POST", "/api/engines/update-all"),
     ("POST", "/api/engines/{id}/install-recommended"),
+    ("POST", "/api/engines/{id}/native-sessions/delete"),
     ("POST", "/api/engines/{id}/update"),
     (
         "POST",
@@ -132,7 +153,10 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/workspace/rollback"),
     ("POST", "/api/workspace/setup"),
     ("POST", "/api/workspace/update"),
+    // Browser profiles: a rename is the person's own action; the other profile routes stay Local.
+    ("POST", "/api/browser-profiles/{id}/rename"),
     // Preferences, policy and redaction.
+    ("POST", "/api/keybindings/reset"),
     ("POST", "/api/policy/rules"),
     ("DELETE", "/api/policy/rules/{id}"),
     ("PUT", "/api/preferences"),
@@ -152,6 +176,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     // Projects, approvals and questions.
     ("POST", "/api/approvals/{id}/decide"),
     ("POST", "/api/projects/{id}/git/init"),
+    ("POST", "/api/projects/{id}/issue-tracker"),
     ("POST", "/api/projects/{id}/publish"),
     ("POST", "/api/projects/{id}/pulls/close"),
     ("PATCH", "/api/projects/{id}/pulls/{number}"),
@@ -174,6 +199,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ),
     ("POST", "/api/projects/{id}/pulls/{number}/merge"),
     ("POST", "/api/projects/{id}/pulls/{number}/review"),
+    ("POST", "/api/projects/{id}/pulls/{number}/viewed"),
     ("POST", "/api/projects/{id}/trust"),
     ("POST", "/api/projects/{id}/workflows/{run}/approve"),
     ("DELETE", "/api/projects/{id}/worktrees/{worktree}"),
@@ -201,13 +227,20 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ("POST", "/api/threads/{id}/pulls/{number}/merge"),
     ("POST", "/api/threads/{id}/pulls/{number}/review"),
     ("POST", "/api/threads/{id}/scripts"),
+    ("DELETE", "/api/threads/{id}/terminals/{terminal}/blocks"),
     ("POST", "/api/threads/{id}/terminals"),
     ("POST", "/api/threads/{id}/vcs/refs"),
     ("POST", "/api/threads/{id}/vcs/refs/switch"),
     ("POST", "/api/threads/import"),
     ("POST", "/api/threads/{id}/transcripts"),
+    ("PUT", "/api/attachments/{id}/source"),
     ("POST", "/api/issues/trackers/{tracker}/connect"),
     ("POST", "/api/issues/trackers/{tracker}/disconnect"),
+    ("POST", "/api/issues/item/create"),
+    ("POST", "/api/issues/item/comment"),
+    ("POST", "/api/issues/item/react"),
+    ("POST", "/api/issues/item/update"),
+    ("POST", "/api/issues/item/state"),
     ("POST", "/api/issues/start-thread"),
     ("POST", "/api/threads/{id}/issue-links"),
     ("POST", "/api/threads/{id}/issue-links/remove"),
@@ -270,7 +303,10 @@ pub const FIELD_LEVEL: &[(&str, &str, &str)] = &[
 ];
 
 /// Whether a request for this method and matched route pattern needs the person key.
+/// A `HEAD` is answered by the route's `GET` handler (status and headers, no body), so it takes the `GET` row: otherwise a
+/// service-token agent could ask `HEAD` whether a protected pattern exists.
 fn needs_key(method: &str, pattern: &str) -> bool {
+    let method = if method == "HEAD" { "GET" } else { method };
     ENFORCED.iter().any(|(m, p)| (*m, *p) == (method, pattern))
         && PERSON.iter().any(|(m, p, _)| (*m, *p) == (method, pattern))
 }
@@ -435,6 +471,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "installs an agent from the registry",
     ),
     (
+        "DELETE",
+        "/api/acp/registry/{id}",
+        "removes an agent the person installed from the registry",
+    ),
+    (
         "POST",
         "/api/approvals/{id}/decide",
         "the person's yes or no on an engine's request; a worker must not approve itself (owner ruling)",
@@ -521,6 +562,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/background/runs/{id}/acknowledge",
+        "Crew write behind local_only: the person settles one background review that waits; the wait clears and the run keeps its reason, state, stop reason and spend",
+    ),
+    (
+        "POST",
         "/api/crew/background/{id}/delete",
         "Crew write behind local_only: deletes a background worker",
     ),
@@ -601,6 +647,61 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/lessons",
+        "Crew write behind local_only: the person adds a lesson by hand, for one repository or every one",
+    ),
+    (
+        "PATCH",
+        "/api/crew/lessons/{id}",
+        "Crew write behind local_only: the person edits a lesson's text; the path scan and the version as seen apply",
+    ),
+    (
+        "DELETE",
+        "/api/crew/lessons/{id}",
+        "Crew write behind local_only: the person deletes a lesson, which stays undoable for 10 s",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/disable",
+        "Crew write behind local_only: the person turns one lesson off",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/enable",
+        "Crew write behind local_only: the person turns one lesson back on",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/undo",
+        "Crew write behind local_only: the person restores a lesson inside its 10 s Undo",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/promote",
+        "Crew write behind local_only: the person promotes a repository lesson to global; a path-naming one is refused",
+    ),
+    (
+        "POST",
+        "/api/crew/lessons/{id}/demote",
+        "Crew write behind local_only: the person moves a global lesson back to one repository",
+    ),
+    (
+        "PUT",
+        "/api/crew/lessons/settings",
+        "Crew write behind local_only: the person's per-repository use-lessons switch",
+    ),
+    (
+        "POST",
+        "/api/crew/skill-proposals/{id}/approve",
+        "Crew write behind local_only: the person approves an open skill proposal and writes the local skill",
+    ),
+    (
+        "POST",
+        "/api/crew/skill-proposals/{id}/dismiss",
+        "Crew write behind local_only: the person dismisses an open skill proposal",
+    ),
+    (
+        "POST",
         "/api/crew/guard/targets/add",
         "Crew write behind local_only: adds a protected target to the guard",
     ),
@@ -641,6 +742,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/crew/lead/{thread_id}/close",
+        "Crew write behind local_only: closing a lead thread stops the live tasks it leads",
+    ),
+    (
+        "POST",
         "/api/crew/tasks/{id}/cancel",
         "Crew write behind local_only: the person stops a task",
     ),
@@ -653,6 +759,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/crew/tasks/{id}/rerun-checks",
         "Crew write behind local_only: the person's re-run of a task's checks",
+    ),
+    (
+        "POST",
+        "/api/crew/tasks/{id}/checks/{check}/decide",
+        "Crew write behind local_only: the person passes or denies a manual check that holds the task",
     ),
     (
         "POST",
@@ -685,6 +796,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "registers a program to run as an engine",
     ),
     (
+        "DELETE",
+        "/api/engines/custom/{id}",
+        "removes an engine the person registered",
+    ),
+    (
         "POST",
         "/api/engines/probe-binary",
         "runs a program the caller names",
@@ -701,8 +817,23 @@ pub const PERSON: &[(&str, &str, &str)] = &[
     ),
     (
         "POST",
+        "/api/engines/{id}/native-sessions/delete",
+        "deletes a native session stored for the person's engine",
+    ),
+    (
+        "POST",
         "/api/engines/{id}/update",
         "updates engine software",
+    ),
+    (
+        "POST",
+        "/api/browser-profiles/{id}/rename",
+        "the person renames their own browser profile; only the stored name changes, so a profile open in a tab can be renamed",
+    ),
+    (
+        "POST",
+        "/api/keybindings/reset",
+        "the person resets one of their own keybindings to its built-in default",
     ),
     (
         "POST",
@@ -728,6 +859,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/git/init",
         "turns the person's folder into a repository (writes .git in it)",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/issue-tracker",
+        "the person chooses the tracker and scope the project's issues come from",
     ),
     (
         "POST",
@@ -793,6 +929,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/pulls/{number}/review",
         "submits a review, which can approve, as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/viewed",
+        "marks a file viewed or unviewed on the forge as the person",
     ),
     (
         "POST",
@@ -920,6 +1061,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "attaches a file the person picked as untrusted context for the thread's next message",
     ),
     (
+        "PUT",
+        "/api/attachments/{id}/source",
+        "sets the app name, title and window text that go into the next prompt as untrusted text, so a service-token agent cannot rewrite a Snap Shot the person has already reviewed",
+    ),
+    (
         "POST",
         "/api/threads/{id}/branches",
         "creates a branch and switches the person's checkout to it",
@@ -963,6 +1109,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/{id}/scripts",
         "runs a project script as the person",
+    ),
+    (
+        "DELETE",
+        "/api/threads/{id}/terminals/{terminal}/blocks",
+        "clears the person's own terminal history: the recorded blocks and their output, never the terminal",
     ),
     (
         "POST",
@@ -1043,6 +1194,31 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/threads/{id}/issue-links/remove",
         "the person removes a thread's link to an issue",
+    ),
+    (
+        "POST",
+        "/api/issues/item/create",
+        "the person creates an issue in their own tracker account",
+    ),
+    (
+        "POST",
+        "/api/issues/item/comment",
+        "the person writes a comment on an issue in their own tracker account",
+    ),
+    (
+        "POST",
+        "/api/issues/item/react",
+        "the person adds or takes back a reaction in their own tracker account",
+    ),
+    (
+        "POST",
+        "/api/issues/item/update",
+        "the person edits an issue's title, body, labels and assignees in their own tracker account",
+    ),
+    (
+        "POST",
+        "/api/issues/item/state",
+        "the person moves an issue to another of its states in their own tracker account",
     ),
     (
         "POST",
@@ -1203,6 +1379,16 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "DELETE",
         "/api/threads/{id}/repos/{repo_id}",
         "the person removes a repository from a thread, which removes its worktree",
+    ),
+    (
+        "POST",
+        "/api/devices/{id}/actions",
+        "controls a local device and can expose its screen; every action is a Person write (docs/devices.md)",
+    ),
+    (
+        "POST",
+        "/api/code-runs/{id}/cancel",
+        "the person stops a live Code Mode run and denies the approval it waits on; no engine or worker stops another's work (docs/code-mode.md)",
     ),
 ];
 
@@ -1391,13 +1577,26 @@ mod tests {
         assert!(rows.lock().unwrap().len() <= 1024);
     }
 
+    /// The status and `code` a refused `person_check_field` answers with.
+    fn refusal_code(result: Result<(), ApiFailure>) -> (u16, String) {
+        use axum::response::IntoResponse;
+        let response = result.expect_err("the call is refused").into_response();
+        let status = response.status().as_u16();
+        let body =
+            futures_util::FutureExt::now_or_never(axum::body::to_bytes(response.into_body(), 4096))
+                .expect("body is ready")
+                .expect("body reads");
+        let json: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        (status, json["code"].as_str().expect("code").to_owned())
+    }
+
     #[tokio::test]
     async fn a_handler_level_refusal_is_audited_by_field_and_a_failed_write_still_refuses() {
         let headers = axum::http::HeaderMap::new();
         let (_, rows, offset, access) = audited(Some("the-key"), false).await;
         for _ in 0..3 {
             let refused = access.person_check_field(&headers, "POST", "/r/{id}", "resume");
-            assert!(refused.is_err());
+            assert_eq!(refusal_code(refused), (403, "person_required".to_owned()));
         }
         let _ = access.person_check_field(&headers, "POST", "/r/{id}", "worktree");
         access.audit_person_refusal("POST", "/r/{id}", None, CallerClass::ServiceToken);
@@ -1412,7 +1611,11 @@ mod tests {
 
         let (_, rows, _, failing) = audited(Some("the-key"), true).await;
         let refused = failing.person_check_field(&headers, "POST", "/r/{id}", "resume");
-        assert!(refused.is_err(), "a failed audit write still refuses");
+        assert_eq!(
+            refusal_code(refused),
+            (403, "person_required".to_owned()),
+            "a failed audit write still refuses"
+        );
         assert!(rows.lock().unwrap().is_empty());
     }
 

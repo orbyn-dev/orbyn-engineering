@@ -11,6 +11,7 @@ use ts_rs::TS;
 use crate::background::{
     BackgroundBudget, BackgroundRunState, BackgroundStopReason, BackgroundTemplate,
 };
+use crate::crew::NeedsYouKind;
 
 wire_enum! {
 /// How much Autopilot does: `off`, `on` or `full` (the default).
@@ -207,8 +208,24 @@ pub struct AutopilotReviewQueue {
     #[serde(default)]
     #[ts(optional, as = "Option<u32>")]
     pub background_total: u32,
+    /// The waits the one needs-you field (KC3) names that this queue does not answer: the Inbox's items this queue does not
+    /// answer, by kind, most first then by kind. The page says "N more wait for you in the Inbox" from these, and it is the
+    /// same field the Inbox and the Taskboard read (not necessarily the same count: the board cards only work tasks). A review
+    /// wait this queue owns is not here, and neither is a dismissed one.
+    #[serde(default)]
+    #[ts(optional, as = "Option<Vec<AutopilotWaitingElsewhere>>")]
+    pub waiting_elsewhere: Vec<AutopilotWaitingElsewhere>,
     #[ts(type = "number")]
     pub now_unix: i64,
+}
+}
+
+wire! {
+/// One kind of wait the Review queue does not answer, and how many: the Inbox's items this queue does not answer, from the
+/// one needs-you field.
+pub struct AutopilotWaitingElsewhere {
+    pub kind: NeedsYouKind,
+    pub count: u32,
 }
 }
 
@@ -550,6 +567,20 @@ pub struct AutopilotLogRow {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub mode: Option<String>,
+    /// The task's title as it stood when the row was written (the lead thread's title), so the person reads
+    /// which work the row was for rather than an id alone. Absent when the title could not be read then.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub title: Option<String>,
+    /// The engine of the run that asked, when a run asked: the answer is the same one the gate decided on.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub asker_engine: Option<String>,
+    /// The model the asking run's thread was on, when the store knows one. Absent for a run with no model
+    /// recorded and for rows no run asked for.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub asker_model: Option<String>,
     #[serde(default)]
     #[ts(optional = nullable)]
     pub action_kind: Option<String>,

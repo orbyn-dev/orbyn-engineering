@@ -114,16 +114,21 @@ async fn a_missing_bus_section_keeps_default_bus_behavior() {
 }
 
 #[tokio::test]
-async fn whole_document_failures_keep_the_existing_needs_person_audit_without_starting_a_worker() {
+async fn whole_document_failures_refuse_the_start_without_starting_a_worker() {
     let w = world(true, std::sync::Arc::new(|_, _| Turn::Hang)).await;
     commit_crew(&w.repo, "{ not json");
+    // Issue #795: a write task reads `.orbyn/crew.json` at the commit it starts from for the repository's own
+    // checks, so a file that cannot be read refuses the start in the reader's words, before any task is stored.
     let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(error, "{answer}");
+    assert_eq!(answer["code"], "invalid_object", "{answer}");
     assert!(
-        !error && answer["routed"] == false && answer["state"] == "needs_person",
+        answer["message"]
+            .as_str()
+            .unwrap()
+            .contains(".orbyn/crew.json is not valid"),
         "{answer}"
     );
-    let task = answer["task"].as_str().unwrap();
-    assert!(!w.core.store.crew_results(task).unwrap().is_empty());
     assert!(
         w.crew_tasks.lock().unwrap().is_empty(),
         "no fake worker may have started"
@@ -241,6 +246,7 @@ async fn two_projects_in_one_core_keep_their_own_post_limits_and_host_ceiling() 
                 base_branch: None,
                 effort: None,
                 options: Default::default(),
+                branch_name_seed: None,
             })
             .await
             .unwrap();
@@ -308,7 +314,9 @@ async fn committed_oversized_and_linked_policy_is_refused_without_following_it()
         &w.repo,
         &format!(r#"{{"bus":{{}},"pad":"{}"}}"#, "x".repeat(65536)),
     );
-    assert!(w.core.crew_repo_limits(&lead).await.is_err());
+    let oversized = w.core.crew_repo_limits(&lead).await.unwrap_err();
+    assert_eq!(oversized.code, orbyn_contracts::ErrorCode::InvalidObject);
+    assert!(oversized.message.contains("over 64 KiB"), "{oversized:?}");
     // Create Git tree entries directly: this covers Windows too, without symlink privileges.
     for path in [".orbyn/crew.json", ".orbyn"] {
         run_git(&w.repo, &["rm", "-r", "-q", "--cached", ".orbyn"]);
@@ -343,7 +351,14 @@ async fn committed_oversized_and_linked_policy_is_refused_without_following_it()
                 "link",
             ],
         );
-        assert!(w.core.crew_repo_limits(&lead).await.is_err());
+        let linked = w.core.crew_repo_limits(&lead).await.unwrap_err();
+        assert_eq!(linked.code, orbyn_contracts::ErrorCode::InvalidObject);
+        assert!(
+            linked
+                .message
+                .contains(&format!("{path} is a symlink in the repository")),
+            "{linked:?}"
+        );
     }
     w.core.shutdown().await;
 }

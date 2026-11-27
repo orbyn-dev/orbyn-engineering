@@ -15,8 +15,8 @@ describe("provider instance edits", () => {
       .toEqual([{ id: "work", driver: "acp-one", name: "Work", args: ["--name", "space stays"] }]);
   });
   it("refuses missing or ambiguous identities rather than adding or fanout", () => {
-    expect(() => patchInstance([], "gone", { enabled: false })).toThrow();
-    expect(() => patchInstance([{ id: "same", driver: "one" }, { id: "same", driver: "two" }], "same", { name: "x" })).toThrow();
+    expect(() => patchInstance([], "gone", { enabled: false })).toThrow(/instance changed/);
+    expect(() => patchInstance([{ id: "same", driver: "one" }, { id: "same", driver: "two" }], "same", { name: "x" })).toThrow(/instance changed/);
   });
   it("derives collision-free instance ids separately from driver identities", () => {
     const id = newInstanceId("claude", "  Work Space  ", new Set(["claude_work_space"]));

@@ -5,6 +5,7 @@ import { goBack, resetTrail, useNavHistory } from "./navHistory";
 const follow = async (hash: string) => {
   await act(async () => {
     window.location.hash = hash;
+    // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 };

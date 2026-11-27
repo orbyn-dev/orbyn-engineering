@@ -5,9 +5,11 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { once } from "node:events";
 import { SCRIPTED_ENGINE, USAGE_ENGINE } from "./engine-scripts";
 import { editForgeState, readForgeState } from "./forge-state";
+import type { WireThreadEvent } from "../../src/api/types";
 
 const WEB = resolve(import.meta.dirname, "../..");
 const BIN = process.env.ORBYN_BIN ?? resolve(WEB, "../target/debug/orbynd");
@@ -35,8 +37,13 @@ function previewBrowser(dir: string): string {
   const wrapper = join(dir, "preview-browser");
   // Linux runners restrict user namespaces, which the shell's sandbox needs; Playwright drops it the same way.
   const flags = process.platform === "linux" ? "--in-process-gpu --no-sandbox" : "--in-process-gpu";
+  // The service gets a scrubbed environment, and the build box keeps the shell's libnss3 and libnspr4 outside
+  // the loader's paths, so the wrapper hands the shell the library path the test process was given.
+  const libs = process.env.LD_LIBRARY_PATH
+    ? `export LD_LIBRARY_PATH='${process.env.LD_LIBRARY_PATH.replace(/'/g, "'\\''")}'\n`
+    : "";
   // Kept only in a startup-failure diagnostic, so CI can verify the wrapper's actual flags.
-  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\nexec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\n${libs}exec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
   return wrapper;
 }
 
@@ -62,6 +69,65 @@ const pullRow = ({ number, ...rest }: PullFixture) => ({
   ...rest,
 });
 
+/** One issue the stand-in `gh` answers for (docs/issues.md): the fields GitHub's own `gh issue list` and `gh issue view` print. */
+export interface IssueFixture {
+  number: number;
+  title: string;
+  [field: string]: unknown;
+}
+
+/**
+ * The issues the stand-in `gh` holds: two open and one closed, with a body, a comment, labels and an assignee, so the
+ * Issues pages have something to list, filter and read. The scope is the repository the fixture project's tracker reads.
+ */
+const STAND_IN_ISSUES: IssueFixture[] = [
+  {
+    number: 7,
+    title: "Retry the queue",
+    url: "https://github.com/o/r/issues/7",
+    state: "OPEN",
+    stateReason: "",
+    createdAt: "2026-10-01T00:00:00Z",
+    updatedAt: "2026-10-02T00:00:00Z",
+    closedAt: "",
+    author: { login: "grace" },
+    assignees: [{ login: "me" }],
+    labels: [{ name: "bug" }],
+    body: "The queue stalls when the worker restarts.",
+    comments: [{ id: 71, author: { login: "ada" }, body: "I can reproduce it.", createdAt: "2026-10-01T01:00:00Z" }],
+  },
+  {
+    number: 12,
+    title: "Tidy the docs",
+    url: "https://github.com/o/r/issues/12",
+    state: "OPEN",
+    stateReason: "",
+    createdAt: "2026-09-28T00:00:00Z",
+    updatedAt: "2026-09-30T00:00:00Z",
+    closedAt: "",
+    author: { login: "ada" },
+    assignees: [],
+    labels: [{ name: "docs" }],
+    body: "The Getting started page names the old command.",
+    comments: [],
+  },
+  {
+    number: 9,
+    title: "Old cache bug",
+    url: "https://github.com/o/r/issues/9",
+    state: "CLOSED",
+    stateReason: "COMPLETED",
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-20T00:00:00Z",
+    closedAt: "2026-09-20T00:00:00Z",
+    author: { login: "grace" },
+    assignees: [],
+    labels: [],
+    body: "The cache kept the first answer.",
+    comments: [],
+  },
+];
+
 const STAND_IN_GH = resolve(WEB, "e2e/real/stand-in-gh.mjs");
 
 /** A GitHub-only fixture: `gh` keeps state, and discovery of other forges fails locally. */
@@ -71,9 +137,19 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
   const state = join(dir, "gh-state.json");
   const log = join(dir, "gh-calls.log");
   writeFileSync(log, "");
-  writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: ["bug", "docs"], template: pullRow({ number: 0, title: "" }) }));
+  writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: [{ name: "bug", color: "d73a4a", description: "About bug" }, { name: "docs", color: "0075ca", description: "About docs" }], template: pullRow({ number: 0, title: "" }), issues: STAND_IN_ISSUES }));
   if (process.platform === "win32") {
-    symlinkSync(STAND_IN_GH, join(bin, "gh.mjs"));
+    const launcher = join(bin, "gh.mjs");
+    try {
+      symlinkSync(STAND_IN_GH, launcher);
+    } catch (error) {
+      // A stock Windows box refuses a file symlink without Developer Mode (EPERM, or EACCES when a policy
+      // takes the right away). A launcher that imports the stand-in runs it from its real path, so its own
+      // relative imports resolve, and forge specs run without elevation.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "EACCES") throw error;
+      writeFileSync(launcher, `import ${JSON.stringify(pathToFileURL(STAND_IN_GH).href)};\n`);
+    }
     writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
   } else {
     symlinkSync(STAND_IN_GH, join(bin, "gh"));
@@ -100,7 +176,14 @@ function makeLibrary(root: string): string {
   writeFileSync(join(library, "skills/how/SKILL.md"), '---\nname: how\ndescription: "Trace behavior"\n---\n\n# how\n');
   for (const host of [".claude", ".agents"]) {
     mkdirSync(join(library, host, "skills"), { recursive: true });
-    symlinkSync("../../skills/how", join(library, host, "skills/how"));
+    // Windows refuses a symbolic link without Developer Mode; a directory junction needs no privilege and
+    // reads the same, so a machine that has neither can still start the service.
+    try {
+      symlinkSync("../../skills/how", join(library, host, "skills/how"));
+    } catch (error) {
+      if (process.platform !== "win32") throw error;
+      symlinkSync(join(library, "skills/how"), join(library, host, "skills/how"), "junction");
+    }
   }
   writeFileSync(join(library, ".gitignore"), "repo/\n");
   git(library, "init", "-q", "-b", "main");
@@ -124,6 +207,8 @@ export interface Service {
   repo: string;
   api<T>(method: string, path: string, body?: unknown): Promise<T>;
   stop(): Promise<void>;
+  /** This launch's person key, only when a shell owns the service (`parentStdin`). */
+  personKey?: string;
   /** What the stand-in `gh` was asked, oldest first. */
   ghCalls(): string[][];
   /** What the stand-in holds for one pull request now. */
@@ -132,6 +217,13 @@ export interface Service {
   ghEdit(number: number, patch: Record<string, unknown>): void;
   /** The stand-in's bare remote, for specs that read what was pushed. */
   remote: string;
+  /** The protocol double this launch's engines are (crates/orbynd/src/bin/orbyn-fake-engine). */
+  fakeEngine: string;
+  /**
+   * The thread's own event log, read from the service over SSE until `stop` matches: the replay and the live
+   * frames the page's stream receives, straight from the service rather than from the page.
+   */
+  events(threadId: string, stop: (event: WireThreadEvent) => boolean, timeoutMs?: number): Promise<WireThreadEvent[]>;
 }
 
 export interface ServiceOptions {
@@ -139,6 +231,12 @@ export interface ServiceOptions {
   builtUi?: boolean;
   /** Records only protocol-double launches, for controlled ordering assertions. */
   engineLaunchLog?: string;
+  /**
+   * The real `orbyn-engine-host` program the service runs hosts with (`ORBYN_ENGINE_HOST`), and the
+   * families it may serve: `claude` is on by default as the service has it, and `acp` needs no engine
+   * login. Stop, restart and Try again are then the service's own routes, not a stand-in.
+   */
+  engineHost?: { program: string; claude?: boolean; acp?: boolean };
   /** Use production automatic provider discovery only in controlled lifecycle tests. */
   discoverKnownEngines?: boolean;
   starred?: boolean;
@@ -153,10 +251,29 @@ export interface ServiceOptions {
   registry?: string;
   /** A folder holding the protocol double's saved ACP sessions (`sessions.json`). */
   nativeSessions?: string;
+  /**
+   * Keeps the person key enforced, as in a release build a desktop shell owns: omits
+   * `ORBYN_DEV_DISABLE_PERSON_KEY`, so a Person route needs this launch's `x-orbyn-person`
+   * key and a browser gets `desktop_required`. With `parentStdin`, the key itself arrives
+   * as `personKey`. Without `parentStdin` a service has no key, so every Person route is
+   * `desktop_required`.
+   */
+  enforcePersonKey?: boolean;
   /** Extra stand-in folders ahead of host PATH; the selected GitHub fixture takes precedence. */
   path?: string[];
   /** Runs the service with Crew Preview on (`ORBYN_CREW_PREVIEW=1`): its beta routes, writes and hash screens. */
   crewPreview?: boolean;
+  /**
+   * Runs the background listener tick at this interval in seconds (60 to 86400), the service's own
+   * `ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`: a spec needs a watch checked without waiting for a real schedule.
+   */
+  backgroundWatchIntervalSecs?: number;
+  /** Runs a debug service with `ORBYN_DEV_SEED_PROPOSALS=1`, so `POST /api/crew/dev/seed-proposal` exists (404 otherwise). */
+  seedProposals?: boolean;
+  /** Runs the service with Issues on (`ORBYN_ISSUES=1`): its beta routes, the Issues pages and the thread issue links. */
+  issues?: boolean;
+  /** Runs the service with multi-repository projects on (`ORBYN_MULTI_REPO=1`): repository lists, task folders and repo threads. */
+  multiRepo?: boolean;
 }
 
 /** A port nothing holds, so two checkouts or specs can never answer for each other. */
@@ -179,6 +296,25 @@ function viteReady(vite: ChildProcess, port: number): Promise<void> {
       if (line.includes(`:${port}/`)) done();
     });
   });
+}
+
+/**
+ * Deletes a run's temp directory once its processes have exited. Windows can still hold the service's
+ * workspace for a moment longer than the exit wait, and a busy box stretches that out (EBUSY), so retry
+ * there; a directory a stale child still holds after that is left to the OS rather than failing the run.
+ */
+async function removeRunDir(dir: string) {
+  const deadline = process.platform === "win32" ? Date.now() + 10_000 : 0;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      return;
+    } catch (error) {
+      if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EBUSY") throw error;
+      if (Date.now() >= deadline) return;
+      await new Promise((done) => setTimeout(done, 250));
+    }
+  }
 }
 
 /** A real `orbynd` on a fresh data directory, with the dev UI proxied to it. */
@@ -214,10 +350,10 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
   if (ui && !existsSync(join(ui, "index.html"))) throw new Error("Build this checkout's production UI first: npm run build");
   const service = spawn(BIN, ["serve", "--data-dir", join(dir, "data"), "--workspace-url", makeLibrary(dir), ...(options.parentStdin ? ["--parent-stdin"] : []), ...(ui ? ["--ui-dir", ui] : [])], {
     // A home of its own, so no real engine history or login is read.
-    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ORBYN_DEV_DISABLE_PERSON_KEY: "1", GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
+    env: { ...inherited, ...profile, ...engines, ...(options.crewPreview ? { ORBYN_CREW_PREVIEW: "1" } : {}), ...(options.backgroundWatchIntervalSecs ? { ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS: String(options.backgroundWatchIntervalSecs) } : {}), ...(options.seedProposals ? { ORBYN_DEV_SEED_PROPOSALS: "1" } : {}), ...(options.issues ? { ORBYN_ISSUES: "1" } : {}), ...(options.multiRepo ? { ORBYN_MULTI_REPO: "1" } : {}), ...(options.engineHost ? { ORBYN_ENGINE_HOST: options.engineHost.program, ...(options.engineHost.claude === false ? { ORBYN_ENGINE_HOST_CLAUDE: "0" } : {}), ...(options.engineHost.acp ? { ORBYN_ENGINE_HOST_ACP: "1" } : {}) } : {}), ORBYN_KNOWN_ENGINE_IDS: options.discoverKnownEngines ? undefined : "[]", ...(options.registry ? { ORBYN_ACP_REGISTRY_URL: options.registry } : {}), PATH: `${forge ? `${forge.bin}${delimiter}` : ""}${(options.path ?? []).map((dir) => `${dir}${delimiter}`).join("")}${process.env.PATH}`, ORBYN_GH_STATE: forge?.state ?? "", ORBYN_GH_LOG: forge?.log ?? "", ORBYN_BROWSER: previewBrowser(dir), ORBYN_BROWSER_HEADLESS: "1", ORBYN_OFFLINE: "1", ...(options.enforcePersonKey ? {} : { ORBYN_DEV_DISABLE_PERSON_KEY: "1" }), GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com", CLAUDE_CONFIG_DIR: join(dir, "claude"), CODEX_HOME: join(dir, "codex") },
     stdio: ["pipe", "pipe", "inherit"],
   });
-  const ready = await new Promise<{ url: string; token: string }>((done, fail) => {
+  const ready = await new Promise<{ url: string; token: string; person_key?: string }>((done, fail) => {
     service.once("exit", (code) => fail(new Error(`orbynd exited with ${code}`)));
     createInterface({ input: service.stdout }).once("line", (line) => done(JSON.parse(line) as never));
   });
@@ -251,6 +387,8 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
     folder,
     repo,
     remote: join(dir, "github.com/o/r.git"),
+    fakeEngine: fake,
+    personKey: ready.person_key,
     ghPull: (number) =>
       readForgeState(forge?.state ?? "").pulls.find((pull) => pull.number === number) ?? {},
     ghEdit: (number, patch) => {
@@ -277,6 +415,42 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
       const text = await response.text();
       return (text ? JSON.parse(text) : undefined) as T;
     },
+    async events(threadId, stop, timeoutMs = 20_000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const frames: WireThreadEvent[] = [];
+      try {
+        // A fresh stream with no Last-Event-ID replays from the thread's first event, then follows live.
+        const response = await fetch(`${ready.url}/api/threads/${encodeURIComponent(threadId)}/events`, {
+          signal: controller.signal,
+          headers: { Authorization: `Bearer ${ready.token}`, Accept: "text/event-stream" },
+        });
+        if (!response.ok || !response.body) throw new Error(`events ${threadId}: ${response.status}`);
+        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
+            const line = buffer.slice(0, at).replace(/\r$/, "");
+            buffer = buffer.slice(at + 1);
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            const event = JSON.parse(payload) as WireThreadEvent;
+            frames.push(event);
+            if (stop(event)) {
+              controller.abort();
+              return frames;
+            }
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      throw new Error(`the service's log for thread ${threadId} did not reach the expected event (${frames.length} frames)`);
+    },
     async stop() {
       const children = [service, ...(vite ? [vite] : [])];
       const gone = children.filter((child) => child.exitCode === null).map((child) => once(child, "exit"));
@@ -285,7 +459,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
       vite?.kill();
       await Promise.all(gone);
       // An engine or preview the service just stopped can still be closing its files.
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      await removeRunDir(dir);
     },
   };
 }

@@ -177,6 +177,7 @@ describe("App against the mock API", () => {
       });
       render(<App />);
       await screen.findByRole("navigation", { name: "Workspace" });
+      // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(screen.queryByRole("button", { name: /updates? available/ })).toBeNull();
     });
@@ -652,14 +653,14 @@ describe("App against the mock API", () => {
     render(<App />);
     expect(await screen.findByText("Couldn't load providers")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByRole("button", { name: "Claude Code" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Claude (SDK)" })).toBeInTheDocument();
   });
 
   it("confirms an engine update and refuses during an active run", async () => {
     const user = userEvent.setup();
     go("#/settings/providers");
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Claude Code" }));
+    await user.click(await screen.findByRole("button", { name: "Claude (SDK)" }));
     await user.click(await screen.findByRole("button", { name: "Update to 2.1.20" }));
     const dialog = await screen.findByRole("dialog", { name: "Update Claude Code?" });
     expect(within(dialog).getByText("npm install -g @anthropic-ai/claude-code")).toBeInTheDocument();
@@ -748,11 +749,13 @@ describe("App against the mock API", () => {
     // A short tap opens nothing.
     touch("pointerdown");
     touch("pointerup");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 650));
     expect(screen.queryByRole("menu")).toBeNull();
     // (A press that moves is covered by longPress.test.ts, with fake timers.)
     // A long press holds still and opens the menu with the same actions as the strip.
     touch("pointerdown");
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 650));
     expect(await screen.findByRole("menu")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Settle thread" })).toBeInTheDocument();
@@ -783,6 +786,7 @@ describe("App against the mock API", () => {
     expect(await screen.findByRole("menu")).toBeInTheDocument();
     // The right-click focuses the row afterwards; that must not start the card again.
     row.focus();
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 700));
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
@@ -877,5 +881,58 @@ describe("App against the mock API", () => {
     expect(document.documentElement.dataset.workspace).toBe("reading");
     expect(localStorage.getItem("orbyn.prefs.v1")).toContain('"workspaceLayout":"reading"');
     expect(localStorage.getItem("orbyn.prefs.v1")).toContain('"sidebarCollapsed":true');
+  });
+
+  it("says an address names no screen instead of drawing another page", async () => {
+    go("#/nonsense/deeper");
+    render(<App />);
+    expect(await screen.findByText("Page not found")).toBeInTheDocument();
+    // The address is kept, so the page can say what was asked for.
+    expect(window.location.hash).toBe("#/nonsense/deeper");
+    // The negative: the generic fallback (the draft home) is not drawn in its place.
+    expect(screen.queryByRole("heading", { name: /What should we build in/ })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Message" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to workspace" })).toBeInTheDocument();
+  });
+
+  it("closes Settings back to the page it covered, adding no history entry", async () => {
+    const user = userEvent.setup();
+    go("#/threads/t-done");
+    render(<App />);
+    await screen.findByRole("button", { name: "Show side panel" });
+    const length = window.history.length;
+    const nav = screen.getByRole("navigation", { name: "Workspace" });
+    await user.click(nav.querySelector<HTMLAnchorElement>('a[href="#/settings"]')!);
+    expect(await screen.findByRole("region", { name: "Settings" })).toBeInTheDocument();
+    // Opening Settings is a new place, so it has its own entry — and it is Settings' own entry, marked,
+    // not one the browser pushed behind the router's back.
+    expect(window.history.length).toBe(length + 1);
+    expect(window.history.state).toMatchObject({ orbynSettings: true });
+
+    await user.click(screen.getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(window.location.hash).toBe("#/threads/t-done"));
+    expect(screen.queryByRole("region", { name: "Settings" })).toBeNull();
+    // Closing added nothing: one entry for the visit and no second one to back out of.
+    expect(window.history.length).toBe(length + 1);
+    expect(window.history.length).not.toBe(length + 2);
+    expect(window.history.state).not.toMatchObject({ orbynSettings: true });
+  });
+
+  it("says a thread id no thread has is not there, in the known thread route", async () => {
+    go("#/threads/does-not-exist");
+    render(<App />);
+    expect(await screen.findByText("Thread not found")).toBeInTheDocument();
+    // The negative: the draft is not drawn under it, and the thread page is the one showing.
+    expect(screen.queryByRole("heading", { name: /What should we build in/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "Back to workspace" })).toBeInTheDocument();
+  });
+
+  it("still renders a known route as itself", async () => {
+    go("#/threads/t-done");
+    render(<App />);
+    expect(await screen.findByRole("button", { name: "Show side panel" })).toBeInTheDocument();
+    // The negative: a route with a real subject draws neither not-found state.
+    expect(screen.queryByText("Thread not found")).toBeNull();
+    expect(screen.queryByText("Page not found")).toBeNull();
   });
 });

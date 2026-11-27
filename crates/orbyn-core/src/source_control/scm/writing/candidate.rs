@@ -3,6 +3,7 @@
 use super::invalid;
 use crate::error::{CoreError, Result};
 use crate::host::process::ManagedChild;
+pub(super) use crate::source_control::git::git_version;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -118,14 +119,6 @@ pub(super) async fn read_git_bounded(
         .map_err(|_| invalid("Reading this change timed out. Enter text manually."))?
 }
 
-/// The major and minor version in `git version` output, such as
-/// `git version 2.39.3 (Apple Git-146)` or `git version 2.45.1.windows.1`.
-pub(super) fn git_version(output: &str) -> Option<(u32, u32)> {
-    let version = output.trim().strip_prefix("git version ")?;
-    let mut parts = version.split(|c: char| !c.is_ascii_digit());
-    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
-}
-
 /// `GIT_ATTR_SOURCE` arrived in Git 2.40. Older Git ignores it, so the working
 /// tree's `.gitattributes` could still apply clean filters from local config
 /// while the diff is read; generation is refused there instead.
@@ -224,7 +217,7 @@ pub(super) async fn symbolic_head(cwd: &Path) -> Result<Vec<u8>> {
 
 /// Fingerprint exactly the changed working files, including untracked files and
 /// staged-only changes that add -A will replace. Never follows a symlink.
-pub(super) async fn candidate(cwd: &Path) -> Result<Candidate> {
+pub(super) async fn candidate(cwd: &Path, data_dir: Option<&Path>) -> Result<Candidate> {
     let root = utf8(read_git(cwd, &["rev-parse", "--show-toplevel"]).await?)?;
     let cwd = Path::new(root.trim_end_matches(['\r', '\n']));
     let parent = head(cwd).await?.unwrap_or_default();
@@ -279,6 +272,7 @@ pub(super) async fn candidate(cwd: &Path) -> Result<Candidate> {
                     checkout: cwd.into(),
                     engine_cwd: cwd.into(),
                     excluded: Vec::new(),
+                    data_dir: data_dir.map(Path::to_path_buf),
                 };
                 let full = crate::project::files::inside(&scope, &name)?;
                 let (file, _) = crate::project::files::open_inside(&scope, &name, &full)?;

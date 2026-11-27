@@ -1,6 +1,6 @@
 # Engine start for background crews (4h)
 
-Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (the budget: turn and minute counting from engine events, and the daily per-engine budget), PR 3 (the listeners: the schedule timer and the CI-failure watch, one owned future) and PR 4 (the Run now route and the read side of the Review join) built; the person's answer to a waiting background review remains to build. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
+Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (the budget: turn and minute counting from engine events, and the daily per-engine budget), PR 3 (the listeners: the schedule timer and the CI-failure watch, one owned future) and PR 4 (the Run now route and the read side of the Review join) built, and the owner's acknowledge-only answer to a waiting background review is built. A background crew is stored and can be turned on; this note scopes the step that starts a real Crew run from a trigger and brings its result to Review.
 
 ## 1. What exists today
 
@@ -15,27 +15,31 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (
 - Events: `ci_failed` (a failed check run on the branch head, optional workflow), `schedule` (every `every_hours`), `manual` (the person presses Run). One event key per firing, such as head commit + workflow, so a repeat of the same failure starts nothing new.
 - A run goes through `crew_start` with `Links::crew_started` and a `PausedTrigger` of kind `Background` (key: crew id + event key). It is Low priority, so `capacity_start_check` can refuse it while too many merges wait; the refusal is a held row in `crew_paused_starts`, never retried on a timer.
 - Refused, not started: crew off or deleted, project gone, Preview off, a run already running, no engine that passes `worker_refusal` and the router's tier rules among the trigger's `engines`.
-- A refusal after the task exists (for example the task could not be stored or routed) holds the task for a person and ends the run `needs_review` with the reason, in one transaction with the refusal audit (after the commit each held task gives up its leases and gets one `NeedsPerson` result, best effort; a task with no run row gets none and `review_reason` carries the reason); the run is kept and returned, not an error. A refusal before any task exists takes back the run and its lead thread in one transaction, so a crash leaves nothing behind.
+- A refusal after the task exists (for example the task could not be stored or routed) holds the task for a person and ends the run `needs_review` with the reason, in one transaction with the refusal audit (after the commit each held task gives up its leases and gets one `NeedsPerson` result, best effort; a task with no run row gets none and `review_reason` carries the reason); the run is kept and returned, not an error. A refusal before any task exists takes back the run and its lead thread in one transaction, so a crash leaves nothing behind, except a low-disk refusal: that run stays as a stopped not-started row (`reason_code` `disk_low`, no task, not waiting) with its sentence, only its lead thread is removed, and the person still gets the refusal.
 - `crew_start` needs a lead thread. The build opens one thread per run in the crew's project, marked as the crew's.
 
 ### 2a. The listeners as built (PR 3)
 
 - One owned future, `run_crew_background_listeners`, behind the Preview flag and an interval (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60s to 24h). **No interval means no pass**, not even at startup. With one, a pass runs at startup and then once per interval.
-- Only crews that are on are read from the forge or claimed. A crew that is off costs no forge call and spends no event: turned on later, it sees the branch head and the current schedule bucket as new events. The start's own refusal stays as the second guard.
+- Only crews that are on are read from the forge or claimed. A crew that is off costs no forge call and spends no event: a CI crew turned on later sees the branch head as a new event, and a schedule crew the current bucket; an issue-label crew keeps its baseline across a turn-off, so a label added while it was off fires once per pass when it is back on (one start per pass), unless the issue's label set was already claimed. The start's own refusal stays as the second guard.
 - Claims (table `crew_background_events`, migration 59, first write wins; the claim is the dedupe and the refusal is never retried):
 
 | Event | Claim identity | `PausedTrigger` key |
 | --- | --- | --- |
 | schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
 | CI failure | `ci:<crew>:<head>:<name hash>` | `<crew>:ci:<head>:<name hash>` |
+| issue label baseline | `issue_label:<crew>:baseline:<label hash>` | (none: the baseline starts nothing) |
+| issue label | `issue_label:<crew>:<tracker>:<scope>:<key>:<label hash>:<label-set hash>` | `<crew>:issue_label:<scope hash>:<key hash>:<label hash>` |
+| dependency update | `dependency_update:<crew>:<update hash>` (the path a reader feed takes) | `<crew>:dependency_update:<update hash>` |
 
   `<bucket>` is the Unix time divided by `every_hours`; a bucket at or before the newest one claimed for the crew never fires, so a clock that moves back starts nothing. `<name hash>` is 16 hex characters of the failing check's SHA-256, so a long check name cannot break the held row's 128-character key.
 - At most one start attempt per crew per pass. A head with several failing checks fires the first (by name) and leaves the rest unclaimed for a later pass.
-- A pass watches at most 64 CI crews, from a rotating start, so a store with more is covered over a few passes.
+- A pass watches at most 64 CI crews, reads at most 64 issue-label crews and separately at most 64 dependency-update crews, each from the pass's rotating start, so a store with more is covered over a few passes and a store full of crews cannot turn one pass into unbounded forge or tracker traffic.
 - Refused for capacity, the daily budget, an untrusted folder, no engine, a run in progress or a crew that was turned off meanwhile: dropped, never retried. One code-owned audit row (`crew.background.listener.refused`: the crew, the listener, a fixed reason word) records it, and capacity also leaves its held row.
 - A stop is looked at between firings and never inside one, so a claim is always followed by its whole start. A run a crash leaves behind is settled when the core next opens (`recover_background_starts`).
-- Text from outside (a check's name, a head sha, a file trigger's name) only decides whether a run starts: it never reaches the brief, a prompt, the lead thread or an audit row. The listener's audit actor is the constant `crew`.
-- Not done: `crew_background_events` grows by one row per firing and is not pruned or removed with the crew.
+- Text from outside (a check's name, a head sha, a file trigger's name, a tracker issue's scope and key, a tracker update's key) only decides whether a run starts: it never reaches the brief, a prompt or an audit row. An issue's raw scope and key are kept only in the claim identity; its label and label set only as hashes, and the `PausedTrigger` key keeps hashes only. The listener's audit actor is the constant `crew`.
+- KC7 (later): the `issue_label` listener reads the project's one tracker reader, baselines the labels already there on its first pass per stored label (claiming them across every page, up to ten pages of 100, and starting nothing; a listing cut short baselines again), and claims per issue, label and the issue's sorted label set (the held key keeps hashes of the scope, key and label); with no per-label event time in the readers, an edit is inert, a label-set change fires once, and a removal and re-add that returns the issue to an already claimed label set is not fired (a label feed is a follow-up). The `dependency_update` tick and its claim/start/refusal path are built too, but no issue reader reports a dependency or advisory update yet, so it starts nothing (follow-up #1360).
+- Not done: `crew_background_events` grows by one row per claim (a baseline claims every issue it sees, and each firing claims its event) and is not pruned or removed with the crew.
 
 ## 3. Budget
 
@@ -49,7 +53,7 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (
 ## 4. Where the run lands in Review
 
 - A run that merges: its merge row is a normal `crew_merges` row with `review_state` `waiting`, so it appears in `crew_review_queue` by risk. As a Low task, `capacity_after_merge` adds it to a sampling batch when the person turned sampling on (one in four).
-- A run that stops without a merge: stays on its background run row (`needs_review` or `stopped`), and `GET /api/crew/autopilot/review` now joins it beside the merges as `background_runs` (read side, PR 4): the run's state, stop reason, plain reason, spend and budget, oldest first, in the same page window as the merges (`background_total` counts them all). A running run and one stopped by the person's own switch are not waiting. It is never shown with a merge, a commit or a risk it does not have. **Not built: the person's answer to one.** No route settles or dismisses a waiting background review, so the row is read-only until the owner decides what an answer does.
+- A run that stops without a merge: stays on its background run row (`needs_review` or `stopped`), and `GET /api/crew/autopilot/review` joins it beside the merges as `background_runs` (read side, PR 4; KC3 adds `waiting_elsewhere`, the one needs-you field's items this queue does not answer, by kind): the run's state, stop reason, plain reason, spend and budget, oldest first, in the same page window as the merges (`background_total` counts them all, `next_offset` is set while either list has more). A running run, one stopped by the person's own switch and one whose review the person acknowledged are not waiting. It is never shown with a merge, a commit or a risk it does not have. **The person's answer is acknowledge-only (owner ruling, 2026-11-20):** `POST /api/crew/background/runs/{id}/acknowledge` (a Person route behind the Preview flag and local only) clears the run's wait, keeps why it waited, its state, stop reason and spend, and returns the run. The crew's `reviews_waiting` drops, the same crew may run again, and the run leaves the queue (`background_total` no longer counts it); the run keeps its reason for the record. A run that is not waiting is refused plainly. Nothing else is offered: no dismiss, no open, and the Review screen's acknowledge control is not in the beta. A run that stopped for a failure still appears, because it has nothing to review and nothing to acknowledge (PR 4's open question about failed stops is unchanged).
 
 ## 5. Run-end contract
 
@@ -69,6 +73,6 @@ All behind `CoreConfig::crew_preview`, tests first with fake engines.
 1. The daily budget resets at local midnight. A refusal shows the reset time. (Built in PR 2: the person's clock comes with the create body as `utc_offset_minutes`, the automations' own pattern, because the service cannot read the host's zone portably.)
 2. v1: every background merge waits for a person. No Autopilot auto-landing for background runs until escape data exists.
 3. Run now (`manual`) is part of 4h and is the first PR.
-4. `issue_label` and `dependency_update` are refused when turned on, with a plain reason (no listener).
+4. `issue_label` and `dependency_update` are started by their listeners (KC7) and refused by Run now, which has no event to start them with; a `watch` crew has no listener yet and Run now refuses it too.
 5. A file trigger with no matching crew is ignored: nothing starts and nothing is adopted. At most a diagnostic line, "found in .orbyn/crew.json, no matching crew", and no UI.
 6. The listeners PR (3) gets an independent Opus review: event text from outside is never part of the prompt as instructions.

@@ -16,6 +16,7 @@ export function codeRun(record: Pick<CodeRunRecord, "run_id" | "status" | "start
  * build. With `setOffered(false)` every route answers 404, as the service does when `ORBYN_CODE_MODE` is off.
  *
  *   GET /api/code-runs/<id>             one run record, 404 when there is none
+ *   POST /api/code-runs/<id>/cancel     ends a live run as error/cancelled and answers the record
  *   GET /api/engines/<id>/code-mode     { enabled }, off until a person turns it on
  *   PUT /api/engines/<id>/code-mode     { enabled } writes it and answers with what is stored
  *   GET /api/threads/<id>/code-runs     { runs } one summary per stored run, newest first
@@ -55,6 +56,18 @@ export function createCodeModeMock() {
     },
     handle(method: string, path: string, body?: unknown): MockResponse | null {
       if (!offered) return err(404, "not_found", "Not found.");
+      const cancel = /^\/api\/code-runs\/([^/]+)\/cancel$/.exec(path);
+      if (cancel && method === "POST") {
+        const record = runs.get(decodeURIComponent(cancel[1] ?? ""));
+        if (!record) return err(404, "not_found", "That run is gone.");
+        if (record.status !== "running" && record.status !== "paused") return err(409, "run_finished", "This run already ended.");
+        const cancelled: CodeRunRecord = {
+          ...record, status: "error", ended_at: new Date().toISOString(), error: { kind: "cancelled", message: "The run was cancelled." }, pending: [],
+          calls: record.calls.map((call) => (call.status === "running" ? { ...call, status: "failed" } : call)),
+        };
+        runs.set(record.run_id, cancelled);
+        return { status: 200, body: cancelled };
+      }
       const run = /^\/api\/code-runs\/([^/]+)$/.exec(path);
       if (run && method === "GET") {
         const record = runs.get(decodeURIComponent(run[1] ?? ""));
@@ -64,7 +77,7 @@ export function createCodeModeMock() {
       if (list && method === "GET") {
         const summaries = [...runs.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at)).map((record) => ({
           run_id: record.run_id, status: record.status, started_at: record.started_at, ended_at: record.ended_at ?? null, calls: record.calls.length,
-          script_head: record.script ? record.script.slice(0, 120) : null,
+          script_head: record.script ? record.script.slice(0, 120) : null, waited_ms: record.waited_ms ?? null, error_kind: record.error?.kind ?? null,
         }));
         return { status: 200, body: { runs: summaries } };
       }

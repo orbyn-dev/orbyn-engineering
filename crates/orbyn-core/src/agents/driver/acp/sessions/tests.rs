@@ -2,7 +2,8 @@
 use super::*;
 use crate::agents::driver::acp::AcpDriver;
 use crate::agents::driver::{EngineDriver, EngineOutcome, RunKind, RunSpec};
-use orbyn_contracts::{AgUiEvent, EngineTier, PermissionMode};
+use crate::agents::engines::start_issue::{clear_start_issue, start_issue};
+use orbyn_contracts::{AgUiEvent, EngineStartIssueKind, EngineTier, PermissionMode};
 use std::collections::BTreeMap;
 
 const PEER: &str = include_str!("peer.cjs");
@@ -15,6 +16,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new(scenario: &str) -> Self {
+        Self::with_id("test-acp", scenario)
+    }
+    fn with_id(id: &str, scenario: &str) -> Self {
         let dir = ProbeDir::new().unwrap();
         let script = dir.path().join("peer.cjs");
         std::fs::write(&script, PEER).unwrap();
@@ -24,7 +28,7 @@ impl Fixture {
         let node = crate::host::process::resolve("node")
             .expect("Node is required by the repository's protocol fixture");
         let driver = AcpDriver::new(CustomEngine {
-            id: "test-acp".into(),
+            id: id.into(),
             name: "Test ACP".into(),
             tier: EngineTier::Acp,
             target: node.path.to_string_lossy().into_owned(),
@@ -63,6 +67,7 @@ impl Fixture {
             cwd: self.cwd.clone(),
             checkout: self.cwd.clone(),
             library: self.cwd.clone(),
+            local_skills: None,
             prompt: "new prompt".into(),
             user_prompt: "new prompt".into(),
             context: String::new(),
@@ -439,6 +444,171 @@ async fn live_session_ids_are_bounded_before_prompt_or_persistence() {
         Some(EngineEvent::Finished(EngineOutcome::Failed(_)))
     ));
     assert!(f.methods().is_empty());
+}
+
+#[tokio::test]
+async fn an_auth_required_session_new_records_signed_out_and_a_good_open_clears_it() {
+    let id = "test-acp-start-issue-auth";
+    let refused = Fixture::with_id(id, "auth-new");
+    let events = refused.run(None).await;
+    assert!(matches!(
+        events.last(),
+        Some(EngineEvent::Finished(EngineOutcome::Failed(_)))
+    ));
+    let issue = start_issue(id).expect("the refused open records a start issue");
+    assert_eq!(issue.kind, EngineStartIssueKind::SignedOut);
+    assert!(
+        issue.message.contains("isn't signed in"),
+        "{}",
+        issue.message
+    );
+    // The fixture's own words were "Unknown session": the -32000 code, not the text,
+    // is what says a sign-in is needed.
+    let good = Fixture::with_id(id, "load");
+    let events = good.run(None).await;
+    assert!(matches!(
+        events.last(),
+        Some(EngineEvent::Finished(EngineOutcome::Completed))
+    ));
+    assert_eq!(start_issue(id), None);
+}
+
+#[tokio::test]
+async fn an_agent_that_exits_at_once_records_a_failed_start() {
+    let id = "test-acp-start-issue-exit";
+    let gone = Fixture::with_id(id, "exit");
+    let events = gone.run(None).await;
+    assert!(matches!(
+        events.last(),
+        Some(EngineEvent::Finished(EngineOutcome::Failed(_)))
+    ));
+    let issue = start_issue(id).expect("the failed open records a start issue");
+    assert_eq!(issue.kind, EngineStartIssueKind::Failed);
+    assert!(
+        issue.message.starts_with("Couldn't run Test ACP."),
+        "{}",
+        issue.message
+    );
+    clear_start_issue(id);
+}
+
+#[tokio::test]
+async fn a_kiro_session_is_opened_supervised_and_a_later_autopilot_on_advert_is_corrected() {
+    let f = Fixture::with_id("kiro", "kiro-autopilot");
+    let events = f.run(None).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::Finished(EngineOutcome::Completed))
+        ),
+        "{events:?}"
+    );
+    let calls = f.calls();
+    let writes: Vec<Value> = calls
+        .iter()
+        .filter(|call| {
+            call.get("method").and_then(Value::as_str) == Some("session/set_config_option")
+        })
+        .cloned()
+        .collect();
+    // Exactly one write at session setup and one after the agent re-advertised autopilot on mid-prompt.
+    assert_eq!(writes.len(), 2, "expected both writes: {writes:?}");
+    for write in &writes {
+        assert_eq!(write["params"]["configId"], json!("autopilot"), "{write}");
+        assert_eq!(write["params"]["value"], json!("off"), "{write}");
+    }
+    assert!(
+        !calls
+            .iter()
+            .any(|call| call["params"]["value"] == json!("on")),
+        "the supervised value is the only one ever written"
+    );
+}
+
+#[tokio::test]
+async fn a_kiro_agent_that_offers_no_supervised_value_is_refused_before_the_prompt() {
+    let f = Fixture::with_id("kiro", "kiro-autopilot-no-off");
+    let events = f.run(None).await;
+    let Some(EngineEvent::Finished(EngineOutcome::Failed(reason))) = events.last() else {
+        panic!("the session must fail: {events:?}");
+    };
+    assert!(
+        reason.contains("Kiro offers autopilot without its supervised value."),
+        "{reason}"
+    );
+    assert!(
+        !f.methods().contains(&"session/prompt".to_owned()),
+        "the agent was never prompted: {:?}",
+        f.methods()
+    );
+    clear_start_issue("kiro");
+}
+
+#[tokio::test]
+async fn a_kiro_session_without_an_autopilot_option_is_opened_without_a_correction() {
+    let f = Fixture::with_id("kiro", "kiro-no-autopilot");
+    let events = f.run(None).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::Finished(EngineOutcome::Completed))
+        ),
+        "{events:?}"
+    );
+    assert!(
+        f.methods().contains(&"session/prompt".to_owned()),
+        "the session still ran"
+    );
+    assert!(
+        !f.methods()
+            .contains(&"session/set_config_option".to_owned()),
+        "nothing to write without the option: {:?}",
+        f.methods()
+    );
+}
+
+#[tokio::test]
+async fn a_kiro_autopilot_that_is_not_a_select_is_left_alone() {
+    let f = Fixture::with_id("kiro", "kiro-autopilot-text");
+    let events = f.run(None).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::Finished(EngineOutcome::Completed))
+        ),
+        "{events:?}"
+    );
+    assert!(
+        !f.methods()
+            .contains(&"session/set_config_option".to_owned()),
+        "a non-select option is never written: {:?}",
+        f.methods()
+    );
+}
+
+#[tokio::test]
+async fn another_engines_autopilot_advert_is_left_untouched() {
+    // The same advert shapes on an engine that is not Kiro: no supervised write is made, ever.
+    let f = Fixture::with_id("droid", "kiro-autopilot");
+    let events = f.run(None).await;
+    assert!(
+        matches!(
+            events.last(),
+            Some(EngineEvent::Finished(EngineOutcome::Completed))
+        ),
+        "{events:?}"
+    );
+    assert!(
+        f.methods().contains(&"session/prompt".to_owned()),
+        "the session ran: {:?}",
+        f.methods()
+    );
+    assert!(
+        !f.methods()
+            .contains(&"session/set_config_option".to_owned()),
+        "another engine's autopilot is not ours to write: {:?}",
+        f.methods()
+    );
 }
 
 #[test]

@@ -2,15 +2,27 @@
 //! reads (`flow_facts`, the crew-wide scrub, the work-task list) and shows less of it: a card has no cell, and its only word
 //! about checks is two counts, passed and run, for a passed task (any other state has none). Nothing here writes. A reviewer's run and
 //! a fix are lanes and rounds of their task in Flow, not cards. The two flags are advisory; the write routes decide.
+//!
+//! KC3: the Needs you column reads the one needs-you field, not the task's run state. A card sits there when the field names it
+//! (a task that waits on a person, a merge that waits, a trip-wire stop), with the field's kind and reason. A task whose
+//! dismissible wait was dismissed on this device keeps its card, because its run state is still `needs_person` and the board never
+//! hides a task that still cannot run: it has no field kind and no reason, so it draws no sentence, and the Inbox and dashboard
+//! (which read only the field) do not list it. The board reads the same field they do, not necessarily the same count. A card's
+//! Working line comes from the one `working` function (`crew/working.rs`), never from a copy of its truth table.
+
+use std::collections::BTreeMap;
 
 use orbyn_contracts as wire;
-use orbyn_contracts::{FlowColumnId as Column, ResultState};
+use orbyn_contracts::FlowColumnId as Column;
 
 use super::cells::{build_state, check_counts};
 use super::facts::Facts;
-use super::scrub::{Scrub, TEXT_MAX};
+use super::scrub::Scrub;
+use super::stop_detail;
 use super::{QUERY_MAX, SCAN_MAX};
 use crate::app::Core;
+use crate::crew::needs_you::Scope;
+use crate::crew::working::{flow_working, working};
 use crate::crew::{Page, valid_id, wire_name};
 use crate::error::{CoreError, Result};
 
@@ -93,19 +105,19 @@ fn facets(counts: std::collections::BTreeMap<String, u32>) -> Vec<wire::FlowFace
 }
 
 impl Core {
-    fn board_card(&self, facts: &Facts, scrub: &Scrub) -> Result<(bool, wire::FlowCard)> {
+    /// One card, and whether it is urgent in the Needs you column. `wait` is the one needs-you field's item for this task,
+    /// when the field names it: the column, the kind and the reason then come from that field, never from a second rule. The
+    /// reason is the field's own line (a task's scrubbed result, or the core's fixed words for a merge or a stop). A card the
+    /// field does not name, because its dismissible wait was dismissed here, has no kind and no reason: its run state puts it in
+    /// Needs you and it draws no sentence.
+    fn board_card(
+        &self,
+        facts: &Facts,
+        scrub: &Scrub,
+        wait: Option<&wire::NeedsYouItem>,
+    ) -> Result<(bool, wire::FlowCard)> {
         let task = &facts.task;
-        // The reason is the core's own words for why the person is needed, from the task's latest such result.
-        let reason = if task.state == "needs_person" {
-            self.store
-                .crew_results(&task.id)?
-                .into_iter()
-                .rev()
-                .find(|r| r.state == ResultState::NeedsPerson)
-                .map(|r| scrub.text(&r.summary, TEXT_MAX))
-        } else {
-            None
-        };
+        let reason = wait.and_then(|item| item.reason.clone());
         let overdue = facts.record.as_ref().is_some_and(|r| {
             r.review_state == "waiting"
                 && r.due_unix.is_some_and(|due| due < crate::util::unix_now())
@@ -113,6 +125,8 @@ impl Core {
         let high = facts.entry.as_ref().is_some_and(|e| e.risk == "high")
             || facts.record.as_ref().is_some_and(|r| r.risk == "high");
         let checkout = facts.run.as_ref().is_some_and(|r| r.worktree.is_some());
+        // KC3: the one working function answers, and the latest fix is the only work that outlives the task's state.
+        let latest_fix = facts.fixes.last().map(|(_, state)| state.as_str());
         Ok((
             overdue || high,
             wire::FlowCard {
@@ -137,6 +151,7 @@ impl Core {
                 effort: facts.route.as_ref().map(|r| wire_name(&r.effort)),
                 state: task.state.clone(),
                 stop_reason: task.stop_reason.clone(),
+                stop_detail: stop_detail(task.stop_detail.as_deref()),
                 updated_at: task.updated_at.clone(),
                 reason,
                 could_not_start: facts.could_not_start(),
@@ -153,6 +168,8 @@ impl Core {
                     &facts.build_gates,
                 )
                 .map(|(passed, of)| wire::FlowChecks { passed, of }),
+                needs_you: wait.map(|item| item.kind),
+                working: flow_working(working(&task.state, latest_fix)),
             },
         ))
     }
@@ -198,6 +215,14 @@ impl Core {
         }
         let person = self.display_redactor()?;
         let scrub = Scrub::of_crew(self, &person, crew)?;
+        // KC3: the one needs-you field. A card sits in Needs you because the field names it, not because of its run state: a
+        // passed task whose merge waits and a stopped task whose trip wire stopped it are cards there too, and a dismissed
+        // stop is not. A background run's wait has no task and no card; the same read serves the Inbox and the dashboard.
+        let waits: BTreeMap<String, wire::NeedsYouItem> = self
+            .needs_you_all(Scope::Crew(crew))?
+            .into_iter()
+            .map(|item| (item.id.clone(), item))
+            .collect();
         let mut tasks = self.store.crew_work_tasks(crew, SCAN_MAX + 1)?;
         let truncated = tasks.len() > SCAN_MAX as usize;
         tasks.truncate(SCAN_MAX as usize);
@@ -209,7 +234,8 @@ impl Core {
             COLUMNS.iter().map(|_| Vec::new()).collect();
         for task in tasks {
             let facts = self.flow_facts(task)?;
-            let (urgent, card) = self.board_card(&facts, &scrub)?;
+            let wait = waits.get(&facts.task.id);
+            let (urgent, card) = self.board_card(&facts, &scrub, wait)?;
             if let Some(name) = &card.engine {
                 *engines.entry(name.clone()).or_insert(0u32) += 1;
             }
@@ -233,10 +259,19 @@ impl Core {
                     continue;
                 }
             }
-            let at = COLUMNS
-                .iter()
-                .position(|c| *c == column_of(&card.state))
-                .unwrap_or(2);
+            // The field decides the column when it names the card; otherwise the task's run state does. A task whose dismissible
+            // wait was dismissed still reads needs_person and stays in Needs you, with no field kind and no sentence.
+            let at = if card.needs_you.is_some() {
+                COLUMNS
+                    .iter()
+                    .position(|c| *c == Column::NeedsYou)
+                    .unwrap_or(4)
+            } else {
+                COLUMNS
+                    .iter()
+                    .position(|c| *c == column_of(&card.state))
+                    .unwrap_or(2)
+            };
             grouped[at].push((urgent, card));
         }
 
@@ -287,12 +322,15 @@ mod tests {
             effort: None,
             state: "needs_person".to_owned(),
             stop_reason: None,
+            stop_detail: None,
             updated_at: at.to_owned(),
             reason: None,
             could_not_start: false,
             can_cancel: true,
             can_rerun: false,
             checks: None,
+            needs_you: None,
+            working: None,
         }
     }
 

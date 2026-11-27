@@ -5,6 +5,7 @@ import { ApiFailure, api } from "../../api/client";
 import { useUi } from "../../product/state/ui";
 import type { AgUiEvent, Thread, WireThreadEvent } from "../../api/types";
 import { useThreadLogs } from "../../product/state/threadLogs";
+import { useWorkspace } from "../../product/state/workspace";
 import { applyEvents, emptyLog } from "../../product/timeline/projection";
 import { LimitBanner, ThreadErrorBanner } from "./ThreadBanners";
 
@@ -77,12 +78,13 @@ it("sends one write for a limit action however fast it is pressed, keeps focus o
   await user.click(schedule);
   expect(schedule).toHaveFocus();
   await user.click(screen.getByRole("button", { name: "Snooze until reset" }));
-  expect(patch).toHaveBeenCalledTimes(1);
+  expect(patch).toHaveBeenCalledExactlyOnceWith("t", { resume_at_reset: true });
   expect(schedule).toHaveAttribute("aria-disabled", "true");
   answer(thread);
   await waitFor(() => expect(schedule).not.toHaveAttribute("aria-disabled"));
   await user.click(screen.getByRole("button", { name: "Snooze until reset" }));
   expect(patch).toHaveBeenCalledTimes(2);
+  expect(patch).toHaveBeenLastCalledWith("t", { snoozed_until: reset });
 });
 
 it("sends Resume once however fast it is pressed, and says why when the service refuses", async () => {
@@ -113,6 +115,19 @@ describe("ThreadErrorBanner", () => {
     failedLog("The engine lost this conversation.");
     render(<ThreadErrorBanner thread={failed} />);
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("leaves the host failures to the failed run's own actions instead of a second Retry", () => {
+    for (const code of ["engine_host_stopped", "engine_unavailable"]) {
+      useThreadLogs.setState({
+        logs: { t: applyEvents("t", emptyLog, [...prompt, wire(9, { type: "RUN_ERROR", message: "The engine host stopped.", code })]) },
+      });
+      useWorkspace.setState({ engines: { data: [{ id: "claude", name: "Claude Code", installed: true, capabilities: {} }] as never, error: null, loading: false } });
+      const view = render(<ThreadErrorBanner thread={{ ...failed, engine: "claude" }} />);
+      expect(screen.queryByText("The engine host stopped.")).toBeNull();
+      expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+      view.unmount();
+    }
   });
 
   it("keeps Retry for another failure and sends the prompt again", async () => {

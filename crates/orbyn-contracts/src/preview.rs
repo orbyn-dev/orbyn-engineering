@@ -134,8 +134,12 @@ pub struct NavigatePreview {
 
 wire! {
 pub struct OpenPreviewFile {
-    /// Inside the thread's checkout.
+    /// Inside the thread's checkout or the named repository's worktree.
     pub path: String,
+    /// A multi-repository thread's repository; absent is the primary one (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 
@@ -199,6 +203,12 @@ pub struct BrowserProfile {
 
 wire! {
 pub struct CreateBrowserProfile {
+    pub name: String,
+}
+}
+
+wire! {
+pub struct RenameBrowserProfile {
     pub name: String,
 }
 }

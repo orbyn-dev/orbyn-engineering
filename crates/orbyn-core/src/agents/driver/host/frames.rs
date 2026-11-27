@@ -20,6 +20,7 @@ const GATED: &[&str] = &[
     "background",
     "rollback",
     "readHistory",
+    "readSubagent",
     "usage",
     "models",
     "probe",
@@ -111,6 +112,13 @@ impl HostError {
         }
     }
 
+    /// The host's fixed sentence when this build carries no SDK for the family. It is the one
+    /// answer that names a packaging gap, and the core records it rather than guessing.
+    pub fn sdk_missing(&self) -> bool {
+        self.message_text()
+            .is_some_and(|text| text.ends_with("SDK is not available in this build."))
+    }
+
     /// The first kind found walking down the chain, so a wrapper without one still acts on
     /// the cause's.
     pub fn effective_kind(&self) -> ErrorKind {
@@ -158,12 +166,21 @@ pub struct Response {
     pub result: Result<Value, HostError>,
 }
 
+/// The SDK a host runs: the package name and version its hello names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostSdk {
+    pub name: String,
+    pub version: String,
+}
+
 /// What `hello` says.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hello {
     pub protocol: u64,
     pub host: String,
     pub family: String,
+    /// Both halves of the SDK are needed; a hello with neither, or one, carries none.
+    pub sdk: Option<HostSdk>,
     pub capabilities: Vec<String>,
 }
 
@@ -208,6 +225,9 @@ pub struct RunDone {
     /// `reusable`, `broken`, or anything else (read as unknown).
     pub disposition: Option<String>,
     pub retry: Option<RetryHint>,
+    /// The run's result usage, when the host reports one. Cursor sends it; other families
+    /// may too, and only their own mapper decides what to do with it.
+    pub usage: Option<Value>,
 }
 
 /// A frame the host sent.
@@ -229,6 +249,8 @@ pub enum Incoming {
     RunDone(RunDone),
     Log {
         level: String,
+        /// The event the host attached, when it sent one: `envAdded`, `holdingResult`, `malformedFrame`, ...
+        event: Option<Value>,
     },
     Background {
         session_id: String,
@@ -326,6 +348,7 @@ fn run_done(object: &Map<String, Value>) -> Result<RunDone, FrameError> {
             .and_then(Value::as_str)
             .map(str::to_owned),
         retry,
+        usage: field(object, "usage").cloned(),
     })
 }
 
@@ -344,6 +367,13 @@ pub fn decode(line: &str) -> Result<Incoming, FrameError> {
             protocol: uint(&object, "protocol")?,
             host: optional_string(&object, "host").unwrap_or_default(),
             family: string(&object, "family")?,
+            sdk: object.get("sdk").and_then(|sdk| {
+                let sdk = sdk.as_object()?;
+                Some(HostSdk {
+                    name: sdk.get("name")?.as_str()?.to_owned(),
+                    version: sdk.get("version")?.as_str()?.to_owned(),
+                })
+            }),
             capabilities: object
                 .get("capabilities")
                 .and_then(Value::as_array)
@@ -384,6 +414,10 @@ pub fn decode(line: &str) -> Result<Incoming, FrameError> {
         "runDone" => Incoming::RunDone(run_done(&object)?),
         "log" => Incoming::Log {
             level: optional_string(&object, "level").unwrap_or_else(|| "info".into()),
+            event: object
+                .get("event")
+                .filter(|event| !event.is_null())
+                .cloned(),
         },
         "background" => Incoming::Background {
             session_id: string(&object, "sessionId")?,

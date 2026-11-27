@@ -56,5 +56,42 @@ export function checksLine(card: Pick<FlowCard, "checks">): string | null {
   return `${passed} of ${of} ${of === 1 ? "check" : "checks"} passed`;
 }
 
+/** "Working · checks running": why a card's worker owns live work now. A value a later service sends is left out, never guessed. */
+export function workingLine(working: string | null | undefined): string | null {
+  switch (working) {
+    case "running":
+      return "Working";
+    case "verifying":
+      return "Working · checks running";
+    case "retry":
+      return "Working · retrying after a failed check";
+    case "fix":
+      return "Working · fixing a review finding";
+    default:
+      return null;
+  }
+}
+
+export interface WaitingLine {
+  /** The sentence's bold lead, on the kinds that name the wait itself. */
+  lead?: string;
+  /** What follows the lead after " · ", or the whole line when there is no lead. */
+  text?: string;
+}
+
+/** The amber sentence a waiting card draws: the kind's own words where it has them, else the card's reason as before. */
+export function waitingLine(card: { needs_you?: string | null; reason?: string | null }): WaitingLine | null {
+  const reason = card.reason?.trim() || null;
+  switch (card.needs_you) {
+    case "task_needs_person":
+      return reason ? { lead: "Asked you a question", text: reason } : { lead: "Asked you a question" };
+    case "merge_waiting":
+      return { text: "The merge waits for you" };
+    case "manual_check":
+    default:
+      return reason ? { text: reason } : null;
+  }
+}
+
 /** Cards of a column still to read, from the count the service gives and the cards held. */
 export const moreOf = (count: number, held: number): number => Math.max(0, count - held);

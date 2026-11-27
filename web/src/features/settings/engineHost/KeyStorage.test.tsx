@@ -40,13 +40,25 @@ it("through the real client: shows the service's state, and Remove… shows how 
   expect(sent.filter((entry) => entry.startsWith("DELETE"))).toHaveLength(1);
 });
 
+it("draws the Behind a setting pill beside the API key title once, with the caption's own words left in place", async () => {
+  setEngineHostApi(createEngineHostMock());
+  render(<KeyStorageRow engineId="cursor" />);
+  const title = await screen.findByText("API key", { selector: ".setting-line-title" });
+  const heading = title.closest(".setting-line-heading") as HTMLElement;
+  expect(heading).not.toBeNull();
+  expect(within(heading).getByText("Behind a setting")).toBeVisible();
+  // The title carries the pill; the caption keeps its sentence and draws no second one.
+  expect(screen.getAllByText("Behind a setting")).toHaveLength(1);
+  expect(screen.getByText("Built behind a setting, off until you turn it on.")).toBeVisible();
+});
+
 it("lists each engine with its state and the one action that fits it", async () => {
   setEngineHostApi(createEngineHostMock());
   render(<KeyStorageGroup />);
   await table();
-  expect(screen.getByText(/Orbyn only ever uses the system keychain: never a file, never shown again, never in a log/)).toBeVisible();
+  expect(screen.getByText(/Orbyn keeps an API key in the system keychain and does not show it again\. It goes to the engine’s own service\./)).toBeVisible();
   expect(screen.getByText("Behind a setting")).toBeVisible();
-  expect(within(rowOf("Cursor")).getByText("Saved in your keychain. It goes only to Cursor.")).toBeVisible();
+  expect(within(rowOf("Cursor")).getByText("Saved in your keychain. It goes to Cursor.")).toBeVisible();
   expect(within(rowOf("Cursor")).getByText("Saved")).toBeVisible();
   expect(within(rowOf("Cursor")).getByRole("button", { name: "Replace…" })).toBeVisible();
   expect(within(rowOf("Cursor")).queryByRole("button", { name: "Remove…" })).toBeNull();
@@ -63,7 +75,7 @@ it("asks first, and Not now writes nothing", async () => {
   render(<KeyStorageGroup />);
   await user.click(await within(await table()).findByRole("button", { name: "Choose…" }));
   const dialog = await screen.findByRole("dialog", { name: "Let Orbyn keep Antigravity’s API key in your keychain?" });
-  expect(within(dialog).getByText(/never in a file, never shown again and never written to a log\. It goes only to Antigravity\./)).toBeVisible();
+  expect(within(dialog).getByText(/Orbyn would keep the key in the system keychain and would not show it again\. It goes to Antigravity\./)).toBeVisible();
   await user.click(within(dialog).getByRole("button", { name: "Not now" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(mock.writes).toEqual([]);
@@ -118,7 +130,7 @@ it("Save key is one write, empties the field first and leaves the key nowhere in
   expect(mock.writes).toEqual(["save:antigravity"]);
   expect(seen).toHaveBeenCalledTimes(1);
   expect(seen).toHaveBeenCalledWith("antigravity", KEY);
-  expect(within(rowOf("Antigravity")).getByText("Saved in your keychain. It goes only to Antigravity.")).toBeVisible();
+  expect(within(rowOf("Antigravity")).getByText("Saved in your keychain. It goes to Antigravity.")).toBeVisible();
   expect(baseElement.innerHTML).not.toContain(KEY);
   expect(location.href).not.toContain(KEY);
 });

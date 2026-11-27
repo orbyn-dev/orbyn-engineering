@@ -3,11 +3,12 @@
 //! final never shows check text.
 
 use orbyn_contracts::{
-    CrewObject, FlowCellState as State, FlowStage as Stage, FlowTaskDetail, FlowTaskList, object_id,
+    CrewObject, FlowCellState as State, FlowStage as Stage, FlowTaskDetail, FlowTaskList,
+    FlowTaskRow, object_id,
 };
 use serde_json::{Value, json};
 
-use super::harness::{Turn, brief, key, world};
+use super::harness::{KEY_MARKER, Turn, brief, key, world};
 use super::review_support::{arc, built, crew, finding, reviewed};
 use crate::crew::Page;
 use crate::store::FindingRepro;
@@ -33,8 +34,16 @@ pub(super) fn page() -> Page {
     Page::new(None, None).unwrap()
 }
 
-fn state(list: &FlowTaskList, stage: Stage) -> State {
-    list.tasks[0]
+/// The list's row for `task`, found by id: the read owns the row order, so a test does not.
+fn task_row<'a>(list: &'a FlowTaskList, task: &str) -> &'a FlowTaskRow {
+    list.tasks
+        .iter()
+        .find(|t| t.id == task)
+        .expect("the task's row in its crew's list")
+}
+
+fn state(list: &FlowTaskList, task: &str, stage: Stage) -> State {
+    task_row(list, task)
         .cells
         .iter()
         .find(|c| c.stage == stage)
@@ -73,11 +82,20 @@ fn everything(w: &super::harness::World, crew_id: &str, task: &str) -> String {
         .unwrap();
     let detail = w.core.crew_flow_task(task).unwrap();
     let crews = w.core.crew_flow_crews(page()).unwrap();
+    // Each lane on its own, named as the zoom shows it.
+    let lanes: Vec<String> = detail
+        .lanes
+        .iter()
+        .map(|lane| {
+            serde_json::to_string(&w.core.crew_flow_lane(task, &lane.lane).unwrap()).unwrap()
+        })
+        .collect();
     format!(
-        "{} {} {}",
+        "{} {} {} {}",
         serde_json::to_string(&list).unwrap(),
         serde_json::to_string(&detail).unwrap(),
-        serde_json::to_string(&crews).unwrap()
+        serde_json::to_string(&crews).unwrap(),
+        lanes.join(" ")
     )
 }
 
@@ -102,17 +120,14 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
         .crew_flow_tasks(&crew_id, None, None, None, page())
         .unwrap();
     assert_eq!(list.tasks.len(), 1);
-    assert_eq!(list.tasks[0].cells.len(), 10);
-    assert_eq!(state(&list, Stage::Build), State::Done);
-    let checks = list.tasks[0]
-        .cells
-        .iter()
-        .find(|c| c.stage == Stage::Checks)
-        .unwrap();
+    let row = task_row(&list, &subject);
+    assert_eq!(row.cells.len(), 10);
+    assert_eq!(state(&list, &subject, Stage::Build), State::Done);
+    let checks = row.cells.iter().find(|c| c.stage == Stage::Checks).unwrap();
     assert_eq!(checks.state, State::Done);
     assert!(checks.passed.unwrap() >= 1 && checks.passed <= checks.of);
-    assert_eq!(state(&list, Stage::Code), State::Pending);
-    assert_eq!(state(&list, Stage::Merge), State::Pending);
+    assert_eq!(state(&list, &subject, Stage::Code), State::Pending);
+    assert_eq!(state(&list, &subject, Stage::Merge), State::Pending);
     assert_eq!(list.counts.passed, 1);
 
     // Two lanes run: the reviewers' tasks are lanes of this task, not rows of the list.
@@ -126,13 +141,17 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
         .unwrap();
     assert_eq!(list.tasks.len(), 1, "a review run is not a work task");
     assert_eq!(list.total, 1);
-    assert_eq!(state(&list, Stage::Code), State::Done);
-    assert_eq!(state(&list, Stage::Security), State::Done);
-    assert_eq!(list.tasks[0].round, 1);
+    assert_eq!(state(&list, &subject, Stage::Code), State::Done);
+    assert_eq!(state(&list, &subject, Stage::Security), State::Done);
+    assert_eq!(task_row(&list, &subject).round, 1);
 
     let detail = w.core.crew_flow_task(&subject).unwrap();
     assert_eq!(detail.lanes.len(), 2);
-    let lane = &detail.lanes[0];
+    let lane = detail
+        .lanes
+        .iter()
+        .find(|lane| lane.group == "code")
+        .expect("the code lane");
     assert_eq!(
         serde_json::to_value(lane)
             .unwrap()
@@ -195,7 +214,62 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
     assert_eq!(detail.rounds.len(), 1);
     assert_eq!(detail.brief.purpose, "Add a parse_duration function.");
     // A reviewer's task is not a task to zoom into.
-    assert!(w.core.crew_flow_task(&lanes[0]).is_err());
+    for lane in &lanes {
+        assert!(
+            w.core.crew_flow_task(lane).is_err(),
+            "a reviewer's task zoomed"
+        );
+    }
+
+    // A lane is read on its own: the row the zoom shows, what it was given, and the finding it filed with the
+    // reviewer's own evidence.
+    let one = w.core.crew_flow_lane(&subject, "correctness").unwrap();
+    assert_eq!(one.task, subject);
+    assert_eq!(one.crew, crew_id);
+    assert_eq!(
+        (one.lane.lane.as_str(), one.lane.group.as_str()),
+        ("correctness", "code")
+    );
+    assert_eq!(one.lane.findings, 1);
+    assert_eq!(one.lane.confirmed, 0, "the finding is unchecked");
+    assert!(one.lane.commit.is_some(), "the commit the lane read");
+    assert!(one.lane.task != subject, "the lane's own task is named");
+    assert_eq!(one.given.purpose, "Add a parse_duration function.");
+    assert!(one.given.checks_of.is_some_and(|of| of >= 1));
+    assert!(one.given.checks_passed.is_some());
+    assert_eq!(one.given.commit, one.lane.commit);
+    assert_eq!(one.findings.len(), 1);
+    let filed = one
+        .findings
+        .iter()
+        .find(|finding| finding.path == "src/lib.txt")
+        .expect("the correctness lane's finding");
+    assert_eq!((filed.lane.as_str(), filed.line), ("correctness", 1));
+    assert_eq!(filed.claim, "It wraps on a large value.");
+    assert_eq!(filed.evidence, "Reading the code shows it.");
+    assert_eq!(filed.severity, "high");
+    assert!(!one.truncated);
+    // The security lane is read for itself and does not carry the code lane's finding.
+    let security = w.core.crew_flow_lane(&subject, "security").unwrap();
+    assert_eq!(security.lane.group, "security");
+    assert!(security.findings.iter().all(|f| f.lane == "security"));
+    // A lane that did not run, a reviewer's own task and a name that is not a lane are refused.
+    for lane in &lanes {
+        assert!(
+            w.core.crew_flow_lane(lane, "correctness").is_err(),
+            "a reviewer's own task answered for {lane}"
+        );
+    }
+    for (task, lane) in [
+        (&subject, "nope"),
+        (&subject, "Correctness"),
+        (&subject, "a lane"),
+    ] {
+        assert!(
+            w.core.crew_flow_lane(task, lane).is_err(),
+            "{lane} answered for {task}"
+        );
+    }
 
     // Filters: nothing needs the person, so that filter is empty and the counts still say all.
     let none = w
@@ -220,7 +294,12 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
     );
     let crews = w.core.crew_flow_crews(page()).unwrap();
     assert_eq!(crews.crews.len(), 1);
-    assert_eq!(crews.crews[0].tasks, 1);
+    let listed = crews
+        .crews
+        .iter()
+        .find(|crew| crew.id == crew_id)
+        .expect("the crew's row");
+    assert_eq!(listed.tasks, 1);
 
     // Reading changed no row of any crew table, and no task's state or time.
     let moved = w.task(&subject).updated_at;
@@ -243,7 +322,9 @@ async fn the_answer_key_and_a_checks_text_are_never_in_a_read() {
     let subject = w.built_work().await;
     let crew_id = w.task(&subject).crew_id;
     let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    for lane in &lanes {
+        w.until_state(lane, "passed").await;
+    }
 
     let stored = w.core.store.crew_evidence(&subject).unwrap();
     assert!(!stored.is_empty());
@@ -280,6 +361,92 @@ async fn the_answer_key_and_a_checks_text_are_never_in_a_read() {
 }
 
 #[tokio::test]
+async fn a_findings_evidence_is_withheld_and_cut_and_keeps_a_path() {
+    // A key's command is a needle: longer than the eight characters `withhold` matches, it is replaced wherever it is
+    // quoted. The absolute path is not: nothing strips one from a text a Flow screen reads, here or in a claim.
+    let command = format!("echo {KEY_MARKER}");
+    let path = "/home/someone/repo/src/lib.rs";
+    let tail = "words ".repeat(200).trim_end().to_owned();
+    let written = format!("The command {command} ran on {path}. {tail}");
+    let mut draft = finding("src/lib.txt", 1, "It wraps on a large value.");
+    draft["evidence"] = json!(written);
+    let w = crew(arc(move |n, root| match n {
+        0 => built(root),
+        _ => reviewed(vec![draft.clone()]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let crew_id = w.task(&subject).crew_id;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    for lane in &lanes {
+        w.until_state(lane, "passed").await;
+    }
+
+    // What the reviewer wrote is stored whole; only a read scrubs it.
+    let stored = w.core.store.crew_findings_of(&subject).unwrap();
+    assert_eq!(stored.len(), 1);
+    let filed = stored
+        .iter()
+        .find(|finding| finding.finding.claim.as_str() == "It wraps on a large value.")
+        .expect("the filed finding");
+    assert_eq!(filed.finding.evidence.as_str(), written);
+    let key_id = w
+        .core
+        .store
+        .crew_answer_key(&subject)
+        .unwrap()
+        .unwrap()
+        .id
+        .as_str()
+        .to_owned();
+
+    let detail = w.core.crew_flow_task(&subject).unwrap();
+    let filed = detail
+        .findings
+        .iter()
+        .find(|finding| finding.claim == "It wraps on a large value.")
+        .expect("the filed finding");
+    let evidence = &filed.evidence;
+    assert!(
+        !evidence.contains(&command),
+        "the key's command reached a read: {evidence}"
+    );
+    assert!(
+        evidence.contains("[check]"),
+        "it is withheld, not dropped: {evidence}"
+    );
+    assert!(
+        evidence.contains(path),
+        "an absolute path is not stripped: {evidence}"
+    );
+    assert!(
+        evidence.chars().count() <= 300,
+        "the text is cut at 300: {}",
+        evidence.chars().count()
+    );
+    assert_ne!(
+        evidence, "Withheld.",
+        "withholding happens before the leak check"
+    );
+    // The lane read serves the same scrubbed text, and never the key's id.
+    let one = w.core.crew_flow_lane(&subject, "correctness").unwrap();
+    let filed = one
+        .findings
+        .iter()
+        .find(|finding| finding.claim == "It wraps on a large value.")
+        .expect("the lane's finding");
+    assert_eq!(&filed.evidence, evidence);
+    assert!(!filed.evidence.contains(&key_id));
+    // The crew's whole read surface is held to it, the lane read included.
+    let everything = everything(&w, &crew_id, &subject);
+    assert!(
+        !everything.contains(KEY_MARKER),
+        "the key's command reached a read"
+    );
+    assert!(!everything.contains(&key_id), "the key's id reached a read");
+}
+
+#[tokio::test]
 async fn a_task_that_is_not_final_shows_no_check_text_and_no_gate_reason() {
     // The first task finishes and leaves Evidence and a Gate; the second never ends.
     let w = crew(arc(|n, root| match n {
@@ -303,6 +470,8 @@ async fn a_task_that_is_not_final_shows_no_check_text_and_no_gate_reason() {
             .unwrap()
             .as_nanos()
     );
+    // Template rows: any row of the finished task works, because the graft below replaces every field
+    // a read looks at.
     let evidence = w.core.store.crew_evidence(&done).unwrap().remove(0);
     let gate = w.core.store.crew_gates(&done).unwrap().remove(0);
     for (object, fields) in [
@@ -376,11 +545,16 @@ async fn a_merge_waiting_for_the_person_needs_you_and_rises_to_the_top() {
         .core
         .crew_flow_tasks(&crew_id, None, None, None, page())
         .unwrap();
+    // Order is the read's contract here: the task that needs the person comes first.
     assert_eq!(
         list.tasks[0].id, first,
         "the row that needs the person comes first"
     );
-    let merge = list.tasks[0]
+    let merge = list
+        .tasks
+        .iter()
+        .find(|t| t.id == first)
+        .expect("the first row")
         .cells
         .iter()
         .find(|c| c.stage == Stage::Merge)
@@ -482,7 +656,9 @@ async fn a_gate_reason_that_quotes_a_repro_or_another_tasks_check_is_withheld() 
     let subject = w.built_work().await;
     let crew_id = w.task(&subject).crew_id;
     let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    for lane in &lanes {
+        w.until_state(lane, "passed").await;
+    }
 
     // Another task of the crew has a key whose check is a command of its own.
     let other_check = format!("echo {}", nonce("other-check"));
@@ -508,6 +684,7 @@ async fn a_gate_reason_that_quotes_a_repro_or_another_tasks_check_is_withheld() 
         .unwrap();
 
     // The lead's free-text reason on a Gate is checked for secrets when written, not for key text.
+    // Any gate of the task is a template: its reason is replaced below and its id recomputed.
     let mut gate =
         CrewObject::Gate(w.core.store.crew_gates(&subject).unwrap().remove(0)).to_value();
     gate["reason"] = json!(format!("ran {repro_command} and {other_check}"));
@@ -553,11 +730,94 @@ async fn only_the_security_lane_is_the_security_review() {
         .crew_flow_tasks(&crew_id, None, None, None, page())
         .unwrap();
     assert_eq!(
-        state(&list, Stage::Security),
+        state(&list, &subject, Stage::Security),
         State::Pending,
         "a lane named secrets is not the Security review"
     );
-    assert_eq!(state(&list, Stage::Code), State::Done);
+    assert_eq!(state(&list, &subject, Stage::Code), State::Done);
     let detail = w.core.crew_flow_task(&subject).unwrap();
     assert!(detail.lanes.iter().all(|l| l.group == "code"));
+}
+
+/// The You cell of a task's row: the list's and the zoom's, which must agree.
+fn you_cell(w: &super::harness::World, crew_id: &str, id: &str) -> State {
+    let list = w
+        .core
+        .crew_flow_tasks(crew_id, None, None, None, page())
+        .unwrap();
+    let row = list
+        .tasks
+        .iter()
+        .find(|row| row.id == id)
+        .expect("the task's row");
+    let listed = row
+        .cells
+        .iter()
+        .find(|cell| cell.stage == Stage::You)
+        .unwrap()
+        .state;
+    let zoomed = w
+        .core
+        .crew_flow_task(id)
+        .unwrap()
+        .row
+        .cells
+        .iter()
+        .find(|cell| cell.stage == Stage::You)
+        .unwrap()
+        .state;
+    assert_eq!(listed, zoomed, "the list and the zoom agree");
+    listed
+}
+
+/// KC3: the You cell reads the one needs-you field, never its own answer. A merge whose break waits on a person is the
+/// field's MergeWaiting item, so the cell says Needs you; the same waiting merge with no note that the field names is the
+/// ordinary review wait; and a reverted merge is Failed.
+#[tokio::test]
+async fn the_you_cell_reads_the_one_needs_you_field() {
+    let w = crew(arc(|_, root| built(root))).await;
+    let id = w.built_work().await;
+    let crew_id = w.task(&id).crew_id;
+    let mut record = crate::crew::fixtures::merge_record(&id, "/repo", "main", "a break");
+    record.crew_id = crew_id.clone();
+    record.review_state = "waiting".to_owned();
+    record.needs_person = Some("The break needs a person.".to_owned());
+    w.core.store.add_crew_merge(&record).unwrap();
+
+    // The field names a merge wait, so the cell says Needs you from that one field.
+    let field = w.core.crew_needs_you().unwrap().items;
+    let item = field
+        .iter()
+        .find(|item| item.id == id)
+        .expect("the field names the merge wait");
+    assert_eq!(item.kind, orbyn_contracts::NeedsYouKind::MergeWaiting);
+    assert_eq!(you_cell(&w, &crew_id, &id), State::NeedsYou);
+
+    // Without a note for a person the field no longer names it: the cell is the ordinary review wait, not Needs you.
+    w.core.store.set_merge_needs_person(&id, None).unwrap();
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id),
+        "the field no longer names the merge"
+    );
+    assert_eq!(you_cell(&w, &crew_id, &id), State::ReviewWaiting);
+
+    // A reverted merge is Failed, and the field names nothing.
+    w.core
+        .store
+        .set_merge_review(&id, "reverted", None)
+        .unwrap();
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.id != id)
+    );
+    assert_eq!(you_cell(&w, &crew_id, &id), State::Failed);
 }

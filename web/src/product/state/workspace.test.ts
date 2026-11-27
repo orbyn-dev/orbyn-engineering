@@ -175,6 +175,8 @@ describe("visible projects", () => {
 describe("the quick refresh", () => {
   const stub = () => ({
     projects: vi.spyOn(api, "projects").mockResolvedValue([]),
+    threads: vi.spyOn(api, "threads").mockResolvedValue([]),
+    allThreads: vi.spyOn(api, "allThreads").mockResolvedValue([]),
     workspace: vi.spyOn(api, "workspace").mockResolvedValue({ configured: true, default_url: "", library: null, targets: [] } as never),
     updates: vi.spyOn(api, "updates").mockResolvedValue({ library: {}, app: {}, engines: [], checked_at: null, error: null } as never),
     approvals: vi.spyOn(api, "pendingApprovals").mockResolvedValue([]),
@@ -199,6 +201,23 @@ describe("the quick refresh", () => {
       await useWorkspace.getState().refreshAll();
       expect(spies.workspace).toHaveBeenCalledTimes(1);
       expect(spies.updates).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.values(spies).forEach((spy) => spy.mockRestore());
+    }
+  });
+
+  it("reads one global thread list on a full refresh instead of one read per project", async () => {
+    const a = { ...projects[0]!, id: "a" };
+    const b = { ...projects[0]!, id: "b" };
+    useWorkspace.setState({ projects: { data: [a, b], error: null, loading: false }, threadIds: {}, threads: {} });
+    const spies = stub();
+    // refreshAll reads the projects first and replaces the seeded ones with the answer, so the answer carries both.
+    spies.projects.mockResolvedValue([a, b]);
+    try {
+      await useWorkspace.getState().refreshAll();
+      expect(Object.keys(useWorkspace.getState().threadIds).sort()).toEqual(["a", "b"]);
+      expect(spies.allThreads).toHaveBeenCalledTimes(1);
+      expect(spies.threads).not.toHaveBeenCalled();
     } finally {
       Object.values(spies).forEach((spy) => spy.mockRestore());
     }
@@ -239,7 +258,7 @@ describe("an unchanged poll", () => {
   const poll = (answer: { projects: Project[]; threads: Thread[]; approvals: Approval[] }) => [
     vi.spyOn(api, "projects").mockResolvedValue(answer.projects),
     vi.spyOn(api, "threads").mockResolvedValue(answer.threads),
-    vi.spyOn(api, "allThreads").mockResolvedValue([]),
+    vi.spyOn(api, "allThreads").mockResolvedValue(answer.threads),
     vi.spyOn(api, "pendingApprovals").mockResolvedValue(answer.approvals),
   ];
 
@@ -310,6 +329,7 @@ describe("an unchanged poll", () => {
     expect(calls).toEqual([true]);
     forced.resolve({ marker: 1 } as never);
     await running;
+    // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
     await new Promise((resolve) => setTimeout(resolve, 0));
     // The person's read landed and stays; the quiet read ran after it and its failure showed nothing.
     expect(calls).toEqual([true, false]);

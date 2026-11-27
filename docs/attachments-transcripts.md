@@ -1,9 +1,15 @@
 # Photo conversion, transcript import and earlier messages
 
-What the web composer and thread need from the service for three Beta frame groups. **Planned**: the web side is built hidden, the
-service routes are not built. In a production build the web has no client for any of them and sends nothing; a dev-only preview
-(`#/preview/attachments`, `#/preview/earlier`) installs the mocks in `web/mock/attachments.ts` and `web/mock/earlier.ts`. A name here
-changes only if the service pull request says so. Rows: B8, B43, K36 in [parity](parity.md).
+What the web composer and thread need from the service for three Beta frame groups. Transcript export, import and the composer
+attach, the routes under B43, are built and wired in the web (`web/src/features/thread/transcriptFile/` and
+`web/src/features/thread/composer/transcriptsClient.ts`): a file dropped on the composer posts the real attach route and becomes a
+transcript chip. The photo conversion route is built and its web client is wired (below): WebP is decoded and written
+again, while HEIC and HEIF are still refused by the service until a decoder is linked, so a HEIC photo shows that message
+instead of uploading as it is. The earlier-messages read is
+built, with its web wiring still pending. A dev-only preview
+(`#/preview/attachments`, `#/preview/earlier`) installs the clients from `web/mock/attachments.ts` and `web/mock/earlier.ts`; the
+transcript export and import mock lives in `web/mock/api.ts`. A name here changes only if the service pull request says so. Rows:
+B8, B43, K36 in [parity](parity.md).
 
 | Group | Frames | Owner of the service side |
 | --- | --- | --- |
@@ -33,15 +39,32 @@ transcript…" chip reuses the converting chip (no new frame).
 
 ## Photo conversion (B8)
 
-`POST /api/threads/{id}/attachments/convert?name=<label>` with the photo as the body.
+Built: `POST /api/threads/{id}/attachments/convert?name=<label>` with the photo as the body (decision in
+`orbyn-core`'s `conversation/photo_conversion.rs`, route in `orbynd`'s `routes/composer.rs`, class `local`).
 
-- Allowed input types: `image/heic`, `image/heif`, `image/png`, `image/jpeg`, `image/webp`. Anything else is `415 unsupported_type`
-  and the web does not send it here (it goes to the ordinary upload). A GIF is never shrunk, since that would drop its frames.
-- Behaviour: HEIC and HEIF become JPEG; PNG, JPEG and WebP over 10 MiB are made smaller until they are at most 10 MiB. A photo
-  already within the limit and not HEIC is stored as it is and answers `action: "none"` (the web only sends photos that need work).
-  The stored file is the converted one; the original is not kept and the chip never offers it back.
-- Cap on the input: 50 MiB (`413 file_too_large`) and a pixel cap of 100 megapixels, so a small file cannot expand into memory.
-  The decoder runs with a time limit and no network access; metadata that locates a person (GPS) is dropped from the result.
+- Web: `web/src/features/thread/composer/photoConversion.ts` answers the real client (`photoConversionClient.ts`) by default.
+  The composer sends HEIC and HEIF (including a file whose system type is empty and whose name carries the ending) to this
+  route, so the service's refusal message is shown instead of the file being silently uploaded; it sends WebP here so the
+  service decodes it and writes it again from pixels, and it sends a PNG or JPEG over 10 MiB here to be shrunk. An ordinary
+  PNG or JPEG within the limit still uploads by `POST /api/threads/{id}/attachments`, as before. A failed conversion turns
+  the chip red with Retry and Remove, and send stays held until every chip has an id. The web shows its own sentence for
+  `unreadable_image` and `still_too_large`, and the service's message for `file_too_large` and `unsupported_type`; `size`
+  and `original_size` are read as numbers although the generated type says bigint. The mock stays behind
+  `__ORBYN_PREVIEWS__`. Not observed against a real service.
+- Allowed input types: `image/png`, `image/jpeg` and `image/webp`, decided from the bytes and never from the claimed
+  one. WebP is decoded in process by the pure-Rust `image-webp` crate behind `image`'s `webp` feature (MIT OR
+  Apache-2.0 with the rest of the image-rs project), so this build links no C codec. Anything else is `415
+  unsupported_type`. **Deferred:** HEIC and HEIF decoding needs a C decoder (libheif, LGPL-3.0); linking one is the
+  owner's dependency and licence decision, so both are refused with a message that names HEIC and no `converted`
+  answer exists yet. Recorded in row B8.
+- Behaviour: a PNG, JPEG or WebP over 10 MiB is made smaller until it is at most 10 MiB (`action: "shrunk"`). A photo
+  already within the limit is written again at its own size (`action: "none"`), which is what drops its metadata. The
+  stored file is the written one; the original is not kept and the chip never offers it back.
+- Cap on the input: 50 MiB (`413 file_too_large`), refused from the declared `Content-Length` before the body is read and
+  then by a counting read, so a request without a length also stops. A pixel cap of 100 megapixels and a 512 MiB decoder
+  allocation are checked from the header before a decoder allocates, so a small file cannot expand into memory. The
+  decoder runs in process and touches no network.
+- Metadata: every answer is written from decoded pixels, so no EXIF, and no GPS location, travels with it.
 - Answer `200`:
 
   ```json
@@ -50,24 +73,27 @@ transcript…" chip reuses the converting chip (no new frame).
 
   `action` is `converted`, `shrunk` or `none`. `id` goes in the run's `attachment_ids`, as an uploaded file's does. `name` is the new
   name with the new ending; the web shows it.
-- Errors, each `{code, message}` as the other routes: `unreadable_image` (`422`, damaged or not an image), `still_too_large` (`422`,
-  still over 10 MiB after shrinking), `file_too_large` (`413`), `unsupported_type` (`415`). The web shows its own sentence for the
-  first two and the service's message for the rest.
-- The request can be cancelled by the client closing it; the service then keeps nothing.
+- Errors, each `{code, message}` as the other routes: `unreadable_image` (`422`, damaged or not an image, and a photo over
+  the pixel cap), `still_too_large` (`422`, still over 10 MiB after shrinking), `file_too_large` (`413`), `unsupported_type`
+  (`415`). The web shows its own sentence for the first two and the service's message for the rest.
+- The request can be cancelled by the client closing it, but the decode is in process and is not interrupted: the
+  converted photo is stored just before the answer, so a cancelled request leaves that one attachment on the thread and
+  nothing else.
 
 ## Transcript export and import (B43)
 
-Three routes and one file, built by Eng 3. The web replaces the two placeholder constants below; a transcript dropped on the composer
-calls the attach route, and the import route creates a thread from one.
+Three routes and one file, built by Eng 3. The web's export and import are built on the two routes: Export transcript sits in the
+thread header menu and the sidebar thread row menu, and Import transcript… sits in the project folder menu and on a transcript
+dropped on a project row. The composer's transcript drop is built on the attach route below: a dropped file becomes a transcript
+chip, and its attachment rides on the thread's next message. The ending and media type below are the constants the web uses.
 
 ### The file
 
 Plain JSON, one object. T3 Code has no transcript file (its drag of a thread is a link, B43 above), so this format is ours.
 
 - **Ending** `.orbyn.json`, **media type** `application/vnd.orbyn.transcript+json`. These are THE constants (in the service:
-  `TRANSCRIPT_FILE_ENDING`, `TRANSCRIPT_MEDIA_TYPE` in `orbyn-contracts`; the web's two in
-  `web/src/features/thread/composer/transcriptDrop.ts` replace the placeholders `.transcript` and `application/x-orbyn-transcript`).
-  The service decides from the bytes, never from the ending or the type.
+  `TRANSCRIPT_FILE_ENDING`, `TRANSCRIPT_MEDIA_TYPE` in `orbyn-contracts`; the web's two in `web/src/lib/transcript.ts`, re-exported by
+  `web/src/features/thread/composer/transcriptDrop.ts`). The service decides from the bytes, never from the ending or the type.
 - Shape (`TranscriptDocument`, generated as `web/src/generated/TranscriptDocument.ts`):
 
   ```json
@@ -153,8 +179,18 @@ creates an attachment**, as `POST /api/threads/{id}/attachments` does, and answe
 
 - An absolute path typed into free text other than the project's and home folders is not rewritten (export) and stays as written.
 - A key pasted into a message has no redactor pattern, so only a recognised format or one of the person's own patterns hides it.
+- The native import stores the session id, not the session file's path, size or mtime. The earlier read resolves the file again by
+  that id with the import's scan, so a file moved inside the history folder is found at its new path; a file written after the
+  import is refused, while an in-place edit that keeps a mtime before the import and the same size is not detected. Cursors catch
+  a file that changes between pages.
+- A native thread imported before `imported_at` was recorded on import has no import record, so this read answers `not_imported`;
+  no migration backfills it.
 
 ## Earlier messages of an imported thread (K36)
+
+Built: `GET /api/threads/{id}/earlier?before=<cursor>` with the read in `orbyn-core`'s `agents/earlier.rs`, the route in
+`orbynd`'s `routes/threads.rs` and class `local`. The production web client is wired through `request()`, and it skips a thread whose
+record has no `imported_at`. Not observed against a real service.
 
 `GET /api/threads/{id}/earlier?before=<cursor>` (the cursor is optional).
 
@@ -171,12 +207,21 @@ creates an attachment**, as `POST /api/threads/{id}/attachments` does, and answe
 - `422 history_unreadable` when the provider's history has moved, changed or is too new for Orbyn: the web shows one line at the top
   with "Try again", and the thread works as it does today (the agent resumes from its own session).
 - Read only: nothing is changed in the provider's own history and nothing is copied into Orbyn's thread log. The service reads only the
-  session file the import recorded, never a path from the request, with the scan limits the import already has (file size, line
-  count). The earlier messages are not editable, rewindable or searchable in this version.
+  session file the import's recorded session id resolves to through the import's own scan, never a path from the request, with
+  bounded file size and line count. The earlier messages are not editable, rewindable or searchable in this version.
+- The cursor is opaque. A malformed one is `422 bad_cursor`; one whose file size or mtime no longer matches is
+  `422 history_unreadable`. The page itself carries `next_before`, or `null` at the start of the history.
 - The "Imported" pill in the thread header and its date line need `imported_at` and `source` on the thread itself; the web shows them
-  from this answer only.
+  from this answer only. The native import records the engine session id and `imported_at` on the thread; `source` is derived from
+  the engine for this answer.
 
-## What the web does without these routes
+## What the web does with these routes
 
-Nothing changes: a HEIC photo or an oversized image is uploaded as today (and refused above 10 MiB by the service), a transcript file
-dropped on the composer is an ordinary attachment (before the attach route is wired), and an imported thread opens empty.
+The export, import and composer attach routes are wired in production: the two menus save a file under the thread title plus
+`.orbyn.json`, the sheet creates the thread and opens it, and a transcript dropped on the composer becomes an attachment of that
+thread. Photo conversion is wired in production too: the composer sends HEIC, HEIF, WebP and PNG/JPEG over 10 MiB to the convert
+route, which writes WebP again, refuses HEIC and HEIF today and shrinks an oversized PNG or JPEG, while an ordinary image
+within the limit still uploads as before. It was not observed
+against a real service. The earlier-messages read is wired in production (`earlierApi()` sends the route) but was
+not observed against a real service. An imported thread still carries its `source` and `imported_at`, so its marker shows and its
+history keeps the imported messages.

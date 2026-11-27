@@ -1,5 +1,6 @@
+import { act } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { navigate, parseRoute, routeHref, type Route } from "./route";
+import { closeSettings, navigate, parseRoute, routeHref, type Route } from "./route";
 
 describe("routes", () => {
   it.each<Route>([
@@ -46,8 +47,20 @@ describe("routes", () => {
     { name: "settings", section: "crew", crewPage: "backtest" },
     { name: "settings", section: "crew", crewPage: "estimate" },
     { name: "settings", section: "crew", crewPage: "report", id: "run-4n" },
+    { name: "settings", section: "crew", crewPage: "lessons", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "lesson", repo: "p/app", id: "les/1" },
+    { name: "settings", section: "crew", crewPage: "lesson-add", repo: "p/app" },
+    { name: "settings", section: "crew", crewPage: "skill-proposal", repo: "p/app", id: "prop/1" },
   ])("round-trips %j", (route) => {
     expect(parseRoute(routeHref(route))).toEqual(route);
+  });
+
+  it("puts the lessons list, one lesson and the add page at their own addresses", () => {
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "lessons", repo: "p/app" })).toBe("#/settings/crew/lessons?repo=p%2Fapp");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "lesson", repo: "p/app", id: "les/1" })).toBe("#/settings/crew/lessons/lesson?repo=p%2Fapp&id=les%2F1");
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "lesson-add", repo: "p/app" })).toBe("#/settings/crew/lessons/add?repo=p%2Fapp");
+    expect(parseRoute("#/settings/crew/lessons/nope")).toEqual({ name: "settings", section: "crew", crewPage: "lessons" });
+    expect(routeHref({ name: "settings", section: "crew", crewPage: "skill-proposal", repo: "p/app", id: "prop/1" })).toBe("#/settings/crew/lessons/proposal?repo=p%2Fapp&id=prop%2F1");
   });
 
   it("keeps the Crew entry pages at their own addresses and an unknown sub-page at its parent", () => {
@@ -99,10 +112,13 @@ describe("routes", () => {
     expect(routeHref({ name: "issues", tracker: "github", scope: "orbyn-dev/orbyn-engineering", key: "412" })).toBe("#/issues/github/orbyn-dev%2Forbyn-engineering/412");
   });
 
-  it("refuses malformed or action-bearing Crew task locators", () => {
+  it("refuses malformed or action-bearing Crew task locators, as a not-found address", () => {
     for (const part of ["", ".", "..", "%2Ehidden", "a/b", "a/", "a%2Fb", "a%5Cb", "a%252Fb", "a%3Fb", "a%23b", "a%00b", "a%20b", "a%", "a?once=1", "a#publish", "a/publish", "a".repeat(97)]) {
-      expect(parseRoute(`#/crew/flow/task/${part}`)).toEqual({ name: "home" });
+      const route = parseRoute(`#/crew/flow/task/${part}`);
+      expect(route.name).toBe("not-found");
+      expect(route).not.toEqual({ name: "home" });
     }
+    expect(parseRoute("#/crew/flow/task/")).toEqual({ name: "not-found", path: "crew/flow/task/" });
     expect(routeHref({name:"crew",tab:"flow",task:"a/b"})).toBe("#/");
     expect(routeHref({name:"crew",tab:"approvals",task:"task-1"})).toBe("#/");
   });
@@ -145,8 +161,75 @@ describe("routes", () => {
     expect(routeHref({ name: "settings", section: null, unknown: "voice" })).toBe("#/settings");
   });
 
-  it("treats unknown hashes as home and unknown sections as none", () => {
-    expect(parseRoute("#/nowhere")).toEqual({ name: "home" });
+  it("reads an address that names no screen as not found, and unknown sections as none", () => {
+    expect(parseRoute("#/nowhere")).toEqual({ name: "not-found", path: "nowhere" });
     expect(parseRoute("#/settings/nope")).toEqual({ name: "settings", section: null, unknown: "nope" });
+  });
+});
+
+describe("an address that names no screen", () => {
+  it("is a not-found route that keeps the address, never another page's fallback", () => {
+    expect(parseRoute("#/nonsense")).toEqual({ name: "not-found", path: "nonsense" });
+    expect(parseRoute("#/nowhere/deeper?from=chat")).toEqual({ name: "not-found", path: "nowhere/deeper" });
+    expect(parseRoute("#/crew/flow/task/!!!")).toEqual({ name: "not-found", path: "crew/flow/task/!!!" });
+    // The negative: an unknown path is not quietly read as the home page with the bad address left in place.
+    expect(parseRoute("#/nonsense").name).not.toBe("home");
+    expect(parseRoute("#/crew/flow/task/!!!").name).not.toBe("home");
+    // A root address still is home: nothing was asked for, so nothing is missing.
+    expect(parseRoute("#/")).toEqual({ name: "home" });
+    expect(parseRoute("")).toEqual({ name: "home" });
+  });
+
+  it("keeps its own address, so the page can show what was asked for", () => {
+    expect(routeHref({ name: "not-found", path: "nowhere/deeper" })).toBe("#/nowhere/deeper");
+    expect(parseRoute(routeHref(parseRoute("#/does/not/exist")))).toEqual({ name: "not-found", path: "does/not/exist" });
+  });
+});
+
+describe("closing Settings", () => {
+  const settle = async () => {
+    await act(async () => {
+      // Real wait: one macrotask turn lets already-resolved promises settle; no clock is involved.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  };
+
+  it("goes back to the page it covered, adding no entry to back out of", async () => {
+    window.location.hash = "#/usage";
+    await settle();
+    window.location.hash = "#/threads/t-done";
+    await settle();
+    const page = window.location.hash;
+    const length = window.history.length;
+
+    navigate({ name: "settings", section: "chat" });
+    expect(parseRoute(window.location.hash)).toEqual({ name: "settings", section: "chat" });
+    // A move inside Settings holds that same entry: Back out of Settings is the page, not the section before.
+    navigate({ name: "settings", section: "appearance" });
+    expect(window.history.length).toBe(length + 1);
+
+    closeSettings({ name: "thread", id: "t-done" });
+    await settle();
+    expect(parseRoute(window.location.hash)).toEqual({ name: "thread", id: "t-done" });
+    expect(window.location.hash).toBe(page);
+    // Closing added nothing: one entry for the visit, and no second one to walk back out of.
+    expect(window.history.length).toBe(length + 1);
+    expect(window.history.length).not.toBe(length + 2);
+    expect(window.history.state).not.toMatchObject({ orbynSettings: true });
+
+    // The negative the issue reported: Back from here must not land on Settings again.
+    window.history.back();
+    await settle();
+    expect(parseRoute(window.location.hash)).toEqual({ name: "usage" });
+  });
+
+  it("replaces its own entry when it arrived on its own address, so nothing grows", async () => {
+    window.location.replace("#/settings/appearance");
+    await settle();
+    const length = window.history.length;
+    closeSettings({ name: "home" });
+    await settle();
+    expect(parseRoute(window.location.hash)).toEqual({ name: "home" });
+    expect(window.history.length).toBe(length);
   });
 });

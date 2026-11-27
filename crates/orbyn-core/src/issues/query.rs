@@ -2,16 +2,46 @@
 
 use crate::error::{CoreError, Result};
 use orbyn_contracts::TrackerKind;
+use std::collections::BTreeMap;
 
 pub const DEFAULT_LIMIT: usize = 50;
 pub const MAX_LIMIT: usize = 100;
 const MAX_LABELS: usize = 20;
+const MAX_LABEL_CHARS: usize = 200;
+/// The most the `cursors` value may hold, as the page sends it (docs/issues.md, "Paging").
+const MAX_CURSORS_BYTES: usize = 4096;
+const MAX_CURSORS: usize = 50;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a listing may emit: at most [`MAX_CURSORS`] and [`MAX_CURSORS_BYTES`] as the JSON the page sends,
+/// keeping the first in key order and dropping the rest.
+pub(crate) fn capped_cursors(cursors: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let mut kept = BTreeMap::new();
+    for (key, value) in cursors {
+        kept.insert(key, value);
+        let fits = kept.len() <= MAX_CURSORS
+            && serde_json::to_string(&kept).is_ok_and(|json| json.len() <= MAX_CURSORS_BYTES);
+        if !fits {
+            kept.pop_last();
+            break;
+        }
+    }
+    kept
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum StateFilter {
+    #[default]
     Open,
     Closed,
     All,
+}
+
+/// How a listing is ordered, newest first by that date (docs/issues.md, "Issue writes and list controls").
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IssueSort {
+    #[default]
+    Updated,
+    Created,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,7 +59,11 @@ pub struct IssueQuery {
     pub labels: Vec<String>,
     pub assignee: AssigneeFilter,
     pub text: String,
+    /// Newest first by this date; `updated` unless the person chose otherwise.
+    pub sort: IssueSort,
     pub limit: usize,
+    /// Where to carry on, per `"<tracker> <scope>"`. Empty for a first page. A source checks that it issued each one.
+    pub cursors: BTreeMap<String, String>,
 }
 
 impl Default for IssueQuery {
@@ -40,7 +74,9 @@ impl Default for IssueQuery {
             labels: Vec::new(),
             assignee: AssigneeFilter::Any,
             text: String::new(),
+            sort: IssueSort::Updated,
             limit: DEFAULT_LIMIT,
+            cursors: BTreeMap::new(),
         }
     }
 }
@@ -78,7 +114,13 @@ impl IssueQuery {
                     };
                 }
                 "label" => {
-                    plain(value, 200, "A label")?;
+                    if value.chars().count() > MAX_LABEL_CHARS
+                        || value.chars().any(char::is_control)
+                    {
+                        return Err(CoreError::Invalid(
+                            "A label is too long or has control characters.".into(),
+                        ));
+                    }
                     if value.trim().is_empty() {
                         return Err(CoreError::Invalid("A label is empty.".into()));
                     }
@@ -107,14 +149,43 @@ impl IssueQuery {
                     plain(value, 200, "The search text")?;
                     query.text = value.trim().to_owned();
                 }
+                "sort" => {
+                    query.sort = match value.as_str() {
+                        "updated" => IssueSort::Updated,
+                        "created" => IssueSort::Created,
+                        _ => {
+                            return Err(CoreError::Invalid("sort is updated or created.".into()));
+                        }
+                    };
+                }
                 "limit" => {
                     let n: usize = value
                         .parse()
                         .map_err(|_| CoreError::Invalid("limit is a number.".into()))?;
                     query.limit = n.clamp(1, MAX_LIMIT);
                 }
-                // The page asks for these and the beta ignores them.
-                "cursors" => {}
+                "cursors" => {
+                    let invalid = || {
+                        CoreError::Invalid(
+                            "cursors is a JSON object of the cursors the service issued.".into(),
+                        )
+                    };
+                    if value.len() > MAX_CURSORS_BYTES {
+                        return Err(invalid());
+                    }
+                    let cursors: BTreeMap<String, String> =
+                        serde_json::from_str(value).map_err(|_| invalid())?;
+                    if cursors.len() > MAX_CURSORS
+                        || cursors.iter().any(|(k, v)| {
+                            k.len() > 300
+                                || v.len() > 200
+                                || k.chars().chain(v.chars()).any(char::is_control)
+                        })
+                    {
+                        return Err(invalid());
+                    }
+                    query.cursors = cursors;
+                }
                 other => {
                     return Err(CoreError::Invalid(format!(
                         "{other} is not an issue filter."
@@ -167,11 +238,42 @@ mod tests {
     }
 
     #[test]
+    fn cursors_are_a_small_json_object_of_text() {
+        let q = IssueQuery::from_pairs(&pairs(&[("cursors", r#"{"gitlab grp/proj":"2.abc"}"#)]))
+            .unwrap();
+        assert_eq!(q.cursors["gitlab grp/proj"], "2.abc");
+        let long = format!(r#"{{"gitlab a/b":"{}"}}"#, "x".repeat(MAX_CURSORS_BYTES));
+        for bad in [
+            "not json",
+            "[]",
+            r#"{"a":1}"#,
+            r#"{"a":"b\u0001"}"#,
+            long.as_str(),
+        ] {
+            assert!(
+                IssueQuery::from_pairs(&pairs(&[("cursors", bad)])).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_label_is_counted_in_characters() {
+        let hundred = "\u{e9}".repeat(MAX_LABEL_CHARS);
+        assert!(
+            IssueQuery::from_pairs(&pairs(&[("label", &hundred)])).is_ok(),
+            "200 characters may be more than 200 bytes"
+        );
+        let over = "\u{e9}".repeat(MAX_LABEL_CHARS + 1);
+        assert!(IssueQuery::from_pairs(&pairs(&[("label", &over)])).is_err());
+    }
+
+    #[test]
     fn anything_else_is_refused() {
         for bad in [
             ("state", "merged"),
             ("tracker", "jira"),
-            ("sort", "created"),
+            ("sort", "newest"),
             ("involvement", "authored"),
             ("label", " "),
             ("assignee", "a b"),
@@ -184,5 +286,25 @@ mod tests {
             .map(|i| ("label".to_owned(), format!("l{i}")))
             .collect();
         assert!(IssueQuery::from_pairs(&many).is_err());
+    }
+
+    #[test]
+    fn sort_is_updated_unless_created_is_asked_for() {
+        assert_eq!(
+            IssueQuery::from_pairs(&[]).unwrap().sort,
+            IssueSort::Updated
+        );
+        assert_eq!(
+            IssueQuery::from_pairs(&pairs(&[("sort", "updated")]))
+                .unwrap()
+                .sort,
+            IssueSort::Updated
+        );
+        assert_eq!(
+            IssueQuery::from_pairs(&pairs(&[("sort", "created")]))
+                .unwrap()
+                .sort,
+            IssueSort::Created
+        );
     }
 }

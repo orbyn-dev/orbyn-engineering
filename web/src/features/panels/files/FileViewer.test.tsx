@@ -203,6 +203,7 @@ it("reports a clipboard failure", async () => {
 });
 
 it("says a binary file has no text to show, with its size, and leaves the editor tools off (editor-binary)", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   serve({ content: "", binary: true, truncated: false, size: 64 }, new Uint8Array([0x00, 0x01, 0x02]));
   render(<Viewer threadId="t" tabId="tab" path="assets/image.bin" line={null} onBack={() => undefined} />);
   expect(await screen.findByText("Can’t show this file")).toBeInTheDocument();
@@ -212,6 +213,15 @@ it("says a binary file has no text to show, with its size, and leaves the editor
   expect(screen.getByRole("button", { name: "Find ⌘F" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Go to line ⌘G" })).toBeDisabled();
   expect(isLocked(useEditorSessions.getState().locked, "t", "tab")).toBe(true);
+});
+
+it("labels the disabled editor tools of a binary file for a Windows client", async () => {
+  vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+  serve({ content: "", binary: true, truncated: false, size: 64 }, new Uint8Array([0x00, 0x01, 0x02]));
+  render(<Viewer threadId="t" tabId="tab" path="assets/image.bin" line={null} onBack={() => undefined} />);
+  expect(await screen.findByText("Can’t show this file")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Find Ctrl+F" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Go to line Ctrl+G" })).toBeDisabled();
 });
 
 it("leaves Copy contents disabled for a media file", async () => {

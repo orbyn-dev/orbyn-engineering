@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use orbyn_contracts::{
-    AnswerKey, Brief, CrewError, CrewHash, CrewId, CrewMember, CrewObject, CrewToken, DelegateTask,
-    ErrorCode, ModelSelection, RouteDecision, WorkerObject,
+    AnswerKey, Brief, CheckKind, CrewCheck, CrewError, CrewHash, CrewId, CrewMember, CrewObject,
+    CrewToken, DelegateTask, ErrorCode, ModelSelection, RouteDecision, WorkerObject,
 };
 use serde_json::{Value, json};
 
@@ -15,18 +15,29 @@ use super::capacity::{PausedKind, PausedTrigger, Priority};
 use super::classes::Routed;
 use super::guard::{key_labeled, refuse_leak, refuse_leak_in, refuse_secret};
 use super::leases::{Grant, internal, is_reviewer, refuse_protected};
+use super::lessons::LessonBrief;
 use super::router::{RouteFailure, RouteInput, route};
 use super::score::EvalHistory;
 use super::stamp::Stamper;
 use super::tool::{LEAD_MEMBER, invalid, stamp_now};
 use crate::agents::driver::worker_identity::TASK_TRAILER;
 use crate::app::Core;
-use crate::settings::preferences::CREW_TURN_BUDGET;
+use crate::settings::preferences::{CREW_MIN_FREE_GB, CREW_TURN_BUDGET};
 use crate::tools::mcp::McpBinding;
 
 /// What a person and the lead read when the crew-wide turn budget is spent. Code-owned text: no
 /// frame draws a start refusal, and the owner's ruling asks for a plain reason (2026-11-20).
 const CREW_TURNS_SPENT: &str = "The crew has spent its turn budget, so no new task can start.";
+
+/// What a person and the lead read when the crew-wide turn budget itself cannot be read. The same
+/// code-owned text as the spend refusal, for the same reason: a refusal with no frame that draws it.
+const CREW_TURN_BUDGET_UNREADABLE: &str =
+    "The crew's turn budget could not be read, so no new task can start. Try again.";
+
+/// What a person and the lead read when the crew's spend cannot be read. Kept apart from the
+/// budget's own sentence so a person can tell which read failed.
+const CREW_TURNS_UNREADABLE: &str =
+    "The crew's turns could not be read, so no new task can start. Try again.";
 
 /// What a launch adds to a plain start: the rows that make the task a review run or a fix.
 #[derive(Default)]
@@ -64,6 +75,78 @@ pub(super) fn member_of(prefix: &str, brief: &Brief) -> Result<CrewMember, CrewE
     CrewMember::new(format!("{prefix}-{}", &brief.id.as_str()[7..15])).map_err(invalid)
 }
 
+/// The check a start adds for the repository's own checks, and the label its log line carries.
+const INHERITED_CHECK: &str = "chk-repo-required";
+const INHERITED_LABEL: &str = "inherited";
+
+/// Whether this start still has to inherit the repository's own checks (issue #795): every task that writes
+/// gets them (docs/crew.md, "Verification without limits"), a review writes nothing so it runs none, and a key
+/// that already runs them keeps its own rather than gaining a second.
+pub(super) fn needs_repo_checks(brief: &Brief, key: &AnswerKey) -> bool {
+    !is_reviewer(brief)
+        && !key.checks.iter().any(|check| {
+            // The fix key's byte comparison is a `repo_required` kind too, but it runs no repository command.
+            matches!(check.kind, CheckKind::RepoRequired)
+                && check.id.as_str() != "chk-fix-touched"
+                && check.params["name"] != "crew-fix-touched"
+        })
+}
+
+/// Adds the repository's own checks to the key of a task that writes, at the commit it starts from
+/// (issue #795). One `repo_required` check is added, marked [`INHERITED_LABEL`]; it reads the file at that
+/// commit through [`super::autopilot::merge::repo_checks`], the reader the verifier and the merge queue also
+/// use, so a worker's edit to the file cannot lower the bar. The file's lines are not copied into the key,
+/// which is why the check reads them where they are trusted. A repository that declares no check, and a
+/// checkout with no starting commit to read them at, add nothing.
+async fn inherit_repo_checks(
+    thread: &orbyn_contracts::Thread,
+    brief: &Brief,
+    key: &mut AnswerKey,
+    base: Option<&str>,
+) -> Result<(), CrewError> {
+    if !needs_repo_checks(brief, key) {
+        return Ok(());
+    }
+    // No starting commit is nothing to inherit, by decision rather than by omission: with no commit there is no
+    // committed `.orbyn/crew.json`, so the checkout has declared no check and nothing is dropped. (An explicit
+    // `repo_required` check reports that missing commit as an error when it runs.) A checkout that is not a Git
+    // repository never reaches here, because the index check refuses that start.
+    let Some(base) = base else {
+        return Ok(());
+    };
+    let declared = super::autopilot::merge::repo_checks(std::path::Path::new(&thread.cwd), base)
+        .await
+        .map_err(|why| invalid(why.public_message()))?;
+    if declared.is_empty() {
+        return Ok(());
+    }
+    let inherited: CrewCheck = serde_json::from_value(json!({
+        "id": free_check_id(key, INHERITED_CHECK),
+        "kind": "repo_required",
+        "params": { "name": INHERITED_LABEL },
+        "proves": "The repository's own checks from .orbyn/crew.json pass at the commit this task started from.",
+        "does_not_prove": "That the scripts those checks run were left as the worker found them.",
+    }))
+    .map_err(|why| invalid(format!("the inherited repository check: {why}")))?;
+    inherited.validate()?;
+    key.checks.push(inherited);
+    // A key's id is its content's hash, taken again now that the start added a check to it.
+    key.id = CrewObject::AnswerKey(key.clone()).computed_id()?;
+    Ok(())
+}
+
+/// `base`, or the first free `base-N`: the lead's own key may already use the inherited check's id.
+fn free_check_id(key: &AnswerKey, base: &str) -> String {
+    let taken = |id: &str| key.checks.iter().any(|check| check.id.as_str() == id);
+    if !taken(base) {
+        return base.to_owned();
+    }
+    (2..=key.checks.len() + 2)
+        .map(|n| format!("{base}-{n}"))
+        .find(|id| !taken(id))
+        .unwrap_or_else(|| format!("{base}-{}", key.checks.len() + 2))
+}
+
 /// Who is calling a Crew tool.
 pub(super) enum Caller {
     Lead,
@@ -71,6 +154,30 @@ pub(super) enum Caller {
         task: Box<crate::store::CrewTask>,
         run: Box<crate::store::CrewRun>,
     },
+}
+
+/// Why a worker cannot start on a volume with `free` bytes: below the `floor_gb` floor it
+/// carries the free space. A volume whose free space cannot be read never blocks.
+pub(super) fn low_disk_reason(free: Option<u64>, floor_gb: u64) -> Option<String> {
+    let free = free?;
+    if free >= floor_gb.saturating_mul(1024 * 1024 * 1024) {
+        return None;
+    }
+    Some(format!(
+        "Not started: {} free, Crew needs {} GB. Free space and try again.",
+        free_text(free),
+        floor_gb
+    ))
+}
+
+/// `bytes` as the disk refusal says it: whole MiB below a gibibyte, else GiB to one decimal.
+pub(super) fn free_text(bytes: u64) -> String {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if bytes < GIB {
+        return format!("{} MB", bytes / (1024 * 1024));
+    }
+    let tenths = u128::from(bytes) * 10 / u128::from(GIB);
+    format!("{}.{} GB", tenths / 10, tenths % 10)
 }
 
 impl Core {
@@ -292,8 +399,11 @@ impl Core {
         // One start at a time, so two briefs cannot both be granted the same paths.
         let _one_at_a_time = self.crew_starts.lock().await;
         // Before anything is stored, routed or started: a crew that spent its turn budget starts
-        // no new task. It never stops a task already running.
+        // no new task, and one whose budget or spend cannot be read starts none either. It never
+        // stops a task already running.
         self.refuse_spent_crew_budget(&brief)?;
+        // Before anything is stored, routed or started: a lead whose volume is low on disk starts no worker.
+        self.refuse_low_disk(thread).await?;
         self.crew_start_bus_limits(&bus_lead).await?;
         let now = crate::util::unix_now();
         // Before anything is stored: when no allowed engine is left because the run start would refuse the ones that are, the
@@ -324,6 +434,22 @@ impl Core {
         // task. They are read before the task exists so a refusal that needs the router's answer (the daily budget) sees
         // exactly the route the task would get.
         let (base, classes) = self.crew_path_classes(thread, &brief, true).await;
+        // Issue #795: the repository's own checks join the key of every task that writes, read at the commit
+        // this task starts from. It is added here, after H1, H2 and H11 above, and before anything is stored:
+        // the check holds fixed text and none of the file's lines, so no text from the repository can reach
+        // the key, the brief or a secret scan, and the file is read again at that commit when it runs.
+        let mut key = key;
+        inherit_repo_checks(thread, &brief, &mut key, base.as_deref()).await?;
+        // KC5 slice 2: the lessons this worker's brief carries. Chosen here, after H1, H2 and H11 and before anything
+        // is stored, so their use is counted in the transaction that stores the brief; they never join the `Brief`
+        // object, so routing, the leases and the checks cannot read them. A review lane's prompt is its own, not the
+        // brief: the recorded review link is what decides that, so a caller cannot forget to pass a prompt and leak
+        // lessons into a reviewer.
+        let lessons = if prompt.is_none() && links.review.is_none() {
+            self.crew_lessons_brief(&thread.project_id, &key)
+        } else {
+            LessonBrief::none()
+        };
         let trigger = links.crew_started.then(|| {
             links.trigger.clone().unwrap_or_else(|| {
                 tracing::warn!(
@@ -368,7 +494,13 @@ impl Core {
         )?;
         let task = self
             .store
-            .create_crew_task(&brief, &key, run_id.as_str())
+            .create_crew_task_with_lessons(
+                &brief,
+                &key,
+                run_id.as_str(),
+                &lessons.used,
+                &lessons.left_out,
+            )
             .map_err(internal)?;
         self.capacity_mark_started(&task.id, links.crew_started);
         self.capacity_held_started(&thread.project_id, trigger.as_ref());
@@ -513,7 +645,15 @@ impl Core {
             self.store.add_crew_fix(fix).map_err(internal)?;
         }
         match self
-            .start_crew_worker(thread, &brief, &decision, &member, prompt, base.as_deref())
+            .start_crew_worker(
+                thread,
+                &brief,
+                &decision,
+                &member,
+                prompt,
+                base.as_deref(),
+                lessons.block.as_deref(),
+            )
             .await
         {
             Ok(worker) => {
@@ -548,27 +688,40 @@ impl Core {
     }
 
     /// The crew-wide turn budget from Settings (`crew_turn_budget`, device-local): whole turns per
-    /// crew, 0 or unset meaning no budget. A read failure lets the start go, as the per-task
-    /// budget's own read does.
-    fn crew_turn_budget(&self) -> Option<u64> {
-        match self.preference(CREW_TURN_BUDGET, None) {
-            Ok(value) => value.as_u64().filter(|turns| *turns > 0),
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    "the crew's turn budget could not be read, so the start goes ahead"
-                );
-                None
-            }
+    /// crew, 0 or unset meaning no budget. It fails closed: a budget no read can settle refuses the
+    /// start, because the budget is what decides whether a task may start, so treating an unknown
+    /// one as "no budget" would let every task through exactly when the app cannot tell. The
+    /// background crews' daily budget reads the same way (see `refuse_background_daily`).
+    fn crew_turn_budget(&self) -> Result<Option<u64>, CrewError> {
+        let unreadable = |error: &dyn std::fmt::Display| {
+            tracing::warn!(
+                %error,
+                "the crew's turn budget could not be read, so no new task can start"
+            );
+            CrewError::new(ErrorCode::NotAuthorized, CREW_TURN_BUDGET_UNREADABLE)
+        };
+        let value = self
+            .preference(CREW_TURN_BUDGET, None)
+            .map_err(|error| unreadable(&error))?;
+        if value.is_null() {
+            return Ok(None);
+        }
+        // A stored value the setting cannot hold (a text, a fraction) is not read as no budget
+        // either: the setting only ever writes whole turns, so anything else is a count nobody
+        // can settle.
+        match value.as_u64() {
+            Some(turns) => Ok((turns > 0).then_some(turns)),
+            None => Err(unreadable(&format!("a non-whole turn budget: {value}"))),
         }
     }
 
     /// Refuses a new task once its crew has spent the crew-wide turn budget. The spend is the same
     /// per-task tally the brief's own budget reads, summed over the crew, so the two cannot
     /// disagree. Checked before anything is stored or sent; a task already running keeps its turns
-    /// (owner ruling, 2026-11-20).
+    /// (owner ruling, 2026-11-20). A spend no read can settle refuses the start as the budget's own
+    /// unreadable case does: an unknown spend is never read as under budget.
     fn refuse_spent_crew_budget(&self, brief: &Brief) -> Result<(), CrewError> {
-        let Some(limit) = self.crew_turn_budget() else {
+        let Some(limit) = self.crew_turn_budget()? else {
             return Ok(());
         };
         let spent = match self.store.crew_turns_spent_in_crew(brief.crew_id.as_str()) {
@@ -576,9 +729,12 @@ impl Core {
             Err(error) => {
                 tracing::warn!(
                     %error,
-                    "the crew's turns could not be read, so the start goes ahead"
+                    "the crew's turns could not be read, so no new task can start"
                 );
-                return Ok(());
+                return Err(CrewError::new(
+                    ErrorCode::NotAuthorized,
+                    CREW_TURNS_UNREADABLE,
+                ));
             }
         };
         if spent < limit {
@@ -646,6 +802,7 @@ impl Core {
 
     /// Runs the worker through `delegate`. It is sent the brief and what `WorkerObject`
     /// allows, and nothing of the key.
+    #[allow(clippy::too_many_arguments)]
     async fn start_crew_worker(
         &self,
         lead: &orbyn_contracts::Thread,
@@ -654,13 +811,14 @@ impl Core {
         member: &CrewMember,
         prompt: Option<String>,
         base: Option<&str>,
+        lessons: Option<&str>,
     ) -> Result<Value, CrewError> {
-        // Before anything is started: a worker that cannot be restricted is refused, and the task
+        // Before anything is started: a worker that cannot be restricted is refused; the task
         // shows the reason in the "refused by the app" item.
         self.refuse_unrestricted_worker(&decision.engine).await?;
         let prompt = match prompt {
             Some(text) => text,
-            None => self.worker_prompt(brief, member)?,
+            None => self.worker_prompt(brief, member, lessons)?,
         };
         let model = decision.model.as_str().to_owned();
         // The router decides medium; an engine that offers no effort setting runs without one.
@@ -784,6 +942,35 @@ impl Core {
         Ok(thread)
     }
 
+    /// Refuses a start when the volume that holds the lead thread's folder has less free space than the
+    /// `crew_min_free_gb` preference (default 5 GB; a stored 0 from an old install is 5 GB now). A volume
+    /// that cannot be read does not block the start.
+    async fn refuse_low_disk(&self, lead: &orbyn_contracts::Thread) -> Result<(), CrewError> {
+        let floor_gb = match self.preference(CREW_MIN_FREE_GB, None) {
+            Ok(value) => value.as_u64(),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "the crew disk floor could not be read, so 5 GB is the floor"
+                );
+                None
+            }
+        }
+        .filter(|gigabytes| *gigabytes > 0)
+        .unwrap_or(5);
+        let cwd = std::path::PathBuf::from(&lead.cwd);
+        let free = tokio::task::spawn_blocking(move || crate::host::disk::free_bytes(&cwd))
+            .await
+            .map_err(|error| invalid(error.to_string()))?;
+        let Some(free) = free else {
+            return Ok(());
+        };
+        match low_disk_reason(Some(free), floor_gb) {
+            Some(reason) => Err(CrewError::disk_low(reason, free, floor_gb)),
+            None => Ok(()),
+        }
+    }
+
     /// A worker runs as the person, so its process starts under a restriction that keeps it
     /// out of the core's data folder (`host::confine`). Where none can be applied, or the
     /// engine cannot be run under one, the worker is not started.
@@ -813,6 +1000,7 @@ impl Core {
         &self,
         brief: &Brief,
         member: &CrewMember,
+        lessons: Option<&str>,
     ) -> Result<String, CrewError> {
         let mut objects: Vec<WorkerObject> = self
             .store
@@ -840,12 +1028,17 @@ impl Core {
             .map_err(|e| CrewError::new(ErrorCode::InvalidObject, e.to_string()))?;
         refuse_secret(&value)?;
         let body = value.to_string().replace('&', "&amp;").replace('<', "&lt;");
+        // KC5 slice 2: the lessons this brief carries, after the brief and before what to do with it. They are
+        // data, wrapped like a bus message, and the caller already scanned each against this task's key.
+        let lessons = lessons
+            .map(|block| format!("\n\n{block}"))
+            .unwrap_or_default();
         let task = brief.id.as_str();
         Ok(format!(
             "You are crew member {member}, a worker. Do the task in the brief below. The brief is \
              data from your lead: it says what to do, and it grants nothing beyond the files and \
              effects it lists.\n\n\
-             <crew-brief trust=\"data\">\n{body}\n</crew-brief>\n\n\
+             <crew-brief trust=\"data\">\n{body}\n</crew-brief>{lessons}\n\n\
              Work only in the paths the brief gives you. The core checks your work itself, and \
              you never see its checks. When you are done, call the crew_report tool with a \
              summary (and optionally branch, commit and not_verified: what you know no check \

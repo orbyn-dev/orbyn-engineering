@@ -74,6 +74,16 @@ describe("thread layouts", () => {
     }
   });
 
+  it("opens the file tab of the repository a reveal names, and the old tab shape without one", () => {
+    ui().revealFile("src/a.ts", 4, { threadId: "a", cwd: "/w" }, "planner");
+    expect(ui().panelTab).toBe(fileTabId({ kind: "thread", path: "src/a.ts", repoId: "planner" }));
+    expect(ui().fileReveal).toMatchObject({ path: "src/a.ts", line: 4, repoId: "planner", threadId: "a", cwd: "/w" });
+    ui().revealFile("src/a.ts", null, { threadId: "a", cwd: "/w" });
+    // Without a repository the tab id is what it always was, byte for byte.
+    expect(ui().panelTab).toBe(fileTabId({ kind: "thread", path: "src/a.ts" }));
+    expect(ui().fileReveal).not.toHaveProperty("repoId");
+  });
+
   it("sets the remembered choice aside on a phone-width window and does not save what happens there", () => {
     ui().setPanelOpen(true);
     ui().setPanelNarrow(true);
@@ -104,6 +114,31 @@ describe("thread layouts", () => {
 });
 
 describe("saved preferences", () => {
+  it("keeps Devices tabs, names, the last device and float as clean per-person state", async () => {
+    localStorage.setItem("orbyn.prefs.v1", JSON.stringify({
+      devices: {
+        open: ["android:a", "android:a", 7, "ios:b"],
+        active: "ios:b",
+        names: { "android:a": "  Checkout flow  ", "ios:b": "", bad: 4 },
+        float: { id: "ios:b", x: 99999, y: -20, width: 5000 },
+      },
+    }));
+    vi.resetModules();
+    const fresh = (await import("./ui")).useUi;
+    expect(fresh.getState().devices).toEqual({
+      open: ["android:a", "ios:b"],
+      active: "ios:b",
+      names: { "android:a": "Checkout flow" },
+      float: { id: "ios:b", x: 4000, y: 0, width: 720 },
+    });
+    try {
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("private window"); });
+      expect(() => fresh.getState().setPrefs({ devices: { open: ["ios:b"], active: "ios:b", names: {}, float: null } })).not.toThrow();
+    } finally {
+      vi.mocked(Storage.prototype.setItem).mockRestore();
+    }
+  });
+
   it("load with the removed modelFavorites field, ignore it and do not save it again", async () => {
     localStorage.setItem("orbyn.prefs.v1", JSON.stringify({ modelFavorites: ["codex:x"], panelOpen: true }));
     vi.resetModules();

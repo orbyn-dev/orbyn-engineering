@@ -212,7 +212,9 @@ the person sees what they are about to apply.
 
 Errors for the family: `400 invalid_input` (field named, value never echoed), `404 not_found` (profile, thread or crew),
 `403 desktop_required` (browser mode or CLI on a Person route), `403 builtin_profile`, `409 revision_conflict`,
-`409 confirm_required` (only for a grant-raising profile whose grants are not acknowledged; the answer lists them), `409 profile_limit` (50 saved), `409 name_taken`, `409 engine_unavailable`, `409 mode_not_offered`, `409 tier_unmapped`,
+`409 confirm_required` (only for a grant-raising profile whose grants are not acknowledged: nothing is applied and
+`detail` is `{ "grants": [...] }`, the codes the request did not acknowledge), `409 profile_limit` (50 saved),
+`409 name_taken`, `409 engine_unavailable`, `409 mode_not_offered`, `409 tier_unmapped`,
 `409 run_active` when a thread's engine would change during a run (the model and mode alone change from the next turn).
 
 Audit: each Person write adds a row before the effect, with ids and names only (`profile.created`, `profile.changed`,
@@ -289,14 +291,15 @@ A workflow is text and a list of parameters. Saving one runs nothing. It does **
   required parameter with no value is `400 invalid_input`, and a `choice` value outside its list is refused. The
   answer never contains an environment value.
 - `POST /api/library/workflows/{id}/run` renders and starts the command in a terminal in the named project or thread
-  checkout, through the same terminal machinery, folder-trust rule (hard rule 5), gate and audit as typing it there. It is
-  **Person**: it acts on the person's shell. A Crew worker or any service-token caller is refused. It answers `{ "terminal_id": "<id>" }`, the id of the terminal it started, and nothing else. A folder that is not trusted is `403 folder_untrusted`.
+  checkout, through the same terminal machinery, folder-trust rule (hard rule 5), gate and audit as typing it there. It runs
+  under the app's fixed POSIX `/bin/sh -lc` on macOS and Linux, never the person's `$SHELL` (the rendering is POSIX), and under
+  `cmd /C` on Windows. It is **Person**: a Crew worker or any service-token caller is refused. It answers `{ "terminal_id": "<id>" }`, the id of the terminal it started, and nothing else. A folder that is not trusted is `403 folder_untrusted`.
   The body is `{ values, thread_id?, project_id?, ack_grants? }`: exactly one of `thread_id` and `project_id` (a project's
   most recently changed thread hosts the terminal, since terminals belong to threads; a project with no thread is
   `400 invalid_input`).
 - **Parameter substitution is injection-safe.** `render` and `run` quote each value for the target shell at expansion (POSIX
-  single quotes on macOS and Linux, double quotes on Windows `cmd`, where a value with a quote, `%`, `^`, `!` or a line break
-  is refused). A value is always one word. An empty optional value expands to nothing. A placeholder that sits inside the
+  single quotes on macOS and Linux, run by the fixed `/bin/sh -lc` above; double quotes on Windows `cmd`, where a value with a
+  quote, `%`, `^`, `!` or a line break is refused). A value is always one word. An empty optional value expands to nothing. A placeholder that sits inside the
   command's own quotes (`'..'`, `".."`, `$'..'`) or in a command with a here-document cannot be quoted safely and is
   `400 invalid_input` at save. A `path` value is relative to the project, with no `..`, no drive, no leading `-` or `~`.
 - **Grants a run needs.** A run raises a grant in two cases, and the code list lives in one place in core (`needed_grants`):
@@ -352,6 +355,11 @@ A set is a name and a list of key names. The values are in the keychain.
 - A value is 1 to 8,192 bytes, no NUL. A line break is allowed.
 - `present` is `true` only when the keychain holds a non-empty value. When the keychain is unusable every key is
   `present: false` and `keychain` says why. No length, prefix or suffix is ever reported.
+- Presence is recorded beside each key name (`library_env_keys.is_set`, migration 72). `GET /api/library/env-sets` reads each
+  key's `present` from that record rather than from the keychain, so listing sets reads no value per key; a key saved before 72
+  is checked once and recorded.
+  `GET /api/library/env-sets/{id}` re-checks every key against the keychain and records what it finds, so a value removed
+  outside Orbyn shows up there. When the keychain is unusable the answer reads `present: false` and the record is left alone.
 - **Status values.** Every set read and every list item carries `status`: `stored` (macOS: values can be saved) or
   `planned` (Windows and Linux in the beta: names only, no values). The UI shows a **Planned** pill on a `planned` set. On
   those platforms `keychain` is `unavailable`, `PUT .../keys/{key}` answers `503 keychain_unavailable`, and a workflow that

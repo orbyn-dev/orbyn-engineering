@@ -1,4 +1,4 @@
-import { dataChanged, shellChanged } from "../../api/shell";
+import { dataChanged, shellChanged, threadNotice } from "../../api/shell";
 import type { ShellEvent } from "../../api/types";
 import { goToHash, parseRoute } from "../../product/state/route";
 import { useUi } from "../../product/state/ui";
@@ -19,6 +19,9 @@ export function onShellEvent(event: ShellEvent) {
       return;
     case "data_changed":
       dataChanged(event.what);
+      return;
+    case "thread_event":
+      threadNotice(event.thread_id, event.seq);
       return;
     case "failed":
       useUi.getState().pushToast(event.message);

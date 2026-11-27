@@ -1,8 +1,8 @@
 //! The engine host's state as the wire contract the UI reads (`GET /api/engine-host`).
 
 use orbyn_contracts::{
-    EngineHostCrash, EngineHostErrorKind, EngineHostNotUsed, EngineHostRunError, EngineHostState,
-    EngineHostStatus, EngineHostThread, EngineHostThreadState,
+    EngineHostCrash, EngineHostErrorKind, EngineHostNotUsed, EngineHostRestart, EngineHostRunError,
+    EngineHostSdk, EngineHostState, EngineHostStatus, EngineHostThread, EngineHostThreadState,
 };
 
 use super::EngineManager;
@@ -105,6 +105,21 @@ pub fn contract(status: &HostStatus) -> EngineHostStatus {
                 .collect()
         }),
         last_error_kind: status.last_error.and_then(run_error),
+        since: status.since.map(crate::util::format_unix),
+        sdk: status.sdk.as_ref().map(|sdk| EngineHostSdk {
+            name: sdk.name.clone(),
+            version: sdk.version.clone(),
+        }),
+        capabilities: status.capabilities.clone(),
+        pooled: status.pooled,
+        restart: status.restart.as_ref().map(|restart| EngineHostRestart {
+            attempt: restart.attempt,
+            limit: restart.limit,
+            next_try_seconds: restart.next_try_seconds,
+        }),
+        stops_in_window: status.stops_in_window,
+        has_driver: status.has_driver,
+        sdk_missing: status.sdk_missing,
     }
 }
 

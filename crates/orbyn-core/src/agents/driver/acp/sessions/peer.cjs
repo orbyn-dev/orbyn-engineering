@@ -4,6 +4,8 @@ const [scenario, record, cwd] = process.argv.slice(2);
 const log = value => fs.appendFileSync(record, JSON.stringify(value) + "\n");
 log({ pid: process.pid, processCwd: process.cwd() });
 const send = value => fs.writeSync(1, JSON.stringify({ jsonrpc: "2.0", ...value }) + "\n");
+// An agent that cannot start at all: it is gone before it reads its first request.
+if (scenario === "exit") process.exit(1);
 const update = (kind, text, sessionId = "native") => send({ method: "session/update", params: { sessionId, update: { sessionUpdate: kind, content: { type: "text", text } } } });
 const result = id => send({ id, result: {} });
 let loading;
@@ -25,7 +27,22 @@ readline.createInterface({input:process.stdin}).on("line", line => {
   }
   if (msg.method === "session/list") return send({id,result:{sessions:[{sessionId:"native",cwd,title:"Native",additionalDirectories:[]}],nextCursor:"next"}});
   if (msg.method === "session/delete") return result(id);
-  if (msg.method === "session/new") return send({id,result:{sessionId:scenario === "oversize-id" ? "x".repeat(1025) : "new-native"}});
+  if (msg.method === "session/new") {
+    // -32000 is ACP's auth-required code; the words are deliberately unrelated, so
+    // only the code can say a sign-in is needed.
+    if (scenario === "auth-new") return send({id,error:{code:-32000,message:"Unknown session"}});
+    // Kiro starts with autopilot on; the "no-off" variant offers no supervised value, which cannot be made safe,
+    // "text" is not a select, and "no-autopilot" offers no option at all.
+    const autopilotSelect = { id: "autopilot", name: "Autopilot", type: "select", currentValue: "on",
+      options: scenario === "kiro-autopilot-no-off" ? [{ value: "on", name: "On" }] : [{ value: "on", name: "On" }, { value: "off", name: "Off" }] };
+    const kiro =
+      scenario === "kiro-no-autopilot" ? {}
+      : scenario === "kiro-autopilot-text" ? { configOptions: [{ id: "autopilot", name: "Autopilot", type: "text", currentValue: "on" }] }
+      : scenario.startsWith("kiro-autopilot") ? { configOptions: [autopilotSelect] }
+      : {};
+    return send({id,result:{sessionId:scenario === "oversize-id" ? "x".repeat(1025) : "new-native", ...kiro}});
+  }
+  if (msg.method === "session/set_config_option") return result(id);
   if (["session/load","session/resume"].includes(msg.method)) {
     if (scenario === "hang") return;
     if (scenario === "unknown") return send({id,error:{code:-32002,message:"not a string classifier"}});
@@ -44,6 +61,12 @@ readline.createInterface({input:process.stdin}).on("line", line => {
     return history(id);
   }
   if (msg.method === "session/prompt") {
+    // Kiro may re-advertise autopilot on at any time; a supervised session must correct it.
+    if (scenario === "kiro-autopilot") {
+      send({ method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "config_option_update",
+        configOptions: [{ id: "autopilot", name: "Autopilot", type: "select", currentValue: "on",
+          options: [{ value: "on", name: "On" }, { value: "off", name: "Off" }] }] } } });
+    }
     update("agent_message_chunk","new output",msg.params.sessionId);
     return send({id,result:{stopReason:"end_turn"}});
   }

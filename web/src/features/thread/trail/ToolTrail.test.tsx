@@ -45,7 +45,22 @@ const openAll = async () => {
 };
 const rows = () => [...document.querySelectorAll<HTMLButtonElement>("button.tcr")];
 
-beforeEach(() => forgetOpenState());
+/** The thread's one run was interrupted, so its resultless calls are unknown rather than unanswered. */
+const cancelRun = () =>
+  useThreadLogs.setState((state) => ({
+    logs: { ...state.logs, t1: { ...emptyLog, runs: { r: { startedAt: "2026-11-08T10:00:00.000Z", endedAt: "2026-11-08T10:00:09.000Z", outcome: "cancelled" } } } },
+  }));
+
+/** The thread's one run is still going, so its unfinished calls are not missing yet. */
+const startRun = () =>
+  useThreadLogs.setState((state) => ({
+    logs: { ...state.logs, t1: { ...emptyLog, runs: { r: { startedAt: "2026-11-08T10:00:00.000Z", endedAt: null, outcome: null } } } },
+  }));
+
+beforeEach(() => {
+  forgetOpenState();
+  useThreadLogs.setState({ logs: {} });
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe("the trail of tool calls", () => {
@@ -57,11 +72,14 @@ describe("the trail of tool calls", () => {
     expect(screen.getByText("M a.ts")).toBeInTheDocument();
   });
 
-  it("marks a failed command with its exit code, and says so to a screen reader", () => {
+  it("marks a failed command with the design's Failed · exit code words, and says so to a screen reader", () => {
     render(<Trail items={[make("Bash", { command: "npm test" }, { exitCode: 1, result: "1 failed" })]} />);
-    const row = screen.getByRole("button", { name: "npm test exit 1 · 3.9s, failed" });
+    const row = screen.getByRole("button", { name: "npm test Failed · exit code 1" });
     expect(row).toHaveClass("s-fail");
-    expect(row).toHaveTextContent("exit 1 · 3.9s");
+    expect(row.querySelector(".du .fail")).toHaveTextContent(/^Failed$/);
+    expect(row.querySelector(".du")).toHaveTextContent(/^Failed · exit code 1$/);
+    // The outcome words replace the duration on the row; the block footer still keeps both.
+    expect(row).not.toHaveTextContent("3.9s");
   });
 
   it("shows a running command with a spinner, and says it is running", () => {
@@ -72,19 +90,50 @@ describe("the trail of tool calls", () => {
     expect(rows()[0]).toHaveAccessibleName(/, running$/);
   });
 
-  it("shows a call that never finished in a run that is over as stopped", () => {
+  it("shows a call with no result as a muted row with a minus mark and the design's words", () => {
     render(<Trail items={[make("Bash", { command: "sleep 9" }, { result: null, done: false, endedAt: undefined })]} />);
-    expect(rows()[0]).toHaveClass("s-stop");
-    expect(rows()[0]).toHaveAccessibleName(/, stopped$/);
+    const row = rows()[0]!;
+    expect(row).toHaveClass("s-stop");
+    expect(row.querySelector(".tic .lucide-minus")).not.toBeNull();
+    expect(row).toHaveAccessibleName("sleep 9 No result reported · ended without one");
+    expect(row.querySelector(".du")).toHaveTextContent(/^No result reported · ended without one$/);
+    expect(row.querySelector(".du")).not.toHaveTextContent(/\d+s/);
+  });
+
+  it("calls a resultless call outcome unknown when its run was interrupted", () => {
+    interrupt();
+    render(<Trail items={[make("Bash", { command: "npm run build" }, { result: null, done: false, endedAt: undefined })]} />);
+    const row = rows()[0]!;
+    expect(row.querySelector(".tic .lucide-minus")).not.toBeNull();
+    expect(row).toHaveAccessibleName("npm run build Outcome unknown · run interrupted");
+    expect(row.querySelector(".du")).toHaveTextContent(/^Outcome unknown · run interrupted$/);
+  });
+
+  it("reads a finished call that reported no outcome as outcome unknown", () => {
+    render(<Trail items={[make("Bash", { command: "npm run build" }, { exitCode: null, result: "built" })]} />);
+    expect(rows()[0]).toHaveAccessibleName("npm run build Outcome unknown");
+    expect(rows()[0]!.querySelector(".du")).toHaveTextContent(/^Outcome unknown$/);
+  });
+
+  it("keeps the bare outcome word for an answered older-log call in a cancelled run", () => {
+    interrupt();
+    render(<Trail items={[make("Bash", { command: "npm run build" }, { exitCode: null, result: "built" })]} />);
+    expect(rows()[0]).toHaveAccessibleName("npm run build Outcome unknown");
+    expect(rows()[0]!.querySelector(".du")).toHaveTextContent(/^Outcome unknown$/);
+  });
+
+  it("shows a failed call with no exit code as Failed alone, never inventing one", () => {
+    render(<Trail items={[make("Read", { file_path: "/p/a.ts" }, { outcome: "failure", result: "denied" })]} />);
+    const row = rows()[0]!;
+    expect(row).toHaveAccessibleName("Read /p/a.ts Failed");
+    expect(row.querySelector(".du")).toHaveTextContent(/^Failed$/);
+    expect(row).not.toHaveTextContent("exit code");
   });
 
   const ok = (command: string) => make("Bash", { command }, { exitCode: 0 });
   const failed = (command: string) => make("Bash", { command }, { exitCode: 1, result: "1 failed" });
   const noResult = (name: string, args: unknown) => make(name, args, { result: null, done: false, endedAt: undefined });
-  const interrupt = () =>
-    useThreadLogs.setState((state) => ({
-      logs: { ...state.logs, t1: { ...emptyLog, runs: { r: { startedAt: "2026-11-08T10:00:00.000Z", endedAt: "2026-11-08T10:00:09.000Z", outcome: "cancelled" } } } },
-    }));
+  const interrupt = cancelRun;
 
   it("counts a collapsed group's failed calls apart and keeps its count, without naming the call or its exit code", () => {
     render(<Trail items={[ok("ls"), failed("npm test")]} />);
@@ -106,7 +155,7 @@ describe("the trail of tool calls", () => {
     unmount();
     render(<Trail items={[ok("ls"), failed("npm test")]} />);
     await userEvent.click(rows()[0]!);
-    const call = screen.getByRole("button", { name: "npm test exit 1 · 3.9s, failed" });
+    const call = screen.getByRole("button", { name: "npm test Failed · exit code 1" });
     expect(call).toHaveClass("s-fail");
     expect(call.querySelector("[aria-label='Tool call failed']")).not.toBeNull();
     expect(rows()[0]).not.toHaveClass("s-fail");
@@ -120,7 +169,7 @@ describe("the trail of tool calls", () => {
     expect(fail).toHaveTextContent(/^1 failed$/);
     expect(group.querySelector(".tla")).toHaveTextContent(/^Ran 2 commands · 1 failed$/);
     expect(group.querySelector(".tln")).toBeNull();
-    expect(screen.getByRole("button", { name: "npm test exit 1 · 3.9s, failed" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "npm test Failed · exit code 1" })).toBeInTheDocument();
   });
 
   it("says in the group row that a fetch ended without a result, and does not mark the row failed", () => {
@@ -315,6 +364,49 @@ describe("the trail of tool calls", () => {
     expect(document.querySelector(".kvs")).toHaveTextContent("login redirect");
   });
 
+  it("draws a refused crew start as Start task, with Not started and the disk sentence from the numbers, never the answer's sentence", async () => {
+    const refusal = {
+      v: 0,
+      code: "disk_low",
+      message: "A different sentence that is not the disk one.",
+      free_bytes: 3_400_000_000,
+      floor_gb: 5,
+    };
+    render(
+      <Trail
+        items={[
+          make(
+            "mcp__orbyn_engineering__crew_start",
+            { brief: { outcome: "Rename returnTo to next in the session code" }, answer_key: {} },
+            { result: JSON.stringify(refusal), outcome: "failure" },
+          ),
+        ]}
+      />,
+    );
+    const row = rows()[0]!;
+    expect(row).toHaveTextContent(/Start task:\s*Rename returnTo to next in the session code/);
+    expect(row).toHaveTextContent("Not started");
+    await userEvent.click(row);
+    expect(screen.getByText("Not started: 3.1 GB free, Crew needs 5 GB. Free space and try again.")).toBeVisible();
+    expect(screen.queryByText(/A different sentence/)).toBeNull();
+  });
+
+  it("still writes the disk sentence when a refused crew start's own message is empty", async () => {
+    render(
+      <Trail
+        items={[
+          make(
+            "mcp__orbyn_engineering__crew_start",
+            { brief: { outcome: "Use next in the auth redirect" }, answer_key: {} },
+            { result: JSON.stringify({ v: 0, code: "disk_low", message: "", free_bytes: 640 * 1024 * 1024, floor_gb: 5 }), outcome: "failure" },
+          ),
+        ]}
+      />,
+    );
+    await userEvent.click(rows()[0]!);
+    expect(screen.getByText("Not started: 640 MB free, Crew needs 5 GB. Free space and try again.")).toBeVisible();
+  });
+
   it("shows a subagent's task, falling back to its prompt, and its result", async () => {
     render(<Trail items={[make("Task", { subagent_type: "Explore", description: "", prompt: "Find every reader" }, { result: "4 files" })]} />);
     await userEvent.click(rows()[0]!);
@@ -386,21 +478,21 @@ describe("the trail of tool calls", () => {
 describe("Expand all and Collapse all", () => {
   const kinds = [
     make("Bash", { command: "a" }, { exitCode: 0 }),
-    make("Read", { file_path: "/p/a.ts" }),
-    make("Grep", { pattern: "q" }),
-    make("Edit", { file_path: "/p/a.ts", old_string: "a", new_string: "b" }),
+    make("Read", { file_path: "/p/a.ts" }, { outcome: "success" }),
+    make("Grep", { pattern: "q" }, { outcome: "success" }),
+    make("Edit", { file_path: "/p/a.ts", old_string: "a", new_string: "b" }, { outcome: "success" }),
   ];
   const turn = (items: ToolItem[]) => [
     { kind: "message" as const, key: "u", seq: 0, runId: "r", ts: "", role: "user", text: "go", done: true },
     ...items,
     { kind: "message" as const, key: "a", seq: 99, runId: "r", ts: "", role: "assistant", text: "done", done: true },
   ];
-  const renderTurn = (items: ToolItem[]) =>
+  const renderTurn = (items: ToolItem[], live = false) =>
     render(
       <TimelineThread value="t1">
         <OpenStateScope value="t1">
           {arrangeTimeline(turn(items), {}, null).map((entry) => (
-            <TimelineRow key={entry.key} entry={entry} live={false} tools={[]} />
+            <TimelineRow key={entry.key} entry={entry} live={live} tools={[]} />
           ))}
         </OpenStateScope>
       </TimelineThread>,
@@ -409,7 +501,7 @@ describe("Expand all and Collapse all", () => {
   it("opens and folds every group of a turn with four or more", async () => {
     renderTurn(kinds);
     await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
-    expect(screen.getByText("4 tool calls in 4 groups")).toBeInTheDocument();
+    expect(screen.getByText("4 tool calls · 4 succeeded")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Expand all" }));
     expect(rows().map((row) => row.getAttribute("aria-expanded"))).toEqual(["true", "true", "true", "true"]);
     await userEvent.click(screen.getByRole("button", { name: "Collapse all" }));
@@ -418,16 +510,79 @@ describe("Expand all and Collapse all", () => {
 
   it("targets the rows the view shows when reasoning splits a run, and counts them as groups", async () => {
     const reasoning = { kind: "reasoning" as const, key: "think", seq: 3, runId: "r", ts: "", text: "hm", done: true };
-    const a = make("Read", { file_path: "/p/a.ts" });
-    const b = make("Read", { file_path: "/p/b.ts" });
-    renderTurn([a, reasoning, b, make("Bash", { command: "x" }, { exitCode: 0 }), make("Grep", { pattern: "q" })] as never);
+    const a = make("Read", { file_path: "/p/a.ts" }, { outcome: "success" });
+    const b = make("Read", { file_path: "/p/b.ts" }, { outcome: "success" });
+    renderTurn([a, reasoning, b, make("Bash", { command: "x" }, { exitCode: 0 }), make("Grep", { pattern: "q" }, { outcome: "success" })] as never);
     await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
-    expect(screen.getByText("4 tool calls in 4 groups")).toBeInTheDocument();
+    expect(screen.getByText("4 tool calls · 4 succeeded")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Expand all" }));
     const open = rows().filter((row) => row.getAttribute("aria-expanded") === "true");
     expect(open.some((row) => row.textContent?.includes("a.ts"))).toBe(true);
     expect(open.some((row) => row.textContent?.includes("b.ts"))).toBe(true);
     expect(open.some((row) => row.textContent?.includes("Read 2 files"))).toBe(false);
+  });
+
+  it("counts a finished turn's calls by outcome, listing only the outcomes the turn has", async () => {
+    renderTurn([
+      make("Bash", { command: "npm test" }, { exitCode: 0 }),
+      make("Read", { file_path: "/p/a.ts" }, { result: null, done: false, endedAt: undefined }),
+      make("Edit", { file_path: "/p/b.ts", old_string: "a", new_string: "b" }, { outcome: "failure" }),
+      make("Grep", { pattern: "q" }, { exitCode: null, result: "ok" }),
+    ]);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    expect(screen.getByText("4 tool calls · 1 succeeded · 1 failed · 1 no result reported · 1 outcome unknown")).toBeInTheDocument();
+  });
+
+  it("calls a finished turn's resultless calls outcome unknown when its run was interrupted", async () => {
+    cancelRun();
+    renderTurn([
+      make("Bash", { command: "npm test" }, { exitCode: 0 }),
+      make("Read", { file_path: "/p/a.ts" }, { result: null, done: false, endedAt: undefined }),
+      make("Grep", { pattern: "q" }, { outcome: "success" }),
+      make("Edit", { file_path: "/p/b.ts", old_string: "a", new_string: "b" }, { outcome: "success" }),
+    ]);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    expect(screen.getByText("4 tool calls · 3 succeeded · 1 outcome unknown")).toBeInTheDocument();
+  });
+
+  it("draws the count line under an open single-group trail, without the bulk controls", async () => {
+    renderTurn([
+      make("Bash", { command: "npm test" }, { exitCode: 0 }),
+      make("Bash", { command: "npm run lint" }, { exitCode: 1, result: "1 failed" }),
+      make("Bash", { command: "git fetch" }, { result: null, done: false, endedAt: undefined }),
+      make("Bash", { command: "npm run build" }, { exitCode: null, result: "built" }),
+    ]);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    expect(screen.getByText("4 tool calls · 1 succeeded · 1 failed · 1 no result reported · 1 outcome unknown")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Expand all" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Collapse all" })).toBeNull();
+  });
+
+  it("reads an older interrupted turn from its own ended run, not the page's later run", async () => {
+    cancelRun();
+    // The page reports a live run (a later one); this fold's run ended cancelled.
+    renderTurn([
+      make("Bash", { command: "npm test" }, { exitCode: 0 }),
+      make("Read", { file_path: "/p/a.ts" }, { result: null, done: false, endedAt: undefined }),
+      make("Grep", { pattern: "q" }, { outcome: "success" }),
+      make("Edit", { file_path: "/p/b.ts", old_string: "a", new_string: "b" }, { outcome: "success" }),
+    ], true);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    // The fold's run is over, so its missing call is unknown; it is not still running.
+    expect(screen.getByText("4 tool calls · 3 succeeded · 1 outcome unknown")).toBeInTheDocument();
+    expect(screen.queryByText("4 tool calls · 3 succeeded")).toBeNull();
+  });
+
+  it("keeps a genuinely running turn's unfinished call in the total, not in the missing counts", async () => {
+    startRun();
+    renderTurn([
+      make("Bash", { command: "npm test" }, { exitCode: 0 }),
+      make("Read", { file_path: "/p/a.ts" }, { result: null, done: false, endedAt: undefined }),
+      make("Grep", { pattern: "q" }, { outcome: "success" }),
+      make("Edit", { file_path: "/p/b.ts", old_string: "a", new_string: "b" }, { outcome: "success" }),
+    ], true);
+    await userEvent.click(document.querySelector<HTMLElement>("button.work-summary")!);
+    expect(screen.getByText("4 tool calls · 3 succeeded")).toBeInTheDocument();
   });
 
   it("is not offered for a turn with fewer than four groups", async () => {

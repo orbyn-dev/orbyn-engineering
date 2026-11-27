@@ -1,4 +1,7 @@
-//! Preview tabs in a real headless Chrome, and servers a thread started.
+//! Preview tabs in a real headless browser, and servers a thread started.
+//!
+//! The tab cases need a browser: they ask `support::browser_env` for one, and skip
+//! with the reason when the run has none.
 
 mod support;
 
@@ -7,7 +10,7 @@ use std::net::TcpListener;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use serde_json::json;
+use serde_json::{Value, json};
 use support::{Options, Service, TempDir, setup};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -150,14 +153,16 @@ async fn put_json(service: &Service, path: &str) -> u16 {
 }
 
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn preview_window_requires_its_owning_thread_and_an_attached_shell() {
+    let Some(env) = support::browser_env(&[]) else {
+        return;
+    };
     let dir = TempDir::new();
     let (mut desktop, thread) = setup(
         &dir,
         Options {
             args: vec!["--parent-stdin".into()],
-            ..Options::default()
+            env: env.clone(),
         },
         "codex",
     )
@@ -241,7 +246,15 @@ async fn preview_window_requires_its_owning_thread_and_an_attached_shell() {
     );
 
     let plain_dir = TempDir::new();
-    let (plain, plain_thread) = setup(&plain_dir, Options::default(), "codex").await;
+    let (plain, plain_thread) = setup(
+        &plain_dir,
+        Options {
+            env,
+            ..Options::default()
+        },
+        "codex",
+    )
+    .await;
     let plain_base = format!("/api/threads/{plain_thread}/previews");
     let (status, plain_tab) = plain
         .send(
@@ -265,10 +278,20 @@ async fn preview_window_requires_its_owning_thread_and_an_attached_shell() {
 }
 
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn a_tab_streams_frames_and_a_person_must_take_it_to_click() {
+    let Some(env) = support::browser_env(&[]) else {
+        return;
+    };
     let dir = TempDir::new();
-    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let (service, thread) = setup(
+        &dir,
+        Options {
+            env,
+            ..Options::default()
+        },
+        "codex",
+    )
+    .await;
     let port = serve_page();
     let base = format!("/api/threads/{thread}/previews");
     let (code, tab) = service
@@ -366,8 +389,9 @@ async fn a_tab_streams_frames_and_a_person_must_take_it_to_click() {
     // response does not drain older frames already queued on the WebSocket.
     // Check decoded dimensions until the new viewport arrives, with one deadline
     // for the whole wait so a stream of stale frames cannot keep the test alive.
+    // The deadline covers a loaded machine, where capture and encoding are slow.
     let mut last_size = None;
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let framed = next_frame(&mut socket).await;
             let size = jpeg_size(&decode(&framed));
@@ -389,17 +413,34 @@ async fn a_tab_streams_frames_and_a_person_must_take_it_to_click() {
 
     assert_eq!(put_json(&service, &format!("{base}/{id}")).await, 204);
     assert_eq!(service.json(&base).await.as_array().unwrap().len(), 0);
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    // The profile folder goes once the browser's process has ended, which a loaded
+    // machine can put after the close request, so wait for it within a deadline.
     let profiles = dir.path().join("data/preview-profiles").join(id);
+    for _ in 0..300 {
+        if !profiles.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     assert!(!profiles.exists(), "the profile goes with the tab");
     service.stop().await;
 }
 
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn an_agent_records_a_page_in_its_own_tab() {
+    let Some(env) = support::browser_env(&[]) else {
+        return;
+    };
     let dir = TempDir::new();
-    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let (service, thread) = setup(
+        &dir,
+        Options {
+            env,
+            ..Options::default()
+        },
+        "codex",
+    )
+    .await;
     let (code, _) = service
         .patch(&thread, json!({ "permission_mode": "full_access" }))
         .await;
@@ -478,10 +519,20 @@ async fn an_agent_records_a_page_in_its_own_tab() {
 }
 
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn a_page_is_read_and_driven_by_an_agent() {
+    let Some(env) = support::browser_env(&[]) else {
+        return;
+    };
     let dir = TempDir::new();
-    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let (service, thread) = setup(
+        &dir,
+        Options {
+            env,
+            ..Options::default()
+        },
+        "codex",
+    )
+    .await;
     let (code, _) = service
         .patch(&thread, json!({ "permission_mode": "full_access" }))
         .await;
@@ -836,10 +887,20 @@ async fn servers_are_those_running_from_the_checkout_and_only_they_can_be_stoppe
 }
 
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn a_tab_is_shown_as_asked_and_reads_an_element() {
+    let Some(env) = support::browser_env(&[]) else {
+        return;
+    };
     let dir = TempDir::new();
-    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let (service, thread) = setup(
+        &dir,
+        Options {
+            env,
+            ..Options::default()
+        },
+        "codex",
+    )
+    .await;
     let port = serve_page();
     let base = format!("/api/threads/{thread}/previews");
     let (code, tab) = service
@@ -894,10 +955,20 @@ async fn a_tab_is_shown_as_asked_and_reads_an_element() {
 }
 
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn a_named_profile_outlives_its_tab_and_holds_one_at_a_time() {
+    let Some(env) = support::browser_env(&[]) else {
+        return;
+    };
     let dir = TempDir::new();
-    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let (service, thread) = setup(
+        &dir,
+        Options {
+            env,
+            ..Options::default()
+        },
+        "codex",
+    )
+    .await;
     let port = serve_page();
     let url = format!("http://127.0.0.1:{port}/");
     let base = format!("/api/threads/{thread}/previews");
@@ -937,10 +1008,20 @@ async fn a_named_profile_outlives_its_tab_and_holds_one_at_a_time() {
     assert_eq!(closed.status(), 204);
     let folder = dir.path().join("data/browser-profiles").join(id);
     assert!(folder.exists(), "a named profile stays");
-    let (code, _) = service
-        .send(&format!("/api/browser-profiles/{id}/clear"), json!({}))
-        .await;
-    assert_eq!(code, 204);
+    // Windows releases a stopped browser's profile files a moment after its process
+    // ends, so a clear that races the close is retried inside a deadline: the route
+    // answers 500 while the folder is still held.
+    let clear = format!("/api/browser-profiles/{id}/clear");
+    let mut code = None;
+    for _ in 0..300 {
+        let (status, _) = service.send(&clear, json!({})).await;
+        code = Some(status);
+        if status == 204 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(code, Some(204), "the profile folder stayed held");
     assert!(!folder.exists());
     assert_eq!(
         service.json("/api/browser-profiles").await[0]["name"],
@@ -958,12 +1039,21 @@ async fn a_named_profile_outlives_its_tab_and_holds_one_at_a_time() {
     service.stop().await;
 }
 
-#[cfg(unix)]
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn a_crashed_browser_comes_back_on_its_page() {
+    let Some(env) = support::browser_env(&[]) else {
+        return;
+    };
     let dir = TempDir::new();
-    let (service, thread) = setup(&dir, Options::default(), "codex").await;
+    let (service, thread) = setup(
+        &dir,
+        Options {
+            env,
+            ..Options::default()
+        },
+        "codex",
+    )
+    .await;
     let port = serve_page();
     let base = format!("/api/threads/{thread}/previews");
     let (code, tab) = service
@@ -978,14 +1068,10 @@ async fn a_crashed_browser_comes_back_on_its_page() {
     );
     let (mut socket, _) = connect_async(url).await.unwrap();
     next_frame(&mut socket).await;
-    let killed = std::process::Command::new("pkill")
-        .args(["-9", "-f", &format!("preview-profiles/{id}")])
-        .status()
-        .unwrap();
-    assert!(killed.success());
+    kill_browser(id);
     // The page didn't change, so only a working browser proves it came back.
     let mut working = false;
-    for _ in 0..100 {
+    for _ in 0..300 {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let (code, reloaded) = service
             .send(&format!("{base}/{id}/reload"), json!({}))
@@ -996,5 +1082,146 @@ async fn a_crashed_browser_comes_back_on_its_page() {
         }
     }
     assert!(working, "the browser never came back");
+    service.stop().await;
+}
+
+/// Ends the browser that has the tab's profile open, so the service has to start one again.
+fn kill_browser(id: &str) {
+    #[cfg(unix)]
+    {
+        let ended = std::process::Command::new("pkill")
+            .args(["-9", "-f", &format!("preview-profiles/{id}")])
+            .status()
+            .unwrap();
+        assert!(ended.success(), "no browser had the tab's profile");
+    }
+    #[cfg(windows)]
+    {
+        // A browser's command line names its profile folder; PowerShell finds the
+        // process by that and stops it. Its own command line carries the same text,
+        // so the process running it is left out of the match.
+        let script = format!(
+            "$found = @(Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId \
+             -ne $PID -and $_.CommandLine -like '*preview-profiles*{id}*' }}); \
+             if ($found.Count -eq 0) {{ exit 1 }}; \
+             $found | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }}; \
+             foreach ($p in $found) {{ try {{ Wait-Process -Id $p.ProcessId -Timeout 10 -ErrorAction Stop }} \
+             catch [Microsoft.PowerShell.Commands.ProcessCommandException] {{ }} }}"
+        );
+        let ended = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .status()
+            .unwrap();
+        assert!(ended.success(), "no browser had the tab's profile");
+    }
+}
+
+/// `POST .../rename` with the service token, and the key only when `key` is given.
+async fn rename_profile(
+    service: &Service,
+    path: &str,
+    name: &str,
+    key: Option<&str>,
+) -> (u16, Value) {
+    let mut request = service.post(path).json(&json!({ "name": name }));
+    if let Some(key) = key {
+        request = request.header("x-orbyn-person", key);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status().as_u16();
+    let text = response.text().await.unwrap();
+    (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn a_browser_profile_rename_is_person_only_and_updates_the_stored_name() {
+    let dir = TempDir::new();
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--parent-stdin".into()],
+            env: vec![("ORBYN_DEV_DISABLE_PERSON_KEY".into(), "0".into())],
+        },
+    );
+    let key = service
+        .person_key
+        .clone()
+        .expect("a shell gets a person key");
+    let (status, profile) = service
+        .send("/api/browser-profiles", json!({ "name": "Work" }))
+        .await;
+    assert_eq!(status, 201, "{profile}");
+    let id = profile["id"].as_str().unwrap().to_owned();
+    let path = format!("/api/browser-profiles/{id}/rename");
+
+    // The service token alone, or a wrong key, is refused and changes nothing.
+    for key in [None, Some("wrong")] {
+        let (status, answer) = rename_profile(&service, &path, "Nope", key).await;
+        assert_eq!(
+            (status, &answer["code"]),
+            (403, &json!("person_required")),
+            "{key:?}"
+        );
+    }
+    assert_eq!(
+        service.json("/api/browser-profiles").await[0]["name"],
+        "Work"
+    );
+
+    // The right key trims the name and answers the profile as it is now.
+    let (status, renamed) = rename_profile(&service, &path, "  Research  ", Some(&key)).await;
+    assert_eq!(status, 200, "{renamed}");
+    assert_eq!(renamed["id"], profile["id"]);
+    assert_eq!(renamed["name"], "Research");
+    assert_eq!(renamed["in_use"], false);
+    assert_eq!(
+        service.json("/api/browser-profiles").await[0]["name"],
+        "Research"
+    );
+
+    let (status, answer) = rename_profile(
+        &service,
+        "/api/browser-profiles/missing/rename",
+        "Research",
+        Some(&key),
+    )
+    .await;
+    assert_eq!(status, 404, "{answer}");
+    assert_eq!(answer["code"], "not_found");
+    assert_eq!(answer["message"], "browser profile not found");
+
+    // The same name rule as create: 1 to 64 characters and the same sentence.
+    let sixty_five = "x".repeat(65);
+    let (status, create_refusal) = service
+        .send("/api/browser-profiles", json!({ "name": sixty_five }))
+        .await;
+    assert_eq!(status, 400, "{create_refusal}");
+    assert_eq!(
+        create_refusal["message"],
+        "A profile name is 1 to 64 characters."
+    );
+    for name in ["", "   ", sixty_five.as_str()] {
+        let (status, answer) = rename_profile(&service, &path, name, Some(&key)).await;
+        assert_eq!(status, 400, "{name:?}: {answer}");
+        assert_eq!(answer["message"], create_refusal["message"]);
+    }
+
+    for body in [json!({}), json!({ "name": 42 }), json!({ "name": null })] {
+        let response = service
+            .post(&path)
+            .header("x-orbyn-person", key.as_str())
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let answer: Value = response.json().await.unwrap();
+        assert_eq!(status, 400, "{body}: {answer}");
+        assert_eq!(answer["code"], "invalid_input", "{body}: {answer}");
+    }
+    assert_eq!(
+        service.json("/api/browser-profiles").await[0]["name"],
+        "Research"
+    );
     service.stop().await;
 }

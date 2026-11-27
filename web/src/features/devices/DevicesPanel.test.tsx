@@ -17,10 +17,11 @@ async function open(name: RegExp | string) {
 const toolbar = () => screen.findByRole("toolbar", { name: "Device controls" });
 
 it("draws nothing, and no error, when the devices route answers 404", async () => {
-  const fetching = vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
+  const fetching = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ code: "not_found", message: "No such route." }), { status: 404 }));
   vi.stubGlobal("fetch", fetching);
   const { container } = render(<DevicesPanel />);
   await waitFor(() => expect(fetching).toHaveBeenCalledTimes(1));
+  expect(String(fetching.mock.calls[0]?.[0])).toMatch(/\/api\/devices/);
   await act(async () => { await Promise.resolve(); });
   expect(container).toBeEmptyDOMElement();
   expect(screen.queryByRole("alert")).toBeNull();
@@ -69,6 +70,51 @@ it("offers Back, Home, Recents and Rotate on Android, and no fold control on a d
   expect(screen.queryByRole("button", { name: "Hinge angle" })).toBeNull();
 });
 
+it("shows the orientation the service reports and rotates to the next one in the contract's order", async () => {
+  const mock = createDevicesMock();
+  setDevicesApi(mock);
+  render(<DevicesPanel />);
+  const user = await open(/Pixel 8/);
+  const bar = await toolbar();
+  expect(await screen.findByLabelText("Orientation")).toHaveTextContent("Portrait");
+  const steps = [
+    ["landscape_left", "Landscape left"],
+    ["portrait_upside_down", "Portrait upside down"],
+    ["landscape_right", "Landscape right"],
+    ["portrait", "Portrait"],
+  ] as const;
+  for (const [value, label] of steps) {
+    await user.click(within(bar).getByRole("button", { name: "Rotate" }));
+    await waitFor(() => expect(mock.writes.at(-1)).toBe(`android:Pixel_8_API_35:rotate:${value}`));
+    await waitFor(() => expect(screen.getByLabelText("Orientation")).toHaveTextContent(label));
+    await waitFor(() => expect(within(bar).getByRole("button", { name: "Rotate" })).toBeEnabled());
+  }
+});
+
+it("sends the first next orientation when none is reported, and shows none it did not receive", async () => {
+  const { orientation: _orientation, ...withoutOrientation } = deviceFixtures()[1]!;
+  const mock = createDevicesMock({ devices: [withoutOrientation] });
+  const act = mock.act.bind(mock);
+  mock.act = async (id, action) => {
+    const result = await act(id, action);
+    const { orientation: _answer, ...device } = result.device;
+    return { ...result, device };
+  };
+  setDevicesApi(mock);
+  render(<DevicesPanel />);
+  const user = await open(/Pixel 8/);
+  expect(await toolbar()).toBeVisible();
+  expect(screen.queryByLabelText("Orientation")).toBeNull();
+  const rotate = screen.getByRole("button", { name: "Rotate" });
+  await user.click(rotate);
+  await waitFor(() => expect(mock.writes).toEqual(["android:Pixel_8_API_35:rotate:landscape_left"]));
+  expect(screen.queryByLabelText("Orientation")).toBeNull();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Rotate" })).toBeEnabled());
+  await user.click(rotate);
+  await waitFor(() => expect(mock.writes).toEqual(["android:Pixel_8_API_35:rotate:landscape_left", "android:Pixel_8_API_35:rotate:landscape_left"]));
+  expect(screen.queryByLabelText("Orientation")).toBeNull();
+});
+
 it("offers nothing to do on a device that is shut down", async () => {
   setDevicesApi(createDevicesMock());
   render(<DevicesPanel />);
@@ -78,7 +124,7 @@ it("offers nothing to do on a device that is shut down", async () => {
 });
 
 it("sends one write per click, and a second click while one runs sends nothing", async () => {
-  const mock = createDevicesMock({ delayMs: 30 });
+  const mock = createDevicesMock({ delayMs: 100 });
   setDevicesApi(mock);
   render(<DevicesPanel />);
   const user = await open(/Pixel Fold/);
@@ -185,11 +231,47 @@ it("shows the service's message on a failure, and Try again repeats the same wri
   mock.failNext("tool_failed");
   await user.click(await screen.findByRole("button", { name: "Fold" }));
   const alert = await screen.findByRole("alert");
-  expect(alert).toHaveTextContent("Couldn’t fold Pixel Fold. The device tool did not finish.");
+  expect(alert).toHaveTextContent("Couldn’t fold Pixel Fold. The device tool could not do that. Try again.");
   await user.click(within(alert).getByRole("button", { name: "Try again" }));
   expect(await screen.findByText("Closed · 0°")).toBeVisible();
   expect(mock.writes).toEqual([`${FOLD}:fold`, `${FOLD}:fold`]);
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it.each([
+  ["invalid_action", "That action is not valid."],
+  ["device_busy", "Another action is running on this device."],
+  ["device_not_booted", "Start the device first."],
+  ["not_foldable", "This device does not fold."],
+  ["action_unsupported", "This device cannot do that."],
+  ["tool_failed", "The device tool could not do that. Try again."],
+  ["tool_timeout", "The device did not answer in time."],
+  ["tool_output_too_large", "The device sent more than Orbyn can read."],
+])("shows the service's own sentence for a failed action (%s)", async (code, sentence) => {
+  const mock = createDevicesMock();
+  setDevicesApi(mock);
+  render(<DevicesPanel />);
+  const user = await open(/Pixel Fold/);
+  mock.failNext(code);
+  await user.click(await screen.findByRole("button", { name: "Fold" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(`Couldn’t fold Pixel Fold. ${sentence}`);
+  expect(screen.getByRole("toolbar", { name: "Device controls" })).toBeVisible();
+});
+
+it("shows the platform's own sentence when an action on its missing tools fails", async () => {
+  const message = "Android tools were not found. Install Android platform-tools and the emulator.";
+  const mock = createDevicesMock({
+    devices: [deviceFixtures().find((one) => one.id === "android:Pixel_8_API_35")!],
+    platforms: [{ platform: "android", available: false, code: "tool_missing", message }, { platform: "ios", available: true }],
+  });
+  setDevicesApi(mock);
+  render(<DevicesPanel />);
+  const user = await open(/Pixel 8/);
+  mock.failNext("tool_missing");
+  await user.click(await screen.findByRole("button", { name: "Home" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent(`Couldn’t press home on Pixel 8. ${message}`);
 });
 
 it("drops a device the service no longer knows and reads the list again", async () => {
@@ -199,8 +281,11 @@ it("drops a device the service no longer knows and reads the list again", async 
   const user = await open(/Pixel 8/);
   mock.failNext("device_not_found");
   await user.click(await screen.findByRole("button", { name: "Home" }));
-  await waitFor(() => expect(screen.queryByRole("toolbar", { name: "Device controls" })).toBeNull());
-  expect(screen.getByText("That device is gone. The list is up to date.")).toBeVisible();
+  expect(await screen.findByText("That device is no longer there.")).toBeVisible();
+  expect(screen.queryByText("That device is gone. The list is up to date.")).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("tab", { name: "Pixel 8" })).toBeNull());
+  const list = await screen.findByRole("list", { name: "Devices" });
+  expect(within(list).queryByRole("button", { name: /Pixel 8/ })).toBeNull();
 });
 
 it("powers a device off and then offers nothing to do on it", async () => {

@@ -1,7 +1,7 @@
 //! The verifier's pieces on their own: what a worker may read about a failure, the fingerprint
 //! the guard compares, and the checks that run in a checkout.
 
-use orbyn_contracts::CheckOutcome;
+use orbyn_contracts::{CheckKind, CheckOutcome};
 use serde_json::json;
 
 use crate::crew::checks::{Ran, Site, covers, run_check, tail};
@@ -168,6 +168,35 @@ async fn autocrlf_cannot_hide_a_byte_change_from_scope_or_size() {
     }
 }
 
+/// An in-tree `.gitattributes` rule cannot normalize a byte change away: the byte-exact reads take attributes from the
+/// empty tree, not the checkout. Git before 2.40 ignores that source, so there the check fails closed instead of passing.
+#[tokio::test]
+async fn an_in_tree_attributes_rule_cannot_hide_a_byte_change_from_scope_or_size() {
+    let dir = integrity_repo();
+    let root = dir.path();
+    std::fs::write(root.join(".gitattributes"), "base.txt text eol=lf\n").unwrap();
+    super::review_support::commit_all(root, "a text attribute");
+    std::fs::write(root.join("base.txt"), "base\r\n").unwrap();
+    let site = site_of(root, None);
+    let attributes_from_source =
+        crate::source_control::git::reads_attributes_from_source(root).await;
+    for value in [
+        json!({ "id": "scope", "kind": "file_scope", "proves": "scope", "params": { "only": ["other.txt"] } }),
+        json!({ "id": "size", "kind": "diff_size", "proves": "size", "params": { "max_lines": 0 } }),
+    ] {
+        let expected = if attributes_from_source {
+            CheckOutcome::Fail
+        } else {
+            CheckOutcome::Error
+        };
+        assert_eq!(
+            run_check(&check(value), &site).await.outcome,
+            expected,
+            "the in-tree attribute rule must not hide the byte change"
+        );
+    }
+}
+
 #[tokio::test]
 async fn info_attributes_cannot_normalize_a_byte_change_into_a_pass() {
     let dir = integrity_repo();
@@ -254,7 +283,9 @@ fn the_internal_fix_digest_is_withheld_from_worker_reports() {
         "params": { "name": "crew-fix-touched", "note": digest } }),
     );
     let needles = crate::crew::guard::check_needles(&[c]);
-    assert!(crate::crew::guard::refuse_leak(&json!({ "summary": digest }), &needles).is_err());
+    let leak =
+        crate::crew::guard::refuse_leak(&json!({ "summary": digest }), &needles).unwrap_err();
+    assert_eq!(leak.code, orbyn_contracts::ErrorCode::AnswerKeyForbidden);
     assert!(!withhold(&digest, &needles).contains(&digest));
 }
 
@@ -335,6 +366,7 @@ async fn command_checks_pass_on_the_expected_exit_and_fail_with_the_output() {
 fn failed(reason: &str, names: &[&str]) -> crate::crew::verify::Failed {
     crate::crew::verify::Failed {
         id: "chk-a".into(),
+        kind: crate::crew::verify::FailureKind::Check(CheckKind::Command),
         outcome: CheckOutcome::Fail,
         exit_code: Some(101),
         names: names.iter().map(|n| (*n).to_owned()).collect(),
@@ -349,6 +381,7 @@ fn judged(failures: Vec<crate::crew::verify::Failed>) -> crate::crew::Judgement 
         evidence: Vec::new(),
         failures,
         not_verified: Vec::new(),
+        awaiting: Vec::new(),
         passes: 0,
     }
 }

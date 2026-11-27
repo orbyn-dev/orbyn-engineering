@@ -129,6 +129,31 @@ fn env_set_with_value(f: &Fixture, name: &str, key: &str) -> EnvSet {
     set
 }
 
+/// The stored presence of each key of a set, in order.
+fn stored_flags(f: &Fixture, set_id: &str) -> Vec<Option<bool>> {
+    let reader = f.core.store.reader_for_test();
+    let mut statement = reader
+        .prepare("SELECT is_set FROM library_env_keys WHERE set_id = ?1 ORDER BY rowid")
+        .unwrap();
+    statement
+        .query_map([set_id], |row| row.get::<_, Option<bool>>(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+/// Leaves the keys as migration 72 found them: present unknown.
+fn forget_flags(f: &Fixture, set_id: &str) {
+    f.core
+        .store
+        .writer_for_test()
+        .execute(
+            "UPDATE library_env_keys SET is_set = NULL WHERE set_id = ?1",
+            [set_id],
+        )
+        .unwrap();
+}
+
 fn run_body(thread: &str, ack: Vec<ProfileGrant>) -> RunWorkflow {
     RunWorkflow {
         values: BTreeMap::new(),
@@ -309,7 +334,10 @@ fn the_schema_has_no_column_that_could_hold_a_value() {
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    assert_eq!(columns, ["set_id", "key", "created_at", "updated_at"]);
+    assert_eq!(
+        columns,
+        ["set_id", "key", "created_at", "updated_at", "is_set"]
+    );
     let mut statement = reader
         .prepare("SELECT name FROM pragma_table_info('library_env_sets')")
         .unwrap();
@@ -527,6 +555,172 @@ fn deleting_and_removing_names_removes_items_first_and_a_failure_leaves_the_set(
         code(&f.core.get_env_set(&set.id).unwrap_err()),
         (404, "not_found")
     );
+}
+
+#[test]
+fn listing_three_stored_keys_reads_no_key_from_the_keychain() {
+    let f = fixture();
+    let names = ["API_BASE", "API_TOKEN", "STAGING_URL"];
+    let set = f
+        .core
+        .create_env_set(&EnvSetDraft {
+            name: "Staging".into(),
+            description: String::new(),
+            keys: names.iter().map(|name| (*name).to_owned()).collect(),
+        })
+        .unwrap();
+    for name in &names {
+        f.core.set_env_key(&set.id, name, SECRET).unwrap();
+    }
+    let reads = f.memory.get_calls();
+    let listed = f.core.list_env_sets().unwrap();
+    // The one `get` is the keychain state every read asks for; no key was read.
+    assert_eq!(
+        f.memory.get_calls() - reads,
+        1,
+        "the keychain state only, zero key reads"
+    );
+    assert_eq!(
+        listed[0].keys,
+        names
+            .iter()
+            .map(|name| EnvKey {
+                name: (*name).into(),
+                present: true,
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        stored_flags(&f, &set.id),
+        [Some(true), Some(true), Some(true)]
+    );
+}
+
+#[test]
+fn a_removed_key_reads_false_from_the_record_without_a_keychain_read() {
+    let f = fixture();
+    let set = f
+        .core
+        .create_env_set(&EnvSetDraft {
+            name: "Staging".into(),
+            description: String::new(),
+            keys: vec!["A".into(), "B".into()],
+        })
+        .unwrap();
+    f.core.set_env_key(&set.id, "A", SECRET).unwrap();
+    f.core.set_env_key(&set.id, "B", SECRET).unwrap();
+    f.core.remove_env_key(&set.id, "A").unwrap();
+    let reads = f.memory.get_calls();
+    let listed = f.core.list_env_sets().unwrap();
+    // The one `get` is the keychain state every read asks for; no key was read.
+    assert_eq!(
+        f.memory.get_calls() - reads,
+        1,
+        "the keychain state only, zero key reads"
+    );
+    assert_eq!(
+        listed[0].keys,
+        [
+            EnvKey {
+                name: "A".into(),
+                present: false,
+            },
+            EnvKey {
+                name: "B".into(),
+                present: true,
+            },
+        ]
+    );
+    assert_eq!(stored_flags(&f, &set.id), [Some(false), Some(true)]);
+}
+
+#[test]
+fn an_unknown_presence_is_probed_once_then_recorded() {
+    let f = fixture();
+    let set = env_set_with_value(&f, "S", "K");
+    forget_flags(&f, &set.id);
+    assert_eq!(stored_flags(&f, &set.id), [None]);
+
+    let reads = f.memory.get_calls();
+    let first = f.core.list_env_sets().unwrap();
+    assert!(first[0].keys[0].present);
+    // The keychain state and the one unknown key; its answer is now recorded.
+    assert_eq!(f.memory.get_calls() - reads, 2);
+    assert_eq!(stored_flags(&f, &set.id), [Some(true)]);
+
+    let reads = f.memory.get_calls();
+    let second = f.core.list_env_sets().unwrap();
+    assert!(second[0].keys[0].present);
+    assert_eq!(
+        f.memory.get_calls() - reads,
+        1,
+        "the keychain state only, no key read"
+    );
+}
+
+#[test]
+fn an_unusable_keychain_reads_false_and_keeps_the_record() {
+    let f = fixture();
+    let set = env_set_with_value(&f, "S", "K");
+    assert_eq!(stored_flags(&f, &set.id), [Some(true)]);
+    f.memory.fail_with(Some(Failure::Unusable));
+    let reads = f.memory.get_calls();
+    let listed = f.core.list_env_sets().unwrap();
+    // The state check fails straight away; no key is read and the record is left as it was.
+    assert_eq!(f.memory.get_calls() - reads, 1);
+    assert_eq!(
+        (listed[0].keychain, listed[0].keys[0].present),
+        (EnvKeychain::Unavailable, false)
+    );
+    assert_eq!(stored_flags(&f, &set.id), [Some(true)]);
+    f.memory.fail_with(None);
+    assert!(f.core.list_env_sets().unwrap()[0].keys[0].present);
+}
+
+#[test]
+fn the_single_read_rechecks_the_keychain_and_records_it() {
+    let f = fixture();
+    let set = env_set_with_value(&f, "S", "K");
+    assert!(f.core.list_env_sets().unwrap()[0].keys[0].present);
+    // Removed outside the app: the store still says a value was saved.
+    f.core.env_sets.remove(&set.id, "K").unwrap();
+    assert!(
+        f.core.list_env_sets().unwrap()[0].keys[0].present,
+        "the list reads the app's own record"
+    );
+    let one = f.core.get_env_set(&set.id).unwrap();
+    assert!(
+        !one.keys[0].present,
+        "the single read re-checks the keychain"
+    );
+    assert_eq!(stored_flags(&f, &set.id), [Some(false)]);
+    assert!(!f.core.list_env_sets().unwrap()[0].keys[0].present);
+}
+
+#[test]
+fn an_invalid_value_changes_no_presence_flag() {
+    let f = fixture();
+    let set = f
+        .core
+        .create_env_set(&EnvSetDraft {
+            name: "S".into(),
+            description: String::new(),
+            keys: vec!["K".into()],
+        })
+        .unwrap();
+    assert_eq!(stored_flags(&f, &set.id), [Some(false)]);
+    assert_eq!(
+        code(&f.core.set_env_key(&set.id, "K", "").unwrap_err()),
+        (400, "invalid_input")
+    );
+    assert_eq!(stored_flags(&f, &set.id), [Some(false)]);
+    f.core.set_env_key(&set.id, "K", SECRET).unwrap();
+    assert_eq!(stored_flags(&f, &set.id), [Some(true)]);
+    assert_eq!(
+        code(&f.core.set_env_key(&set.id, "K", "").unwrap_err()),
+        (400, "invalid_input")
+    );
+    assert_eq!(stored_flags(&f, &set.id), [Some(true)]);
 }
 
 // ---- parameters and rendering ----
@@ -1018,6 +1212,45 @@ async fn a_run_with_no_sets_or_a_local_entry_needs_no_ack_and_is_audited() {
         (409, "confirm_required"),
         "the ack must match exactly what the run needs"
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_run_uses_the_apps_posix_shell_and_never_the_persons_shell() {
+    let f = fixture();
+    let marker = f.dir.path().join("pwned");
+    // A parameter default is validated but not shell-checked: this one would run `touch` if it were not one word.
+    let mut hostile = param("v", ParamKind::Text);
+    let value = format!("x'; touch {} #", marker.display());
+    hostile.default = Some(value.clone());
+    let workflow = f
+        .core
+        .create_workflow(&wf(
+            "Shell",
+            "printf 'SHELL=%s|%s' \"$0\" {{v}}",
+            vec![hostile],
+            vec![],
+        ))
+        .unwrap();
+    let ran = f
+        .core
+        .run_workflow(&workflow.id, &run_body(&f.thread, vec![]))
+        .await
+        .unwrap();
+    let shown = finished_output(&f, &ran.terminal_id).await;
+    // `$0` is the shell the run picked: the app's fixed `/bin/sh`, not the person's `$SHELL`. The last
+    // `SHELL=` is the run's own output, after anything a login profile printed.
+    let shell = shown
+        .rsplit("SHELL=")
+        .next()
+        .unwrap_or_default()
+        .split('|')
+        .next()
+        .unwrap_or_default()
+        .trim();
+    assert!(matches!(shell, "/bin/sh" | "sh"), "{shown}");
+    assert!(shown.contains(&value), "{shown}");
+    assert!(!marker.exists(), "the value added no command");
 }
 
 #[tokio::test]

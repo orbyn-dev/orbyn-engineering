@@ -1,7 +1,7 @@
 //! The personal library at rest (docs/execution-profiles-and-library.md, Part 2): workflows, prompts and environment sets. An
-//! environment set is a name and key NAMES: no table or column here can hold a value (values live in the OS keychain), and a test
-//! fails if one could. Every write adds its audit row first, in the same transaction, with ids, set names and key names only,
-//! never a command's text, a prompt's body or a value.
+//! environment set is a name, key NAMES and whether each name has a value (values live in the OS keychain): no table or column
+//! here can hold a value, and a test fails if one could. Every write adds its audit row first, in the same transaction, with ids,
+//! set names and key names only, never a command's text, a prompt's body or a value.
 
 use orbyn_contracts::Param;
 use rusqlite::{OptionalExtension, Transaction, params};
@@ -140,6 +140,9 @@ pub struct EnvSetFields {
 pub struct EnvSetRow {
     pub id: String,
     pub fields: EnvSetFields,
+    /// Per key in `fields.keys`, in the same order: whether the keychain held a value when it was last checked. `None` is a
+    /// row from before migration 72, or one whose check did not answer.
+    pub is_set: Vec<Option<bool>>,
     pub revision: u32,
     pub created_at: String,
     pub updated_at: String,
@@ -198,11 +201,18 @@ fn name_used(tx: &Transaction<'_>, table: &str, key: &str, except: &str) -> Resu
     )?)
 }
 
-fn env_set_keys(tx: &rusqlite::Connection, id: &str) -> Result<Vec<String>> {
+fn env_set_keys(tx: &rusqlite::Connection, id: &str) -> Result<(Vec<String>, Vec<Option<bool>>)> {
     let mut statement =
-        tx.prepare("SELECT key FROM library_env_keys WHERE set_id = ?1 ORDER BY rowid")?;
-    let keys = statement.query_map([id], |row| row.get(0))?;
-    Ok(keys.collect::<std::result::Result<_, _>>()?)
+        tx.prepare("SELECT key, is_set FROM library_env_keys WHERE set_id = ?1 ORDER BY rowid")?;
+    let rows = statement.query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let mut keys = Vec::new();
+    let mut is_set = Vec::new();
+    for row in rows {
+        let (key, flag) = row?;
+        keys.push(key);
+        is_set.push(flag);
+    }
+    Ok((keys, is_set))
 }
 
 fn load_env_set(tx: &rusqlite::Connection, id: &str) -> Result<EnvSetRow> {
@@ -222,13 +232,15 @@ fn load_env_set(tx: &rusqlite::Connection, id: &str) -> Result<EnvSetRow> {
         )
         .optional()?
         .ok_or_else(|| CoreError::NotFound("environment set".into()))?;
+    let (keys, is_set) = env_set_keys(tx, id)?;
     Ok(EnvSetRow {
         id: id.to_owned(),
         fields: EnvSetFields {
             name,
             description,
-            keys: env_set_keys(tx, id)?,
+            keys,
         },
+        is_set,
         revision: u32::try_from(revision).unwrap_or(u32::MAX),
         created_at,
         updated_at,
@@ -259,6 +271,15 @@ fn insert_keys(tx: &Transaction<'_>, set_id: &str, keys: &[String], stamp: &str)
             params![set_id, key, stamp],
         )?;
     }
+    Ok(())
+}
+
+/// Records what a keychain check found for one key. It changes neither the set nor the key's timestamps.
+fn mark_key(tx: &Transaction<'_>, set_id: &str, key: &str, is_set: Option<bool>) -> Result<()> {
+    tx.execute(
+        "UPDATE library_env_keys SET is_set = ?3 WHERE set_id = ?1 AND key = ?2",
+        params![set_id, key, is_set.map(i64::from)],
+    )?;
     Ok(())
 }
 
@@ -702,6 +723,24 @@ impl Store {
         })
     }
 
+    /// Records whether the keychain holds a value for one key. It is not a change to the set. `None` forgets what was known.
+    pub fn library_mark_key(&self, set_id: &str, key: &str, is_set: Option<bool>) -> Result<()> {
+        self.commit(|tx, _| mark_key(tx, set_id, key, is_set))
+    }
+
+    /// Records the answers of several keychain checks in one transaction.
+    pub fn library_mark_keys(&self, marks: &[(String, String, bool)]) -> Result<()> {
+        if marks.is_empty() {
+            return Ok(());
+        }
+        self.commit(|tx, _| {
+            for (set_id, key, is_set) in marks {
+                mark_key(tx, set_id, key, Some(*is_set))?;
+            }
+            Ok(())
+        })
+    }
+
     /// The audit row of a value being set or a key's value removed, written before the keychain is touched. It names the set
     /// and the key and checks the key is in the set. It never carries a value.
     pub fn library_key_event(&self, action: &str, set_id: &str, key: &str) -> Result<()> {
@@ -729,6 +768,10 @@ impl Store {
 impl Store {
     pub(crate) fn reader_for_test(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
         self.reader()
+    }
+
+    pub(crate) fn writer_for_test(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
+        self.writer()
     }
 
     pub(crate) fn untrust_project_for_test(&self, id: &str) {

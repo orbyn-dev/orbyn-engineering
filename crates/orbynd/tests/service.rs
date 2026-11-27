@@ -4,6 +4,7 @@ mod support;
 
 use std::time::Duration;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use serde_json::{Value, json};
 use support::{Options, Service, TempDir, setup, text_of, types_of};
 
@@ -461,7 +462,7 @@ async fn replay_then_live_has_no_gap_or_duplicate() {
             let mut events: Vec<Value> = Vec::new();
             use futures_util::StreamExt;
             while let Some(Ok(chunk)) = body.next().await {
-                for frame in parser.push(&chunk) {
+                for frame in parser.push(&chunk).expect("test SSE frames fit the cap") {
                     events.push(serde_json::from_str(&frame).unwrap());
                 }
                 if events
@@ -620,6 +621,74 @@ async fn crash_recovery_interrupts_runs_and_expires_approvals() {
 }
 
 #[tokio::test]
+async fn a_crash_while_an_approval_is_open_closes_the_tool_call_and_interrupts_the_run() {
+    let dir = TempDir::new();
+    let launches = dir.path().join("launches");
+    let options = || Options {
+        env: vec![(
+            "ORBYN_FAKE_LAUNCH_FILE".into(),
+            launches.to_string_lossy().into_owned(),
+        )],
+        ..Options::default()
+    };
+    let (service, thread) = setup(&dir, options(), "codex").await;
+    // The interrupted thread must not continue by itself, or the recovered state is a new run.
+    let off = json!({ "values": { "continue_threads_after_update": false } });
+    service
+        .client
+        .put(format!("{}/api/preferences", service.url))
+        .bearer_auth(&service.token)
+        .json(&off)
+        .send()
+        .await
+        .unwrap();
+    service.admit(&thread, "[approve]").await;
+    // The kill point is the fake engine's own record that it started the turn, not a sleep: the
+    // approval then proves the tool call is open and the service has written it down.
+    service.wait_for_launch("codex-turn").await;
+    let approval = service.pending().await;
+    assert_eq!(service.run_state(&thread).await, "awaiting_approval");
+    let launches_before = service.launches().len();
+
+    let reopened = service.restart();
+
+    // The dead process left the tool call open and its approval undecided; recovery closes both,
+    // ends the run interrupted, and starts no engine turn for it.
+    assert_eq!(reopened.run_state(&thread).await, "interrupted");
+    let expired = reopened.json("/api/approvals?state=expired").await;
+    assert!(
+        expired
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == approval["id"]),
+        "the approval is not expired: {expired}"
+    );
+    let events = reopened.all_events(&thread).await;
+    let open = events
+        .iter()
+        .find(|event| event["event"]["type"] == "TOOL_CALL_START")
+        .expect("the crash caught a tool call open");
+    let tool_call = open["event"]["toolCallId"].clone();
+    let note = events
+        .iter()
+        .find(|event| {
+            event["event"]["type"] == "TOOL_CALL_RESULT"
+                && event["event"]["toolCallId"] == tool_call
+        })
+        .unwrap_or_else(|| panic!("the open tool call {tool_call} was not closed: {events:?}"));
+    assert_eq!(note["event"]["content"], "Interrupted before a result.");
+    let last = events.last().unwrap();
+    assert_eq!(last["event"]["type"], "RUN_ERROR");
+    assert_eq!(last["event"]["code"], "interrupted");
+    assert_eq!(
+        reopened.launches().len(),
+        launches_before,
+        "a recovery must not start an engine turn"
+    );
+}
+
+#[tokio::test]
 async fn second_service_on_a_data_dir_is_refused() {
     let dir = TempDir::new();
     let data = dir.path().join("data");
@@ -716,6 +785,11 @@ fn write(path: &std::path::Path, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
+fn write_bytes(path: &std::path::Path, bytes: &[u8]) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
 #[tokio::test]
 async fn profiles_keep_the_builtin_default_and_skills_show_the_revision() {
     let dir = TempDir::new();
@@ -784,6 +858,56 @@ async fn folder_browser_lists_directories_only() {
         .collect();
     assert_eq!(names, [("plain", false), ("repo", true)]);
     assert_eq!(listing["parent"], dir.path().to_str().unwrap());
+}
+
+/// A hidden folder, a system folder and a junction say nothing a person picks as a project,
+/// and Windows marks the loop-prone aliases in a profile exactly this way. `attrib` and
+/// `mklink` are used because a junction, unlike a symlink, needs no administrator.
+#[cfg(windows)]
+#[tokio::test]
+async fn folder_browser_skips_windows_hidden_system_and_junction_folders() {
+    let dir = TempDir::new();
+    let service = Service::start(&dir.path().join("data"), Options::default());
+    let root = dir.path().join("root");
+    for folder in ["plain", "hidden", "system", "target"] {
+        std::fs::create_dir_all(root.join(folder)).unwrap();
+    }
+    for (attribute, folder) in [("+h", "hidden"), ("+s", "system")] {
+        let output = std::process::Command::new("attrib")
+            .arg(attribute)
+            .arg(root.join(folder))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "attrib {attribute} {folder}");
+    }
+    let junction = root.join("junction");
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&junction)
+        .arg(root.join("target"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "mklink /J: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let listing = service
+        .get("/api/fs/browse")
+        .query(&[("path", root.to_str().unwrap())])
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let names: Vec<_> = listing["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["plain", "target"]);
 }
 
 #[tokio::test]
@@ -868,7 +992,10 @@ async fn agui_stream(service: &Service, thread: &str, input: Value) -> (Vec<Valu
             .await
             .expect("stream stalled");
         let Some(chunk) = chunk else { break };
-        for frame in parser.push(&chunk.unwrap()) {
+        for frame in parser
+            .push(&chunk.unwrap())
+            .expect("test SSE frames fit the cap")
+        {
             frames.push(serde_json::from_str(&frame).unwrap());
         }
     }
@@ -914,7 +1041,33 @@ async fn static_ui_has_csp_and_spa_fallback() {
     assert_eq!(directive("connect-src"), "connect-src 'self'");
     assert_eq!(directive("script-src"), "script-src 'self'");
     assert_eq!(page.headers()["referrer-policy"], "no-referrer");
+    assert_eq!(page.headers()["cache-control"], "no-cache");
+    let page_etag = page.headers()["etag"].to_str().unwrap().to_owned();
     assert!(page.text().await.unwrap().contains("<title>app</title>"));
+    let not_modified = client
+        .get(format!("{}/threads/abc", service.url))
+        .header("if-none-match", format!("\"other\", W/{page_etag}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(not_modified.status(), 304);
+    assert_eq!(not_modified.headers()["etag"], page_etag);
+    assert_eq!(not_modified.headers()["cache-control"], "no-cache");
+    assert!(
+        not_modified
+            .headers()
+            .contains_key("content-security-policy")
+    );
+    assert_eq!(not_modified.headers()["referrer-policy"], "no-referrer");
+    assert_eq!(not_modified.headers()["x-content-type-options"], "nosniff");
+    assert!(not_modified.bytes().await.unwrap().is_empty());
+    let wildcard = client
+        .get(format!("{}/threads/abc", service.url))
+        .header("if-none-match", "*")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wildcard.status(), 304);
     let script = client
         .get(format!("{}/assets/app.js", service.url))
         .send()
@@ -926,10 +1079,427 @@ async fn static_ui_has_csp_and_spa_fallback() {
             .unwrap()
             .contains("javascript")
     );
+    assert_eq!(
+        script.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    let script_etag = script.headers()["etag"].to_str().unwrap().to_owned();
+    let plain_head = client
+        .head(format!("{}/assets/app.js", service.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(plain_head.status(), 200);
+    assert_eq!(plain_head.headers()["content-length"], "14");
+    assert!(plain_head.bytes().await.unwrap().is_empty());
+    let head = client
+        .head(format!("{}/assets/app.js", service.url))
+        .header("if-none-match", &script_etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 304);
+    assert_eq!(head.headers()["etag"], script_etag);
+    assert_eq!(
+        head.headers()["cache-control"],
+        "public, max-age=31536000, immutable"
+    );
+    assert!(head.headers().contains_key("content-security-policy"));
+    assert!(head.bytes().await.unwrap().is_empty());
+    let unmatched = client
+        .get(format!("{}/assets/app.js", service.url))
+        .header("if-none-match", "\"not-the-etag\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unmatched.status(), 200);
+    assert_eq!(unmatched.text().await.unwrap(), "console.log(1)");
+    write(&ui.join("assets/app.js"), "console.log(2)");
+    let changed = client
+        .get(format!("{}/assets/app.js", service.url))
+        .header("if-none-match", &script_etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed.status(), 200);
+    assert_ne!(changed.headers()["etag"], script_etag);
+    assert_eq!(changed.text().await.unwrap(), "console.log(2)");
+    for path in [
+        "/assets/missing.js",
+        "/assets/missing.css",
+        "/%61ssets/missing.js",
+        "/assets/%FF.js",
+        "/assets%2F%FF.js",
+    ] {
+        for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+            let response = client
+                .request(method.clone(), format!("{}{path}", service.url))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 404, "{method} {path}");
+        }
+    }
     let missing_api = service.get("/api/nothing").send().await.unwrap();
     assert_eq!(missing_api.status(), 404);
+    assert!(!missing_api.headers().contains_key("etag"));
     let body: Value = missing_api.json().await.unwrap();
     assert_eq!(body["code"], "not_found");
+}
+
+/// What `web/scripts/precompress.mjs` writes for the body below: brotli and gzip of the
+/// same 600 bytes. The service must serve these bytes untouched.
+const BROTLI_FIXTURE: &str = "G1cC+I3DuJlbxJtmd5T0ZKm+dNOCmWSwkwoxeEFhoPD8eIcPn75HGTMIRQI=";
+const GZIP_FIXTURE: &str =
+    "H4sIAAAAAAACCkutKMgvKlFIzs8rLlHITSzKTi1SsFUwtOZKHZUYlSBfAgDjy5AIWAIAAA==";
+
+async fn static_get(
+    client: &reqwest::Client,
+    url: &str,
+    accept: Option<&str>,
+) -> reqwest::Response {
+    let mut request = client.get(url);
+    if let Some(accept) = accept {
+        request = request.header("accept-encoding", accept);
+    }
+    request.send().await.unwrap()
+}
+
+#[tokio::test]
+async fn static_precompressed_assets_are_served_in_the_encoding_the_client_accepts() {
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    let identity = "export const marker = 1;\n".repeat(24);
+    let brotli = B64.decode(BROTLI_FIXTURE).unwrap();
+    let gzip = B64.decode(GZIP_FIXTURE).unwrap();
+    write(&ui.join("assets/app-abc123.js"), &identity);
+    write_bytes(&ui.join("assets/app-abc123.js.br"), &brotli);
+    write_bytes(&ui.join("assets/app-abc123.js.gz"), &gzip);
+    // An image is already compressed: a sibling is never written for one, and one that
+    // is there must not be served either.
+    let png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR";
+    write_bytes(&ui.join("assets/logo-abc123.png"), png);
+    write_bytes(&ui.join("assets/logo-abc123.png.br"), b"not a png");
+    // A file whose only sibling is brotli, for a client that accepts only gzip.
+    write(&ui.join("assets/only-br-abc.js"), &identity);
+    write_bytes(&ui.join("assets/only-br-abc.js.br"), &brotli);
+    write(&ui.join("index.html"), "<!doctype html><title>app</title>");
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    let url = |path: &str| format!("{}{path}", service.url);
+
+    // A client that accepts brotli gets the bytes the build compressed, not a body the
+    // service compressed for this one request.
+    let response = static_get(&client, &url("/assets/app-abc123.js"), Some("gzip, br")).await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-encoding"], "br");
+    assert_eq!(response.headers()["vary"], "Accept-Encoding");
+    assert_eq!(response.content_length(), Some(brotli.len() as u64));
+    // The whole point: fewer bytes on the wire than the file it replaces.
+    assert!(
+        brotli.len() < identity.len(),
+        "brotli {} vs identity {}",
+        brotli.len(),
+        identity.len()
+    );
+    assert_eq!(response.bytes().await.unwrap().as_ref(), brotli.as_slice());
+
+    // A client that accepts gzip only gets the gzip sibling, unchanged.
+    let response = static_get(&client, &url("/assets/app-abc123.js"), Some("gzip")).await;
+    assert_eq!(response.headers()["content-encoding"], "gzip");
+    assert_eq!(response.headers()["vary"], "Accept-Encoding");
+    assert_eq!(response.bytes().await.unwrap().as_ref(), gzip.as_slice());
+
+    // A client that sends no `Accept-Encoding` still gets the file itself.
+    let response = static_get(&client, &url("/assets/app-abc123.js"), None).await;
+    assert_eq!(response.status(), 200);
+    assert!(response.headers().get("content-encoding").is_none());
+    assert_eq!(response.headers()["vary"], "Accept-Encoding");
+    assert_eq!(response.content_length(), Some(identity.len() as u64));
+    assert_eq!(response.text().await.unwrap(), identity);
+
+    // The shell is served through the same fallback route, and a file with no sibling
+    // (a shell this small never gets one) still answers with its own bytes.
+    let response = static_get(&client, &url("/threads/abc"), Some("br")).await;
+    assert_eq!(response.status(), 200);
+    assert!(response.headers().get("content-encoding").is_none());
+    assert_eq!(response.headers()["vary"], "Accept-Encoding");
+
+    // A compressed sibling is not a resource: naming one must not hand back coded bytes
+    // as a download.
+    let response = static_get(&client, &url("/assets/app-abc123.js.br"), Some("br")).await;
+    assert_eq!(
+        response.status(),
+        404,
+        "the sibling must never be served as a file"
+    );
+    assert!(response.headers().get("content-encoding").is_none());
+
+    // A type that is already compressed is never encoded, even with a sibling present.
+    let response = static_get(&client, &url("/assets/logo-abc123.png"), Some("br")).await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    assert!(response.headers().get("content-encoding").is_none());
+    assert_eq!(response.bytes().await.unwrap().as_ref(), png.as_slice());
+
+    // A client that accepts only gzip must never receive brotli, even when brotli is
+    // the only sibling this file has.
+    let response = static_get(&client, &url("/assets/only-br-abc.js"), Some("gzip")).await;
+    assert_eq!(response.status(), 200);
+    assert_ne!(
+        response
+            .headers()
+            .get("content-encoding")
+            .and_then(|value| value.to_str().ok()),
+        Some("br"),
+        "an encoding the client did not accept must never be sent"
+    );
+
+    // HEAD carries the representation's headers without a body.
+    let head = client
+        .head(url("/assets/app-abc123.js"))
+        .header("accept-encoding", "br")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 200);
+    assert_eq!(head.headers()["content-encoding"], "br");
+    assert_eq!(head.headers()["vary"], "Accept-Encoding");
+}
+
+#[tokio::test]
+async fn missing_spa_index_stays_not_found_when_encodings_are_unacceptable() {
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    std::fs::create_dir_all(&ui).unwrap();
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+        let response = client
+            .request(method.clone(), format!("{}/threads/missing", service.url))
+            .header("accept-encoding", "gzip;q=0, identity;q=0")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 404, "{method}");
+        if method == reqwest::Method::GET {
+            let body: Value = response.json().await.unwrap();
+            assert_eq!(body["code"], "no_ui");
+        }
+    }
+}
+
+#[tokio::test]
+async fn static_compression_negotiates_and_keeps_representation_validators_separate() {
+    use std::io::Read;
+
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    let original = "const data = 'repeated content';\n".repeat(4096);
+    write(&ui.join("index.html"), "<title>app</title>");
+    write(&ui.join("assets/app.js"), &original);
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    let url = format!("{}/assets/app.js", service.url);
+    let identity_started = std::time::Instant::now();
+    let identity = client.get(&url).send().await.unwrap();
+    assert_eq!(identity.status(), 200);
+    assert_eq!(identity.headers()["vary"], "Accept-Encoding");
+    assert!(!identity.headers().contains_key("content-encoding"));
+    let identity_tag = identity.headers()["etag"].to_str().unwrap().to_owned();
+    assert_eq!(identity.bytes().await.unwrap().len(), original.len());
+    let identity_elapsed = identity_started.elapsed();
+    let started = std::time::Instant::now();
+    let encoded = client
+        .get(&url)
+        .header("accept-encoding", "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(encoded.status(), 200);
+    assert_eq!(encoded.headers()["vary"], "Accept-Encoding");
+    assert_eq!(encoded.headers()["content-encoding"], "gzip");
+    let gzip_tag = encoded.headers()["etag"].to_str().unwrap().to_owned();
+    assert_ne!(gzip_tag, identity_tag);
+    let wire = encoded.bytes().await.unwrap();
+    println!(
+        "static gzip fixture: identity={} bytes gzip={} bytes identity request={} us gzip request={} us",
+        original.len(),
+        wire.len(),
+        identity_elapsed.as_micros(),
+        started.elapsed().as_micros()
+    );
+    assert!(wire.len() < original.len());
+    let mut decoded = String::new();
+    flate2::read::GzDecoder::new(&wire[..])
+        .read_to_string(&mut decoded)
+        .unwrap();
+    assert_eq!(decoded, original);
+    let head = client
+        .head(&url)
+        .header("accept-encoding", "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.headers()["content-encoding"], "gzip");
+    assert_eq!(head.headers()["etag"], gzip_tag);
+    assert_eq!(head.headers()["content-length"], wire.len().to_string());
+    assert!(head.bytes().await.unwrap().is_empty());
+    for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
+        let response = client
+            .request(method, &url)
+            .header("accept-encoding", "gzip")
+            .header("if-none-match", &gzip_tag)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 304);
+        assert_eq!(response.headers()["vary"], "Accept-Encoding");
+        assert_eq!(response.headers()["etag"], gzip_tag);
+        assert_eq!(response.headers()["content-encoding"], "gzip");
+        assert_eq!(
+            response.headers()["cache-control"],
+            "public, max-age=31536000, immutable"
+        );
+        assert!(response.headers().contains_key("content-security-policy"));
+        assert!(response.bytes().await.unwrap().is_empty());
+    }
+    let other_representation = client
+        .get(&url)
+        .header("accept-encoding", "gzip")
+        .header("if-none-match", &identity_tag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(other_representation.status(), 200);
+    for value in [
+        "gzip;q=0",
+        "gzip;q=0, *;q=1",
+        "gzip;q=0.0, identity;q=1",
+        "gzip;q=0.5, identity;q=1",
+    ] {
+        let response = client
+            .get(&url)
+            .header("accept-encoding", value)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{value}");
+        assert!(
+            !response.headers().contains_key("content-encoding"),
+            "{value}"
+        );
+    }
+    let refused = client
+        .get(&url)
+        .header("accept-encoding", "gzip;q=0, identity;q=0")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 406);
+    let missing_api = service
+        .get("/api/nothing")
+        .header("accept-encoding", "gzip")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing_api.status(), 404);
+    assert!(!missing_api.headers().contains_key("content-encoding"));
+}
+
+#[tokio::test]
+async fn static_build_output_is_pinned_and_the_shell_revalidates() {
+    const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+    const REVALIDATE: &str = "no-cache";
+    let dir = TempDir::new();
+    let ui = dir.path().join("ui");
+    write(&ui.join("index.html"), "<!doctype html><title>app</title>");
+    write(&ui.join("assets/index-3hrPZ_u3.js"), "console.log(1)");
+    // Real build names: a 7-character hash, and hashes that contain `-`.
+    write(&ui.join("assets/index--td0G00Q.css"), "body{color:red}");
+    write(&ui.join("assets/amphora-DCKmTK--.js"), "console.log(2)");
+    write(&ui.join("favicon.ico"), "icon");
+    let service = Service::start(
+        &dir.path().join("data"),
+        Options {
+            args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
+            ..Options::default()
+        },
+    );
+    let client = reqwest::Client::new();
+    let cache_control = |response: &reqwest::Response| {
+        response
+            .headers()
+            .get("cache-control")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned)
+    };
+    for (path, pinned) in [
+        ("/assets/index-3hrPZ_u3.js", true),
+        ("/assets/index--td0G00Q.css", true),
+        ("/assets/amphora-DCKmTK--.js", true),
+        ("/", false),
+        ("/threads/abc", false),
+        ("/favicon.ico", false),
+    ] {
+        let expected = if pinned { IMMUTABLE } else { REVALIDATE };
+        let response = client
+            .get(format!("{}{path}", service.url))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+        assert_eq!(
+            cache_control(&response).as_deref(),
+            Some(expected),
+            "{path}"
+        );
+        // The shell must never be pinned, or a deploy could not reach a stale tab.
+        if !pinned {
+            assert_ne!(
+                cache_control(&response).as_deref(),
+                Some(IMMUTABLE),
+                "{path}"
+            );
+        }
+        // HEAD carries the same policy, since a browser may probe before a GET.
+        let head = client
+            .head(format!("{}{path}", service.url))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            cache_control(&head).as_deref(),
+            Some(expected),
+            "HEAD {path}"
+        );
+    }
+    // A miss may be the shell today or a 404 tomorrow, but a name we never served
+    // must never be pinned: a stale tab would keep the wrong bytes for a year.
+    let missing = client
+        .get(format!("{}/assets/missing-B4xQ1k9t.js", service.url))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(cache_control(&missing).as_deref(), Some(IMMUTABLE));
 }
 
 #[tokio::test]
@@ -1208,10 +1778,12 @@ async fn desktop_action_passes_through_the_sidecar_envelope() {
     );
 }
 
-/// Drives an installed Chrome or Edge. Run with `--ignored` where one exists.
+/// Drives a real browser: `support::browser_env` finds one, or says why the test skips.
 #[tokio::test]
-#[ignore = "needs an installed browser"]
 async fn real_browser_navigates_reads_clicks_and_captures() {
+    let Some(env) = support::browser_env(&[("ORBYN_BROWSER_HEADLESS", "1")]) else {
+        return;
+    };
     let dir = TempDir::new();
     let ui = dir.path().join("ui");
     write(
@@ -1227,7 +1799,7 @@ async fn real_browser_navigates_reads_clicks_and_captures() {
         &dir,
         Options {
             args: vec!["--ui-dir".into(), ui.to_string_lossy().into_owned()],
-            env: vec![("ORBYN_BROWSER_HEADLESS".into(), "1".into())],
+            env,
         },
         "codex",
     )

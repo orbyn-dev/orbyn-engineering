@@ -9,6 +9,36 @@ fn hello_reads_protocol_family_and_capabilities() {
     assert_eq!(hello.protocol, 1);
     assert_eq!(hello.family, "claude");
     assert_eq!(hello.capabilities, ["steer", "fork"]);
+    // A hello without both halves of the SDK is not read as one.
+    assert_eq!(hello.sdk, None);
+
+    let line = r#"{"type":"hello","protocol":1,"host":"0.1.0","family":"claude","sdk":{"name":"@anthropic-ai/claude-agent-sdk","version":"0.3.321"},"capabilities":[]}"#;
+    let Incoming::Hello(hello) = decode(line).unwrap() else {
+        panic!("not a hello");
+    };
+    assert_eq!(
+        hello.sdk,
+        Some(HostSdk {
+            name: "@anthropic-ai/claude-agent-sdk".into(),
+            version: "0.3.321".into(),
+        })
+    );
+}
+
+#[test]
+fn the_hosts_fixed_missing_sdk_sentence_is_recognized() {
+    for message in [
+        "The Claude Agent SDK is not available in this build.",
+        "The Cursor SDK is not available in this build.",
+    ] {
+        let error = HostError::parse(&json!({"name": "Error", "message": message}));
+        assert!(error.sdk_missing(), "{message}");
+    }
+    let other = HostError::parse(&json!({
+        "name": "Error",
+        "message": "The engine host cannot restrict this run, so it was not started."
+    }));
+    assert!(!other.sdk_missing());
 }
 
 #[test]
@@ -103,4 +133,26 @@ fn requests_carry_their_id_and_type() {
     assert_eq!(value, json!({"id":5,"type":"cancel","sendId":4}));
     assert!(!line.contains('\n'));
     assert!(is_gated("steer") && !is_gated("open"));
+    assert!(is_gated("readSubagent"));
+}
+
+#[test]
+fn a_run_done_carries_the_result_usage_when_the_host_sends_it() {
+    let line = r#"{"type":"runDone","sendId":3,"ok":true,"result":{"reason":"completed","threadDisposition":"reusable","usage":{"inputTokens":200,"outputTokens":20,"cacheReadTokens":180,"cacheWriteTokens":0}}}"#;
+    let Incoming::RunDone(done) = decode(line).unwrap() else {
+        panic!("not a runDone");
+    };
+    assert_eq!(
+        done.usage,
+        Some(json!({
+            "inputTokens": 200, "outputTokens": 20,
+            "cacheReadTokens": 180, "cacheWriteTokens": 0
+        }))
+    );
+
+    let no_usage = r#"{"type":"runDone","sendId":3,"ok":true,"result":{"reason":"completed"}}"#;
+    let Incoming::RunDone(done) = decode(no_usage).unwrap() else {
+        panic!("not a runDone");
+    };
+    assert_eq!(done.usage, None);
 }

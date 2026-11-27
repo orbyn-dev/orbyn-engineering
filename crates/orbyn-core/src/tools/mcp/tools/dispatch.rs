@@ -5,21 +5,92 @@ use super::guide::{guide_head, guide_stops};
 use super::preview::{page_act, wait_target};
 use super::render::{render_height, render_title};
 use super::{
-    MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, matches_words, number, pull_number, text, wait_seconds,
+    ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, device_button,
+    device_orientation, device_tool_summary, hinge_angle, hinge_preset, is_device_tool,
+    issue_close_reason, issue_query, issue_ref_value, issue_summary_value, matches_words, number,
+    optional_text, pull_check_name, pull_checks_value, pull_comment_body, pull_detail_value,
+    pull_filter, pull_limit, pull_list_value, pull_merge_args, pull_merge_refusal, pull_number,
+    pull_reply_to, pull_respond_args, pull_review, pull_update_args, strings, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
 use crate::governance::approvals::{ActionAsk, Verdict};
+use crate::issues::ProjectReader;
 use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
-    ActionKind, CreateThread, DelegateTask, PermissionMode, TaskSchedule, Thread, UpdateThread,
-    UpsertTask,
+    ActionKind, AddPullComment, CommentIssue, CreateIssue, CreateThread, DelegateTask,
+    DeviceActionInput, DeviceActionOutput, IssueKey, IssueSetStateInput, MergePull, PermissionMode,
+    TaskSchedule, Thread, UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// The key an issue tool asks for, in the tracker and scope its project's own reader named.
+/// The request cannot supply either, so a key outside this project's scope is impossible by
+/// construction.
+fn issue_key(args: &Value, reader: &ProjectReader) -> Result<IssueKey> {
+    Ok(IssueKey {
+        tracker: reader.tracker,
+        scope: reader.scope.clone(),
+        key: text(args, "key")?.to_owned(),
+    })
+}
+
+/// The most base64 image one tool reply can carry under its 256 KiB limit, with room for the
+/// device row and the rest of the answer. A cut reply would not parse.
+const MAX_TOOL_IMAGE_BASE64_BYTES: usize = 192 * 1024;
+
+/// The screenshot tool's answer: the device route's own output. A screenshot over the reply
+/// limit was still taken and read back, so the answer keeps the device and says the image's
+/// size instead of carrying bytes that a cut reply would lose.
+fn screenshot_value(output: DeviceActionOutput) -> Result<Value> {
+    let mut answer = serde_json::to_value(&output)?;
+    let Some(image) = output.image else {
+        return Ok(answer);
+    };
+    if image.len() <= MAX_TOOL_IMAGE_BASE64_BYTES {
+        return Ok(answer);
+    }
+    let map = answer
+        .as_object_mut()
+        .expect("a device action output is an object");
+    let _ = map.remove("image");
+    map.insert("image_base64_bytes".into(), json!(image.len()));
+    map.insert(
+        "note".into(),
+        json!(format!(
+            "The screenshot is {} bytes as base64. It is over the tool's 192 KiB image cap, so the image is left out.",
+            image.len()
+        )),
+    );
+    Ok(answer)
+}
+
+/// The device id an audit row may hold. The target is the caller's own text, so only a short
+/// id with no path separator or control character is kept; anything else is recorded as "-" so a
+/// path can never reach the audit row. The call itself still gets the id as given.
+fn audit_device_target(id: &str) -> &str {
+    if (1..=128).contains(&id.chars().count())
+        && !id
+            .chars()
+            .any(|character| matches!(character, '/' | '\\') || character.is_control())
+    {
+        id
+    } else {
+        "-"
+    }
+}
+
 impl Core {
+    /// The caller project's issue reader, or the one refusal every issue tool shares.
+    async fn issue_reader(&self, own: &Thread) -> Result<ProjectReader> {
+        let project = self.store.project(&own.project_id)?;
+        self.project_issue_reader(&project)
+            .await?
+            .ok_or_else(|| CoreError::Invalid(NO_ISSUE_READER.into()))
+    }
+
     /// Runs one of Orbyn's tools for `binding`'s run. A tool with an effect is
     /// refused unless the gate allows it, and the gate's reason comes back.
     pub async fn call_orbyn_tool(
@@ -32,6 +103,11 @@ impl Core {
             .iter()
             .find(|tool| tool.name == name)
             .ok_or_else(|| CoreError::NotFound(format!("tool {name}")))?;
+        // The device tools are listed only where this machine has platform tools, so
+        // elsewhere the name is unknown, as if the table never held it.
+        if is_device_tool(name) && !self.devices.tools_available() {
+            return Err(CoreError::NotFound(format!("tool {name}")));
+        }
         self.refuse_for_crew_worker(binding, name, args)?;
         let preview = self.project_tool_preview(binding, name, args).await?;
         let args = preview.as_ref().unwrap_or(args);
@@ -46,6 +122,79 @@ impl Core {
                     text(args, "project_id")?,
                     text(args, "path")?
                 ),
+                "orbyn_pull_request_comment" => format!(
+                    "Comment on pull request #{} of this project",
+                    number(args, "number")?
+                ),
+                "orbyn_issue_create" => format!(
+                    "Create issue \"{}\" in this project's tracker",
+                    text(args, "title")?
+                ),
+                "orbyn_issue_comment" => format!(
+                    "Comment on issue {} in this project's tracker",
+                    text(args, "key")?
+                ),
+                "orbyn_issue_set_state" => format!(
+                    "Move issue {} to state {} in this project's tracker",
+                    text(args, "key")?,
+                    text(args, "state")?
+                ),
+                "orbyn_pull_request_respond" => {
+                    let (_, body, resolved) = pull_respond_args(args)?;
+                    let what = if body.is_some() {
+                        match resolved {
+                            Some(true) => "Reply to and resolve a review thread",
+                            Some(false) => "Reply to and unresolve a review thread",
+                            None => "Reply to a review thread",
+                        }
+                    } else if resolved == Some(true) {
+                        "Resolve a review thread"
+                    } else {
+                        "Unresolve a review thread"
+                    };
+                    format!(
+                        "{what} on pull request #{} of this project",
+                        number(args, "number")?
+                    )
+                }
+                "orbyn_pull_request_update" => {
+                    let named: Vec<&str> = ["title", "body", "draft"]
+                        .into_iter()
+                        .filter(|field| args.get(*field).is_some_and(|value| !value.is_null()))
+                        .collect();
+                    format!(
+                        "Update pull request #{} of this project ({})",
+                        number(args, "number")?,
+                        named.join(", ")
+                    )
+                }
+                "orbyn_pull_request_review" => {
+                    let review = pull_review(args)?;
+                    format!(
+                        "Submit a {} review on pull request #{} of this project",
+                        review.event.replace('_', " "),
+                        number(args, "number")?
+                    )
+                }
+                "orbyn_pull_request_merge" => {
+                    let (method, _, delete_branch) = pull_merge_args(args)?;
+                    let mut summary = format!(
+                        "Merge pull request #{} of this project ({method})",
+                        number(args, "number")?
+                    );
+                    if delete_branch {
+                        summary.push_str(" and delete its branch");
+                    }
+                    summary
+                }
+                "orbyn_pull_request_ci_rerun" => format!(
+                    "Re-run the failed jobs of check {} on pull request #{} of this project",
+                    pull_check_name(args)?,
+                    number(args, "number")?
+                ),
+                // A device tool checks its own arguments here, before the gate asks, so a
+                // value the service would refuse never becomes an approval request.
+                name if is_device_tool(name) => device_tool_summary(name, args)?,
                 _ => format!("Use {name}"),
             };
             let ask = ActionAsk {
@@ -81,6 +230,7 @@ impl Core {
                 base_branch: string("base_branch"),
                 effort: None,
                 options: std::collections::BTreeMap::new(),
+                branch_name_seed: None,
             })
             .await?;
         self.runs.enqueue(&thread.id, text(spec, "prompt")?, &[])?;
@@ -239,6 +389,107 @@ impl Core {
                 "linked": self.store.linked_pulls(&own.id, &own.project_id)?,
                 "watched": self.thread_watches(&own.id)?,
             }),
+            "orbyn_pull_request_list" => {
+                let filter = pull_filter(args)?;
+                let limit = pull_limit(args)?;
+                let pulls = self.project_pulls(&own.project_id, &filter, false).await?;
+                pull_list_value(&pulls, limit)
+            }
+            "orbyn_pull_request_read" => {
+                let number = pull_number(args)?;
+                let detail = self.project_pull(&own.project_id, number, false).await?;
+                pull_detail_value(&detail, self.issue_body_for_tool(&detail.body))
+            }
+            "orbyn_pull_request_checks" => {
+                let number = pull_number(args)?;
+                let checks = self.pull_checks(&own.project_id, number, false).await?;
+                pull_checks_value(number, &checks)
+            }
+            "orbyn_pull_request_ci_logs" => {
+                let number = pull_number(args)?;
+                let check = pull_check_name(args)?;
+                let log = self.pull_check_log(&own.project_id, number, check).await?;
+                json!({
+                    "number": number,
+                    "check": check,
+                    "log": log,
+                    "note": PULL_NOTE,
+                })
+            }
+            "orbyn_pull_request_comment" => {
+                let number = pull_number(args)?;
+                let request = AddPullComment {
+                    body: pull_comment_body(args)?.to_owned(),
+                    path: None,
+                    line: None,
+                    reply_to: pull_reply_to(args)?.map(str::to_owned),
+                };
+                self.comment_pull(&own.project_id, number, &request, &actor)
+                    .await?;
+                json!({ "commented": true, "number": number })
+            }
+            "orbyn_pull_request_respond" => {
+                let number = pull_number(args)?;
+                let (thread, body, resolved) = pull_respond_args(args)?;
+                self.respond_pull_thread(
+                    &own.project_id,
+                    number,
+                    thread,
+                    body.as_deref(),
+                    resolved,
+                    &actor,
+                )
+                .await?;
+                json!({
+                    "number": number,
+                    "thread": thread,
+                    "replied": body.is_some(),
+                    "resolved": resolved,
+                })
+            }
+            "orbyn_pull_request_update" => {
+                let number = pull_number(args)?;
+                let update = pull_update_args(args)?;
+                let detail = self
+                    .update_pull(&own.project_id, number, &update, &actor)
+                    .await?;
+                pull_detail_value(&detail, self.issue_body_for_tool(&detail.body))
+            }
+            "orbyn_pull_request_review" => {
+                let number = pull_number(args)?;
+                let review = pull_review(args)?;
+                self.submit_pull_review(&own.project_id, number, &review, &actor)
+                    .await?;
+                json!({ "reviewed": true, "number": number, "event": review.event })
+            }
+            "orbyn_pull_request_merge" => {
+                let number = pull_number(args)?;
+                let (method, head_sha, delete_branch) = pull_merge_args(args)?;
+                let detail = self.project_pull(&own.project_id, number, true).await?;
+                if let Some(refusal) = pull_merge_refusal(&detail, &head_sha) {
+                    return Err(CoreError::Invalid(refusal.into()));
+                }
+                let options = MergePull {
+                    method: method.clone(),
+                    auto: false,
+                    delete_branch,
+                    subject: None,
+                    body: None,
+                    strip_credits: false,
+                    remove_agent_credits: None,
+                    expected_head: detail.head_sha.clone(),
+                };
+                self.merge_project_pull(&own.project_id, number, &options, &actor)
+                    .await?;
+                json!({ "merged": true, "number": number, "method": method })
+            }
+            "orbyn_pull_request_ci_rerun" => {
+                let number = pull_number(args)?;
+                let check = pull_check_name(args)?;
+                self.rerun_pull_checks(&own.project_id, number, check, &actor)
+                    .await?;
+                json!({ "rerun": true, "number": number, "check": check })
+            }
             "orbyn_schedule_list" => {
                 let tasks = self.store.tasks()?;
                 let tasks: Vec<_> = tasks
@@ -619,6 +870,104 @@ impl Core {
                     "written_at": written_at,
                 })
             }
+            "orbyn_issue_list" => {
+                let reader = self.issue_reader(&own).await?;
+                let query = issue_query(args, reader.tracker)?;
+                let page = self
+                    .scope_issues(reader.tracker, &reader.scope, &query)
+                    .await?;
+                json!({
+                    "issues": page.issues.iter().map(issue_summary_value).collect::<Vec<_>>(),
+                    "note": ISSUE_NOTE,
+                })
+            }
+            "orbyn_issue_read" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                let detail = self.issue(&key).await?;
+                let mut issue = issue_summary_value(&detail.summary);
+                issue["body"] = json!(self.issue_body_for_tool(&detail.body));
+                issue["note"] = json!(ISSUE_NOTE);
+                issue
+            }
+            "orbyn_issue_create" => {
+                let reader = self.issue_reader(&own).await?;
+                let detail = self
+                    .create_issue(CreateIssue {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        title: text(args, "title")?.to_owned(),
+                        body: optional_text(args, "body")?,
+                        labels: strings(args, "labels")?,
+                        assignees: strings(args, "assignees")?,
+                        template: optional_text(args, "template")?,
+                    })
+                    .await?;
+                let mut issue = issue_summary_value(&detail.summary);
+                issue["body"] = json!(self.issue_body_for_tool(&detail.body));
+                issue["note"] = json!(ISSUE_NOTE);
+                issue
+            }
+            "orbyn_issue_comment" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                let comment = self
+                    .comment_issue(CommentIssue {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        key: key.key,
+                        body: text(args, "body")?.to_owned(),
+                    })
+                    .await?;
+                json!({
+                    "id": comment.id,
+                    "author": comment.author,
+                    "created_at": comment.created_at,
+                    "body": self.issue_body_for_tool(&comment.body),
+                    "note": ISSUE_NOTE,
+                })
+            }
+            "orbyn_issue_set_state" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                let detail = self
+                    .set_state_issue(IssueSetStateInput {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        key: key.key,
+                        state: text(args, "state")?.to_owned(),
+                        close_reason: issue_close_reason(args)?,
+                    })
+                    .await?;
+                let mut issue = issue_summary_value(&detail.summary);
+                issue["body"] = json!(self.issue_body_for_tool(&detail.body));
+                issue["note"] = json!(ISSUE_NOTE);
+                issue
+            }
+            "orbyn_issue_link" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                self.link_issue(&own.id, &key).await?;
+                json!({ "linked": true })
+            }
+            "orbyn_issue_unlink" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                self.unlink_issue(&own.id, &key)?;
+                json!({ "unlinked": true })
+            }
+            "orbyn_issue_thread_list" => {
+                // Stored links only: a tracker that was disconnected later does not hide what this thread linked.
+                let issues = self
+                    .store
+                    .issue_links()?
+                    .get(&own.id)
+                    .into_iter()
+                    .flatten()
+                    .map(issue_ref_value)
+                    .collect::<Vec<_>>();
+                json!({ "issues": issues })
+            }
             "orbyn_delegate_task" => {
                 let nested =
                     own.lifecycle.as_ref().and_then(|l| l.relation.as_deref()) == Some("subagent");
@@ -680,8 +1029,138 @@ impl Core {
                 self.project_task(binding, id)?;
                 json!({ "thread_id": self.run_task(id).await? })
             }
+            "orbyn_device_list" => {
+                // Rule 6: the row goes before the effect it describes, so it carries fixed
+                // values only; the list's counts are the answer's, not the audit row's.
+                self.audit_device_tool(binding, "device.tool.list", "", json!({}))?;
+                // Boxed: the device call's future is deep and a debug test thread's stack is
+                // small, so it lives on the heap (the #1515 follow-up).
+                let list = Box::pin(self.devices.list()).await;
+                serde_json::to_value(&list)?
+            }
+            "orbyn_device_screenshot" => {
+                let id = text(args, "device_id")?;
+                // Rule 6: the row goes before the device call. The target is the caller's
+                // text, so the sanitiser keeps a path or control character out of it.
+                self.audit_device_tool(
+                    binding,
+                    "device.tool.screenshot",
+                    audit_device_target(id),
+                    json!({}),
+                )?;
+                let output =
+                    Box::pin(self.devices.act(id, DeviceActionInput::Screenshot {})).await?;
+                screenshot_value(output)?
+            }
+            "orbyn_device_fold" => {
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.fold",
+                    DeviceActionInput::Fold {},
+                )
+                .await?
+            }
+            "orbyn_device_unfold" => {
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.unfold",
+                    DeviceActionInput::Unfold {},
+                )
+                .await?
+            }
+            "orbyn_device_rotate" => {
+                let value = device_orientation(text(args, "value")?)?;
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.rotate",
+                    DeviceActionInput::Rotate { value },
+                )
+                .await?
+            }
+            "orbyn_device_button" => {
+                let value = device_button(text(args, "value")?)?;
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.button",
+                    DeviceActionInput::Button { value },
+                )
+                .await?
+            }
+            "orbyn_device_hinge" => {
+                let angle = hinge_angle(args)?;
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.hinge",
+                    DeviceActionInput::Hinge { angle },
+                )
+                .await?
+            }
+            "orbyn_device_hinge_preset" => {
+                let preset = hinge_preset(text(args, "preset")?)?;
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.hinge_preset",
+                    DeviceActionInput::HingePreset { preset },
+                )
+                .await?
+            }
+            "orbyn_device_power_off" => {
+                self.run_device_action(
+                    binding,
+                    args,
+                    "device.tool.power_off",
+                    DeviceActionInput::PowerOff {},
+                )
+                .await?
+            }
             other => return Err(CoreError::NotFound(format!("tool {other}"))),
         })
+    }
+
+    /// One typed device action a tool asks for: the audit row is written before the call it
+    /// describes (rule 6), and the answer is the action route's own output.
+    async fn run_device_action(
+        &self,
+        binding: &McpBinding,
+        args: &Value,
+        action: &str,
+        input: DeviceActionInput,
+    ) -> Result<Value> {
+        let id = text(args, "device_id")?;
+        self.audit_device_tool(binding, action, audit_device_target(id), json!({}))?;
+        // Boxed like the list and screenshot calls, so one device action does not hold the
+        // whole deep future on a debug thread's stack.
+        let output = Box::pin(self.devices.act(id, input)).await?;
+        Ok(serde_json::to_value(&output)?)
+    }
+
+    /// One audit row for a device tool call, written before the call it describes (rule 6): its
+    /// own action, the caller's actor and thread, an already-checked device id, and a fixed
+    /// detail. Never the answer, an image or a path.
+    fn audit_device_tool(
+        &self,
+        binding: &McpBinding,
+        action: &str,
+        target: &str,
+        detail: Value,
+    ) -> Result<()> {
+        self.store.append_audit(&AuditRecord {
+            actor: format!("engine:{}", binding.scope.engine),
+            action: action.to_owned(),
+            target: target.to_owned(),
+            decision: None,
+            source: "engine".into(),
+            thread_id: Some(binding.scope.thread_id.clone()),
+            run_id: Some(binding.scope.run_id.clone()),
+            detail,
+        })?;
+        Ok(())
     }
 
     /// Records a call before it happens, whichever way the gate then goes.

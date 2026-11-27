@@ -7,6 +7,14 @@ use super::*;
 use crate::CoreConfig;
 use crate::testing::{TempDir, library, run_git};
 
+/// An `Invalid` refusal and its exact sentence, which is what a caller sees for these name and slot rules.
+fn refused_invalid<T: std::fmt::Debug>(result: crate::error::Result<T>, what: &str) -> String {
+    match result {
+        Err(CoreError::Invalid(message)) => message,
+        other => panic!("{what}: expected an Invalid refusal, got {other:?}"),
+    }
+}
+
 async fn core(dir: &TempDir) -> Core {
     let root = library(&dir.path().join("library"));
     let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
@@ -61,9 +69,13 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 #[test]
 fn slugs_are_plain_and_never_a_worktree_root() {
     assert_eq!(slug_of("My Project").unwrap(), "my-project");
-    assert!(slug_of("app-wt").is_err());
-    assert!(slug_of("..").is_err());
-    assert!(slug_of("  ").is_err());
+    for name in ["app-wt", "..", "  "] {
+        assert_eq!(
+            refused_invalid(slug_of(name), name),
+            "Choose another project name.",
+            "{name:?}"
+        );
+    }
     assert_eq!(
         slug_of("../../etc").unwrap(),
         "etc",
@@ -75,6 +87,97 @@ fn slugs_are_plain_and_never_a_worktree_root() {
     assert_eq!(name_from_url("https://x.test/a/b/"), Some("b"));
 }
 
+#[test]
+fn project_name_checks_host_specific_rules() {
+    for name in [
+        "bad:name*?<x",
+        "CONIN$",
+        "conout$",
+        "CON",
+        "con.txt",
+        "COM1",
+        "Lpt³.txt",
+        "name.",
+        "name ",
+    ] {
+        assert_eq!(
+            refused_invalid(validate_new_project_name(name, true), name),
+            "Enter a valid project name without path separators or invalid characters.",
+            "{name:?}"
+        );
+    }
+    for name in ["Café Notes", "My project", "a.b", "widget-1"] {
+        assert!(validate_new_project_name(name, true).is_ok(), "{name:?}");
+        assert!(validate_new_project_name(name, false).is_ok(), "{name:?}");
+    }
+    assert!(validate_new_project_name("bad:name", false).is_ok());
+}
+
+#[test]
+fn new_project_destination_checks_windows_folder_name_after_normalization() {
+    for name in [" CON", "CON!", "😺CON", "lpt1!"] {
+        assert_eq!(
+            refused_invalid(validate_new_project_destination(name, None, true), name),
+            "Enter a valid project name without path separators or invalid characters.",
+            "{name:?}"
+        );
+    }
+    assert!(validate_new_project_destination("Café Notes", None, true).is_ok());
+    assert!(validate_new_project_destination(" CON", Some("/tmp/safe"), true).is_ok());
+    for chosen in ["/tmp/CON.txt", "/tmp/conin$", "/tmp/CONOUT$"] {
+        assert_eq!(
+            refused_invalid(
+                validate_new_project_destination("safe", Some(chosen), true),
+                chosen
+            ),
+            "Enter a valid project name without path separators or invalid characters.",
+            "{chosen}"
+        );
+    }
+    assert!(validate_new_project_destination("safe", Some("/tmp/CON!"), true).is_ok());
+    assert!(validate_new_project_destination("safe", Some("/tmp/CON.txt"), false).is_ok());
+}
+
+#[tokio::test]
+async fn new_project_rejects_path_components_before_any_creation() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let base = dir.path().join("base");
+    std::fs::create_dir(&base).unwrap();
+    for name in [
+        "../escape",
+        "nested/name",
+        r"nested\name",
+        ".",
+        "..",
+        "bad\nname",
+    ] {
+        let chosen = base.join(name);
+        let error = core
+            .new_project(name, false, Some(chosen.to_str().unwrap()))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, CoreError::Invalid(_)), "{name:?}: {error}");
+        assert!(
+            error.to_string().contains("project name"),
+            "{name:?}: {error}"
+        );
+        assert_eq!(
+            refused_invalid(core.new_project(name, false, None).await, name),
+            "Enter a valid project name without path separators or invalid characters.",
+            "{name:?}"
+        );
+    }
+    assert!(!dir.path().join("escape").exists());
+    assert_eq!(std::fs::read_dir(&base).unwrap().count(), 0);
+    let chosen = base.join("Café Notes");
+    let project = core
+        .new_project("Café Notes", false, Some(chosen.to_str().unwrap()))
+        .await
+        .unwrap();
+    assert_eq!(PathBuf::from(project.path), chosen);
+}
+
 #[tokio::test]
 async fn create_makes_a_nested_repository() {
     let dir = TempDir::new();
@@ -84,8 +187,9 @@ async fn create_makes_a_nested_repository() {
     assert_eq!(path, core.workspace.repo_dir().unwrap().join("app"));
     assert!(path.join(".git").exists());
     assert!(!project.trusted);
-    assert!(
-        core.new_project("app", false, None).await.is_err(),
+    assert_eq!(
+        refused_invalid(core.new_project("app", false, None).await, "duplicate slug"),
+        "app already exists.",
         "slugs are unique"
     );
 }
@@ -103,21 +207,25 @@ async fn clone_lands_under_repo_and_a_failed_clone_leaves_nothing() {
     assert!(Path::new(&project.path).join("a.txt").exists());
 
     let missing = dir.path().join("nowhere");
-    assert!(
+    // Git's own stderr names the missing repository, and that text varies by version: the fixed
+    // claim is the variant. The next lines assert the failed clone left nothing behind.
+    assert!(matches!(
         core.clone_project(missing.to_str().unwrap(), None, None)
-            .await
-            .is_err()
-    );
+            .await,
+        Err(CoreError::Git(_))
+    ));
     let leftovers: Vec<_> = std::fs::read_dir(core.workspace.repo_dir().unwrap())
         .unwrap()
         .flatten()
         .filter(|entry| entry.file_name().to_string_lossy().starts_with(".incoming"))
         .collect();
     assert!(leftovers.is_empty());
-    assert!(
-        core.clone_project("--upload-pack=evil", None, None)
-            .await
-            .is_err()
+    assert_eq!(
+        refused_invalid(
+            core.clone_project("--upload-pack=evil", None, None).await,
+            "flag URL"
+        ),
+        "That URL is not valid."
     );
 }
 
@@ -154,7 +262,12 @@ async fn adding_registers_in_place_untrusted_and_touches_nothing() {
             .unwrap()
             .is_git
     );
-    assert!(core.add_project("relative").await.is_err());
+    match core.add_project("relative").await {
+        Err(CoreError::WorkspaceRefused(message)) => {
+            assert_eq!(message, "Use an absolute path.");
+        }
+        other => panic!("expected WorkspaceRefused for a relative path, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -177,14 +290,25 @@ async fn a_chosen_folder_takes_a_clone_or_a_new_project_and_stays_managed() {
     let again = core
         .new_project("x", false, Some(chosen.to_str().unwrap()))
         .await;
-    assert!(again.is_err(), "a folder with files is not a destination");
+    // The fixed claim is the rule; the path inside the sentence is the one the test chose.
+    match again {
+        Err(CoreError::Invalid(message)) => assert!(
+            message.ends_with("is not empty."),
+            "a folder with files is not a destination: {message}"
+        ),
+        other => panic!("expected an Invalid refusal, got {other:?}"),
+    }
     let root = core.workspace.root().unwrap();
     let inside = root.join("skills/new");
-    assert!(
-        core.new_project("x", false, Some(inside.to_str().unwrap()))
-            .await
-            .is_err()
-    );
+    match core
+        .new_project("x", false, Some(inside.to_str().unwrap()))
+        .await
+    {
+        Err(CoreError::WorkspaceRefused(message)) => {
+            assert_eq!(message, "This folder is inside the skills library.");
+        }
+        other => panic!("expected WorkspaceRefused inside the library, got {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -232,6 +356,85 @@ async fn a_clean_pushed_project_is_removed_with_its_files() {
     assert!(!Path::new(&project.path).exists());
 }
 
+/// A clean, pushed clone: the one case where `delete_files` removes the folder, so every extra thing it holds must stop that.
+async fn clean_clone(dir: &TempDir, core: &Core) -> Project {
+    let source = source_repo(&dir.path().join("upstream"));
+    core.clone_project(source.to_str().unwrap(), None, None)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn an_ignored_file_keeps_the_folder_without_asking() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = clean_clone(&dir, &core).await;
+    let path = PathBuf::from(&project.path);
+    // Ignored through the repository's own exclude file, so the tree is still clean and nothing is unpushed.
+    std::fs::write(path.join(".git/info/exclude"), "cache.bin\n").unwrap();
+    std::fs::write(path.join("cache.bin"), "built over an hour").unwrap();
+
+    let removal = core.remove_project(&project.id, false, true).await.unwrap();
+    assert!(!removal.files_removed);
+    assert_eq!(removal.kept_path.as_deref(), Some(project.path.as_str()));
+    assert!(path.join("cache.bin").exists(), "an ignored file is work");
+    assert!(core.store.list_projects().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_linked_worktree_keeps_the_folder_and_the_worktree() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = clean_clone(&dir, &core).await;
+    let path = PathBuf::from(&project.path);
+    let linked = dir.path().join("linked");
+    run_git(
+        &path,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "-b",
+            "side",
+        ],
+    );
+    // The new branch sits on a pushed commit, so nothing else is unsaved.
+    let removal = core.remove_project(&project.id, false, true).await.unwrap();
+    assert!(!removal.files_removed);
+    assert!(path.join(".git").exists());
+    assert!(linked.join(".git").exists(), "the worktree is untouched");
+}
+
+#[tokio::test]
+async fn an_unpushed_branch_alone_needs_confirmation_and_the_folder_stays() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = clean_clone(&dir, &core).await;
+    let path = PathBuf::from(&project.path);
+    run_git(&path, &["config", "user.email", "t@example.com"]);
+    run_git(&path, &["config", "user.name", "T"]);
+    run_git(&path, &["checkout", "-q", "-b", "idea"]);
+    std::fs::write(path.join("idea.txt"), "x").unwrap();
+    commit_all(&path, "only here");
+    // The working tree is clean: the only thing at stake is the commit on `idea`.
+    match core.remove_project(&project.id, false, true).await {
+        Err(CoreError::ProjectHasWork { detail, .. }) => {
+            assert!(detail["dirty_files"].as_array().unwrap().is_empty());
+            assert_eq!(detail["unpushed_branches"][0], "idea");
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(
+        core.store.project(&project.id).is_ok(),
+        "refused, not removed"
+    );
+
+    let removal = core.remove_project(&project.id, true, true).await.unwrap();
+    assert!(!removal.files_removed);
+    assert!(path.join("idea.txt").exists());
+}
+
 #[tokio::test]
 async fn nothing_is_added_to_a_target_by_being_a_project() {
     let dir = TempDir::new();
@@ -275,6 +478,70 @@ async fn a_new_project_can_start_with_a_readme_and_first_commit() {
 }
 
 #[tokio::test]
+async fn the_readme_first_commit_is_recorded_as_the_persons() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = core.new_project("Notes", true, None).await.unwrap();
+    let path = Path::new(&project.path);
+    let recorded = core.store.crew_person_commits(&project.id).unwrap();
+    match git(path, &["rev-parse", "--verify", "HEAD"]).await {
+        // Git had an identity to make the commit, so the app must have recorded exactly that commit: the one it
+        // made on the person's action, holding nothing but the README it wrote.
+        Ok(head) => {
+            let head = text(&head);
+            assert_eq!(recorded.as_slice(), std::slice::from_ref(&head));
+            assert_eq!(
+                text(
+                    &git(path, &["show", "--name-only", "--format=", &head])
+                        .await
+                        .unwrap()
+                ),
+                "README.md",
+                "the recorded commit is the README commit, not later work"
+            );
+            let audits: i64 = core
+                .store
+                .reader()
+                .query_row(
+                    "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.person_commit' AND target = ?1",
+                    [&head],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(audits, 1, "one audit row, in the same transaction");
+        }
+        // No Git identity: the app makes no commit, so nothing may be recorded for one.
+        Err(_) => assert!(
+            recorded.is_empty(),
+            "a project without a commit records no person commit: {recorded:?}"
+        ),
+    }
+}
+
+#[tokio::test]
+async fn a_project_with_no_readme_records_no_person_commit() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let project = core.new_project("Plain", false, None).await.unwrap();
+    assert!(
+        core.store
+            .crew_person_commits(&project.id)
+            .unwrap()
+            .is_empty()
+    );
+    let audits: i64 = core
+        .store
+        .reader()
+        .query_row(
+            "SELECT COUNT(*) FROM audit_events WHERE action = 'crew.person_commit'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(audits, 0);
+}
+
+#[tokio::test]
 async fn init_git_makes_the_folder_a_repository_without_a_commit() {
     let dir = TempDir::new();
     let core = core(&dir).await;
@@ -310,10 +577,12 @@ async fn init_git_makes_the_folder_a_repository_without_a_commit() {
         "main",
         "the same default branch as a created project"
     );
+    // No HEAD is the whole claim; Git's own words for a missing revision vary by version.
     assert!(
-        git(&folder, &["rev-parse", "--verify", "HEAD"])
-            .await
-            .is_err(),
+        matches!(
+            git(&folder, &["rev-parse", "--verify", "HEAD"]).await,
+            Err(CoreError::Git(_))
+        ),
         "no commit is invented"
     );
 }
@@ -434,11 +703,15 @@ async fn a_background_clone_finishes_and_a_failed_one_can_retry() {
     source_repo(&missing);
     core.retry_clone(&job.id).unwrap();
     assert_eq!(until_settled(&core, &job.id).await.state, CloneState::Done);
-    assert!(
-        core.retry_clone(&job.id).is_err(),
+    assert_eq!(
+        refused_invalid(core.retry_clone(&job.id), "finished clone retry"),
+        "This clone cannot be retried.",
         "a finished clone stays finished"
     );
-    assert!(core.cancel_clone(&job.id).is_err());
+    assert_eq!(
+        refused_invalid(core.cancel_clone(&job.id), "finished clone cancel"),
+        "This clone is not running."
+    );
 }
 
 async fn until_settled(core: &Arc<Core>, id: &str) -> CloneJob {
@@ -617,7 +890,10 @@ async fn a_refused_firing_is_in_the_history_with_its_reason() {
     let project = core.new_project("app", false, None).await.unwrap();
     let task = core.save_task(interval_task(&project.id), "user").unwrap();
 
-    assert!(core.run_task(&task.id).await.is_err());
+    assert!(matches!(
+        core.run_task(&task.id).await,
+        Err(CoreError::FolderUntrusted)
+    ));
 
     let history = core.task_runs(&task.id).unwrap();
     assert_eq!(history.len(), 1);
@@ -882,6 +1158,7 @@ async fn a_thread_cannot_start_in_a_removed_project() {
             base_branch: None,
             effort: None,
             options: BTreeMap::new(),
+            branch_name_seed: None,
         })
         .await,
     );

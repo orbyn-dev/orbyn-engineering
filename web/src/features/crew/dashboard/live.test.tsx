@@ -23,7 +23,7 @@ const trust = (over: Partial<AutopilotTrust> = {}): AutopilotTrust => ({
 const areas: AutopilotAreas = { project: "p-app", ceiling: "full", as_of: 1_762_500_000, enforced: true, total: 0, rows: [] };
 
 type Answer = { status: number; body?: unknown } | "never";
-let answers: { preview: Answer; trust: Answer; trustBy: Record<string, Answer> };
+let answers: { preview: Answer; trust: Answer; trustBy: Record<string, Answer>; dashboard?: Answer };
 const sent = () => vi.mocked(fetch).mock.calls.map(([url, init]) => `${init?.method ?? "GET"} ${String(url)}`);
 const tile = (label: string) => document.querySelector<HTMLElement>(`[data-tile="${label}"]`)!;
 
@@ -40,6 +40,7 @@ beforeEach(() => {
       const project = new URL(url, "http://x").searchParams.get("project") ?? "";
       const answer: Answer = url.startsWith("/api/projects") ? { status: 200, body: [app, planner, notes] }
         : url.includes("/api/crew/preview") ? answers.preview
+        : url.includes("/api/crew/dashboard") ? (answers.dashboard ?? { status: 404 })
         : url.includes("/api/crew/trust") ? (answers.trustBy[project] ?? answers.trust)
         : url.includes("/api/crew/autopilot/areas/history") ? { status: 200, body: { project, area: "", events: [], truncated: false } }
         : url.includes("/api/crew/autopilot/areas") ? { status: 200, body: areas }
@@ -52,11 +53,13 @@ beforeEach(() => {
 });
 
 describe("the production client", () => {
-  it("has no history read, so the route that does not exist is never asked for", async () => {
-    expect(dashboardClient().history).toBeNull();
+  it("asks for the history read with the period and the person's offset, and falls back to the trust record on a 404", async () => {
+    expect(dashboardClient().history).not.toBeNull();
     render(<LiveDashboard />);
     await screen.findByText("5%");
-    expect(sent().filter((call) => call.includes("/api/crew/dashboard"))).toEqual([]);
+    const asked = sent().filter((call) => call.includes("/api/crew/dashboard"));
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatch(/^GET \/api\/crew\/dashboard\?project=p-app&days=60&utc_offset_minutes=-?\d+$/);
   });
 });
 
@@ -102,9 +105,28 @@ describe("Settings › Crew › Dashboard on the real reads", () => {
     expect(within(group).getByRole("radio", { name: "60 days" })).toHaveAttribute("aria-checked", "true");
     for (const name of ["30 days", "90 days"]) {
       const radio = within(group).getByRole("radio", { name });
-      expect(radio).toBeDisabled();
+      await waitFor(() => expect(radio).toBeDisabled());
       expect(radio).toHaveAttribute("aria-description", expect.stringContaining("Planned"));
     }
+  });
+
+  it("draws the served history read: autonomy and cycle time from the service, and the other periods choosable", async () => {
+    const week = { start: 1_761_523_200, merges: 12, unaided: 9, reverted: 1 };
+    answers.dashboard = {
+      status: 200,
+      body: {
+        project: "p-app", days: 60, as_of: 1_762_500_000, min_rate_sample: 10, min_median_sample: 5, merges: 38, unaided: 30, reverted: 2, reverted_auto: 1, reverted_by_person: 1,
+        cycle: { median_s: 5400, p90_s: 20000 }, weeks: [week],
+        engines: [{ name: "claude", merges: 21, unaided: 18, reverted: 1, cost: { unit: "tokens", amount: 6_100_000 } }, { name: "codex", merges: 17, unaided: 12, reverted: 1 }],
+        areas: [{ name: "web/auth", merges: 15, unaided: 10, reverted: 2 }], reverts: [{ title: "Revert login", at: 1_762_400_000, by: "person" }], recent: [], truncated: false,
+      },
+    };
+    render(<LiveDashboard />);
+    await waitFor(() => expect(tile("Autonomy")).not.toHaveTextContent("Planned"));
+    expect(tile("Autonomy")).toHaveTextContent("79%");
+    expect(tile("Cycle time")).not.toHaveTextContent("Planned");
+    const group = screen.getByRole("radiogroup", { name: "Period" });
+    expect(within(group).getByRole("radio", { name: "30 days" })).not.toBeDisabled();
   });
 
   it("takes the window the service reports, whatever it is", async () => {
@@ -172,6 +194,7 @@ describe("Settings › Crew › Dashboard on the real reads", () => {
     answers.preview = { status: 404, body: { code: "not_found", message: "Not found" } };
     const { container } = render(<LiveDashboard />);
     await waitFor(() => expect(sent()).toContain("GET /api/crew/preview"));
+    // Real wait: asserts that nothing more happens after a pause; there is no event to wait for.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(container).toBeEmptyDOMElement();
     expect(sent().filter((call) => call.includes("/api/crew/trust"))).toHaveLength(0);

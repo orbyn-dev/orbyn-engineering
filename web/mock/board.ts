@@ -1,11 +1,13 @@
 /**
  * The mock's Taskboard read (`GET /api/crew/flow/board`): a crew's work tasks as seven columns. It answers in the Crew scenarios
  * (`crew`, `crew-<state>`) and nowhere else, so the default scenario keeps every Crew route at 404 as the service does with Crew
- * Preview off. Reads only.
+ * Preview off. It also answers the person's cancel, re-run-checks and retry-elsewhere writes.
  *
  * Scenarios: `crew` (the design's sample: one card in each of the first five columns, three passed, two stopped or cancelled),
  * `crew-board-many` (twelve running tasks, so "+N more" pages), `crew-board-empty` (no task), `crew-board-truncated` (the service's
- * cap was hit).
+ * cap was hit), `crew-board-working` (the sample's retry in Running and checks in Verifying, with Needs you empty),
+ * `crew-board-needs-kinds` (the three needs-you kinds the page gives its own amber sentence), and `crew-could-not-stop*` (the
+ * sample's verifying task moved to Needs you as the cancelled card whose worker could not be stopped, kc2-close-lead-could-not-stop).
  */
 import type { FlowBoard } from "../src/generated/FlowBoard.ts";
 import type { FlowCard } from "../src/generated/FlowCard.ts";
@@ -43,13 +45,51 @@ function sample(): Row[] {
     card("routed", "b-routed", "implement", "Rename returnTo to next in the session code", "claude", "Sonnet 5.5", "low", "routed", 0),
     card("running", "b-running", "implement", "Use next in the auth redirect when it points inside the app", "claude", "Sonnet 5.5", "medium", "running", 0),
     card("verifying", "b-verifying", "test", "Add tests for the redirect, including //evil.com", "codex", "GPT-5.5", "medium", "verifying", 0),
-    card("needs_you", "b-needs", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 1, { reason: "Asked you a question: <b>which target wins</b>?" }),
+    card("needs_you", "b-needs", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 1, { needs_you: "task_needs_person", reason: "Which target wins when both next and returnTo are set?" }),
     card("passed", "b-pass1", "docs", "Fix the typo in the README", "codex", "GPT-5.5", "low", "passed", 120, { can_rerun: true, checks: { passed: 4, of: 4 } }),
     card("passed", "b-pass2", "implement", "Move session helpers to auth/session.ts", "claude", "Sonnet 5.5", "medium", "passed", 600, { can_rerun: false, checks: { passed: 3, of: 3 } }),
     card("passed", "b-pass3", "test", "Cover the login route", "codex", "GPT-5.5", "high", "passed", 2000),
     card("stopped_cancelled", "b-stop1", "implement", "Add a rate limit to the login route", "codex", "GPT-5.5", "medium", "stopped", 300, { stop_reason: "repeated_failure", can_rerun: true }),
     card("stopped_cancelled", "b-stop2", "docs", "Move the CHANGELOG entry", "claude", "Sonnet 5.5", "low", "cancelled", 900),
   ];
+}
+
+/**
+ * `crew-board-working`: the sample's live workers, a retry in Running and checks in Verifying, with nothing in Needs you (the
+ * working frame, needs-one-source-working-board).
+ */
+function workingBoard(): Row[] {
+  return sample()
+    .filter((row) => row.column !== "needs_you")
+    .map((row): Row => (row.id === "b-running" ? { ...row, working: "retry" } : row.id === "b-verifying" ? { ...row, working: "verifying" } : row));
+}
+
+/** `crew-board-needs-kinds`: one card for each needs-you kind the Taskboard gives its own amber sentence. */
+function needsKinds(): Row[] {
+  return [
+    card("needs_you", "b-question", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 1, { needs_you: "task_needs_person", reason: "Which target wins when both next and returnTo are set?" }),
+    card("needs_you", "b-merge", "implement", "Rotate the signing key", "claude", "Sonnet 5.5", "high", "passed", 4, { needs_you: "merge_waiting", reason: "A merge needs your decision." }),
+    card("needs_you", "b-manual", "test", "Check the redirect by hand on staging", "codex", "GPT-5.5", "medium", "needs_person", 9, { needs_you: "manual_check", reason: "A check only a person can make is waiting." }),
+  ];
+}
+
+/**
+ * The `crew-could-not-stop*` scenarios: the sample, with the verifying task whose lead close could not stop its worker moved to
+ * Needs you, cancelled and final, carrying the service's own line (kc2-close-lead-could-not-stop).
+ */
+function couldNotStop(): Row[] {
+  return sample().map((row) => {
+    if (row.id !== "b-verifying") return row;
+    const moved: Row = {
+      ...row,
+      column: "needs_you",
+      state: "cancelled",
+      can_cancel: false,
+      needs_you: "could_not_stop",
+      reason: "The worker could not be stopped. Stop it again.",
+    };
+    return moved;
+  });
 }
 
 /** `crew-could-not-start`: two implement tasks whose Codex workers were refused at their start, beside one task that really waits. */
@@ -60,6 +100,18 @@ function couldNotStart(): Row[] {
     card("needs_you", "b-refused2", "implement", "Use next in the auth redirect when it points inside the app", "codex", "GPT-5.5", "medium", "needs_person", 3, { could_not_start: true, reason: refused }),
     card("needs_you", "b-needs", "research", "Which target wins when both next and returnTo are set?", "opencode", "DeepSeek V4", "medium", "needs_person", 5, { reason: "No check this version can run decided the task, so a person decides." }),
   ];
+}
+
+/**
+ * `crew-could-not-start-disk`: the same two refused tasks, with the disk guard's structured answer:
+ * the code and both numbers, and a reason that deliberately is not the disk sentence.
+ */
+function couldNotStartDisk() {
+  const free = 3_400_000_000;
+  return [
+    card("needs_you", "b-refused1", "implement", "Rename returnTo to next in the session code", "codex", "GPT-5.5", "medium", "needs_person", 2, { could_not_start: true, reason: "A different sentence." }),
+    card("needs_you", "b-refused2", "implement", "Use next in the auth redirect when it points inside the app", "codex", "GPT-5.5", "medium", "needs_person", 3, { could_not_start: true, reason: "" }),
+  ].map((entry) => ({ ...entry, code: "disk_low", free_bytes: free, floor_gb: 5 }));
 }
 
 function many(): Row[] {
@@ -116,7 +168,14 @@ export function boardMock(scenario: string, method: string, path: string, query:
   const crew = query.get("crew");
   if (!crew) return invalid("crew is required");
   if (crew !== MOCK_CREW && crew !== MOCK_CREW_TWO) return { status: 404, body: { code: "not_found", message: "crew not found" } };
-  const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? [] : scenario === "crew-board-many" ? many() : scenario.startsWith("crew-could-not-start") ? couldNotStart() : sample();
+  const all = scenario === "crew-board-empty" || crew === MOCK_CREW_TWO ? []
+    : scenario === "crew-board-many" ? many()
+    : scenario === "crew-board-working" ? workingBoard()
+    : scenario === "crew-board-needs-kinds" ? needsKinds()
+    : scenario === "crew-could-not-start-disk" ? couldNotStartDisk()
+    : scenario.startsWith("crew-could-not-start") ? couldNotStart()
+    : scenario.startsWith("crew-could-not-stop") ? couldNotStop()
+    : sample();
   const engine = query.get("engine");
   const kind = query.get("kind");
   const only = query.get("column") as FlowColumnId | null;

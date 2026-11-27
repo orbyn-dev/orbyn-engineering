@@ -7,6 +7,7 @@ mod source;
 mod threads;
 
 pub use scope::in_repo;
+pub(crate) use scope::repo_asked;
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};

@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from "react";
 import { Button, Field } from "../../ui/controls";
-import { TRUST_CONFIRM, TRUST_DECLINE, TRUST_TITLE, TrustBody } from "../../product/ui/TrustPrompt";
+import { canSendPersonKey } from "../../api/personKey";
+import { TRUST_CONFIRM, TRUST_DECLINE, TRUST_DESKTOP_ONLY, TRUST_TITLE, TrustBody } from "../../product/ui/TrustPrompt";
 import { ActionDialog } from "./ActionDialog";
-import { checkCloneSource, isFolderName, plain } from "./model";
+import { checkCloneSource } from "../../product/git/cloneSource";
+import { isFolderName, plain } from "./model";
 import { reposApi } from "./api";
 import { canPickFolder, pickFolder } from "./folder";
 import type { RepoRow } from "./contract";
@@ -118,23 +120,29 @@ export function RemoveDialog({ projectId, projectName, repo, onClose, onDone }: 
 /**
  * Trusts this one folder and no other. Opening it runs nothing. The prompt is the app's own trust prompt (its title, warning,
  * path and button words come from product/ui/TrustPrompt), shown as a dialog over the project's settings: no second copy of it lives here.
+ * Trusting is a `Person` route, so a page with no person key (a browser tab) says why and keeps only the way out.
  */
 export function TrustDialog({ projectId, repo, onClose, onDone }: { projectId: string; repo: RepoRow; onClose(): void; onDone: Done }) {
   return (
-    <ActionDialog title={TRUST_TITLE(plain(repo.name))} confirmLabel={TRUST_CONFIRM} cancelLabel={TRUST_DECLINE} cancelFocus onClose={onClose}
+    <ActionDialog title={TRUST_TITLE(plain(repo.name))} confirmLabel={TRUST_CONFIRM} cancelLabel={TRUST_DECLINE} cancelFocus confirmHidden={!canSendPersonKey()} onClose={onClose}
       onConfirm={async () => { await reposApi().trust(projectId, repo.id); onDone(); }}>
       <TrustBody path={plain(repo.path)} />
+      {canSendPersonKey() ? null : <p>{TRUST_DESKTOP_ONLY}</p>}
       <p className="field-hint">Trusting this folder does not trust the project's other repositories.</p>
     </ActionDialog>
   );
 }
 
-export function SetupGitDialog({ projectId, repo, onClose, onDone }: { projectId: string; repo: RepoRow; onClose(): void; onDone: Done }) {
+/**
+ * Confirms one `git init` in a folder: for a repository row and for the project's own folder, since both are the same
+ * write with the same meaning. `setup` is the route that writes, so this dialog never picks between them.
+ */
+export function SetupGitDialog({ name, path, setup, onClose, onDone }: { name: string; path: string; setup(): Promise<unknown>; onClose(): void; onDone: Done }) {
   return (
-    <ActionDialog title={`Set up Git in ${plain(repo.name)}?`} confirmLabel="Set up Git" cancelFocus onClose={onClose}
-      onConfirm={async () => { await reposApi().setupGit(projectId, repo.id); onDone(); }}>
+    <ActionDialog title={`Set up Git in ${plain(name)}?`} confirmLabel="Set up Git" cancelFocus onClose={onClose}
+      onConfirm={async () => { await setup(); onDone(); }}>
       <p>This runs <code>git init</code> in the folder. Existing files are not changed.</p>
-      <ConfirmFacts facts={[{ label: "Folder", value: <Path path={repo.path} />, mono: true }]} />
+      <ConfirmFacts facts={[{ label: "Folder", value: <Path path={path} />, mono: true }]} />
     </ActionDialog>
   );
 }
