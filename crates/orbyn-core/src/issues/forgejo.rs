@@ -301,8 +301,8 @@ impl Forgejo {
             .collect()
     }
 
-    /// Every reaction row the tracker reports for one reactions path, up to two pages of 50: the counts (and an
-    /// idempotent add's lookup) are read from that first page only.
+    /// Every reaction row the tracker reports for one reactions path, up to two pages of 50: both the counts and the
+    /// reader's own-reaction lookup are read from those pages.
     /// The rows and whether they are the whole list: a full last page may have more behind it.
     async fn reaction_rows(&self, path: &str) -> Result<(Vec<Value>, bool)> {
         let mut rows: Vec<Value> = Vec::new();
@@ -328,17 +328,20 @@ impl Forgejo {
         Ok((rows, false))
     }
 
-    /// Whether the reader's own reaction of one content word is on the subject. Both directions look it up first,
-    /// so a repeated add or a removal with nothing left answers the same way twice.
-    async fn own_reaction(&self, path: &str, word: &str, login: &str) -> Result<bool> {
-        let (rows, _) = self.reaction_rows(path).await?;
-        Ok(rows.iter().any(|row| {
+    /// Whether the reader's own reaction of one content word is on the subject, and whether the rows read are the
+    /// whole list. Both directions look it up first, so a repeated add or a removal with nothing left answers the same
+    /// way twice; a full last page may have more behind it, so a reaction the read did not find is only absent when
+    /// the rows are the whole list.
+    async fn own_reaction(&self, path: &str, word: &str, login: &str) -> Result<(bool, bool)> {
+        let (rows, complete) = self.reaction_rows(path).await?;
+        let present = rows.iter().any(|row| {
             row.get("content").and_then(Value::as_str) == Some(word)
                 && row
                     .pointer("/user/login")
                     .and_then(Value::as_str)
                     .is_some_and(|user| user.eq_ignore_ascii_case(login))
-        }))
+        });
+        Ok((present, complete))
     }
 
     /// The issue's reactions as Forgejo reports them, each under its own content word. `None` when the read fails:
@@ -806,6 +809,7 @@ impl IssueSource for Forgejo {
             comments: Vec::new(),
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
             states: None,
         })
@@ -857,9 +861,17 @@ impl IssueSource for Forgejo {
         };
         let word = content_word(reaction);
         // The reader's own reaction is looked up first, so a second add writes nothing and a removal with nothing
-        // left writes nothing: both directions answer the same way twice.
+        // left writes nothing: both directions answer the same way twice. That holds only as far as the lookup sees,
+        // though: a reaction it did not find is absent only when the rows read are the whole list, because a page this
+        // reader does not read may still hold it, and neither direction may guess. A repeated add would write a second
+        // reaction, and a removal must not answer success while the reader's own reaction could still be there.
         let login = self.signed_in_login().await?;
-        let present = self.own_reaction(&subject, word, &login).await?;
+        let (present, complete) = self.own_reaction(&subject, word, &login).await?;
+        if !present && !complete {
+            return Err(CoreError::TrackerUnavailable(
+                "Forgejo's reaction list is longer than Orbyn reads.".into(),
+            ));
+        }
         let sent = match (on, present) {
             (true, false) => Some(
                 self.send(
@@ -971,6 +983,7 @@ impl IssueSource for Forgejo {
             comments: comments_from(rows),
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
             states: None,
         })

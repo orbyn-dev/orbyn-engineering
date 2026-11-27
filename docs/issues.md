@@ -71,12 +71,15 @@ type IssueSummary = { tracker; scope; key; display_key; title; url; author: {log
 type IssueDetail = IssueSummary & {
   body: string;
   comments: IssueComment[];            // the first 50, oldest first; never more in the beta
+  activity?: IssueActivity[];          // the issue's own state changes, oldest first; absent when none was read
   linked_pull_requests: { repository: string; number: number; title: string; url: string;
                           state: "open" | "closed" | "merged"; is_draft: boolean; closes_issue: boolean;
                           checks?: PullChecks | null }[];  // absent is unknown, never "no checks"
   linked_threads: string[];            // thread ids that link this issue
   reactions?: { content: string; count: number }[] | null;  // null unless this answer reports them
 };
+type IssueActivity = { kind: "closed" | "reopened"; actor: {login}|null; at: string;
+                       close_reason?: "completed" | "not_planned" | null };  // never on a reopen
 type IssueRef = { tracker; scope; key; display_key; title; state; labels };  // what a link stores
 type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: number } | null;
                    failed: { tracker: TrackerKind; message: string }[];
@@ -99,14 +102,34 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
 - A tracker that fails for any other reason while others answer goes in `failed`, with the service's own message
   (never the raw tracker response). An invalid request, such as a paging cursor the service did not issue, is
-  `400 invalid_input` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
-  cached 30 seconds.
+  `400 invalid_input` instead and fails the whole listing.
+- **Cache.** A listing is up to 100 issues per tracker and scope, and each page is kept 30 seconds. A write through
+  this service in that tracker and scope (create, comment, an edit, a state change) drops every cached page of it as
+  soon as the tracker answers, so the next listing reads the tracker again instead of the page cached before it; a
+  listing that was still asking the tracker when the write landed is not cached, so it cannot put the page it read
+  back. It is that whole scope and no more: the tracker applies the filters, so which cached pages the changed issue
+  belongs to cannot be known here, while nothing outside the tracker and scope of the write can have changed. A scope
+  is matched by its whole name, so a write to `org/Project` leaves `org/Project Two` cached. A write whose answer does
+  not prove it failed may have been applied, so it drops the same pages: that is a tracker that never answered, and
+  one that answered a read of a write it had already stored (a rate limit, a refusal, a `404` or an unreadable reply
+  on that read). A reaction changes no field a page carries and no order it sorts by, so it drops none. Dropping the
+  page guarantees a fresh read, not that the write is in its answer: on GitHub that read is a `gh issue list`
+  `--search` call (`sort`), which can lag a new or changed issue, so a page read in that window can still miss it.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
   report them gives `[]`. A link carries `checks` when the tracker reports CI for it: the same `PullChecks`
   counts the pull request list carries. GitHub reads them with one `gh pr view --json statusCheckRollup` per
   link, in that link's own repository and best effort, so a link the person cannot read leaves the other links
   shown. Only the first 20 links of an issue are read (each read is one API call against the account's shared hourly limit); a link past that stays shown with no `checks`, which is unknown (over the read limit). Absent is unknown, never "no checks"; the other trackers report no linked pull requests, so they carry
   no `checks` either.
+- `activity` is the issue's own state changes as the tracker's timeline reports them, oldest first: the closed event
+  (`kind: "closed"`, carrying `close_reason` when the tracker says how it closed) and a reopen after it
+  (`kind: "reopened"`, never with a reason). GitHub reads them beside the detail in one bounded GraphQL page
+  (`timelineItems(last: 50, itemTypes: [CLOSED_EVENT, REOPENED_EVENT])`, through the person's own `gh`), best effort:
+  a timeline the account cannot read, or a `gh` that does not answer, leaves `activity` empty — no event known, never
+  "nothing happened" — and the issue is still shown. At most 50 events are kept. The other four trackers report no
+  timeline, so the field is left out of their answer (an absent `activity` means no event known, never an empty `[]`).
+  It rides on `IssueDetail`: no route and no stored field. These events are tracker text like the rest and never reach an
+  engine ("Issue text is untrusted").
 - A link keeps an `IssueRef` snapshot beside the thread (table `issue_links`; the migration takes the next
   free number at merge time), so a chip draws with the tracker offline. A read of the issue refreshes it.
 
@@ -624,16 +647,17 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
     word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
     nothing left writes nothing, and a removal deletes by the award's id. The answer carries each award name and
     count from the award list's first page of 100, and carries no counts (`null`) when that page is full, because
-    more may be behind it; a removal whose own-award lookup runs out of those pages answers `tracker_unavailable`
-    rather than pretending the award is gone.
+    more may be behind it; an add or a removal whose own-award lookup runs out of those pages answers
+    `tracker_unavailable` rather than pretending the award is not there.
   - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
     `400 invalid_input` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
     React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
     directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
-    left writes nothing. The answer carries each content word and count from at most two pages of 50, and carries
-    no counts when the last page is full, because more may be behind it. Label names are resolved against the
-    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid_input` even though it
-    exists.
+    left writes nothing, as far as those pages show: a reaction they do not carry while the last page is full may be
+    behind it, so both directions answer `tracker_unavailable` rather than guess, writing nothing. The answer carries
+    each content word and count from at most two pages of 50, and carries no counts when the last page is full, because
+    more may be behind it. Label names are resolved against the repository's labels read up to five pages of 50, so a
+    label beyond the first 250 is `400 invalid_input` even though it exists.
   - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
     Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
     than one is `400 invalid_input`, as is a label with a semicolon in it); comment writes markdown and answers the stored
@@ -787,8 +811,9 @@ Found in the post-merge review of the create, comment, react, template and bindi
 
 ## What T3 has that this does not (Planned)
 
-The event timeline, "involved/mentioned"
-filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
+The event timeline's state changes (the closed event and a reopen) are read for GitHub and carried in
+`IssueDetail.activity`; the rest of the timeline, the "involved/mentioned" filters and more than the first 50
+comments are not. Neither is in the beta; each is a later row. Creating, commenting and
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
 project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and Planned
 for the other four, whose sections say so; `candidates` is a GitLab, Forgejo, Azure DevOps and Linear gap too. The
@@ -805,7 +830,8 @@ issues; a state move is GitHub-only, as the route is.
 
 - `get` takes the whole ref, `get(tracker, scope, key)`: a key is unique only within a scope.
 - `TrackerRow` adds `host` and `detail`; `connect` and `disconnect` are new calls (Person-class).
-- `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests` and `linked_threads`, and
+- `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests`, `linked_threads` and
+  `activity` (the state changes its tracker's timeline reports, GitHub only), and
   `reactions` (the tracker's own words and counts, absent when it does not report them); `IssueList` adds
   `next_cursors`. A linked pull request adds `checks` (the pull request list's own counts, absent when the
   read did not answer).

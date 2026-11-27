@@ -189,7 +189,7 @@ const windowsOf = (report: EngineLimits | null): EngineLimits["windows"] => repo
 
 /** The `/usage-limits` result, above the composer until dismissed. */
 export function InlineLimits({ threadId, onClose }: { threadId: string; onClose(): void }) {
-  const limits = useAsync(`thread-limits:${threadId}`, (signal, context) => readLimits(limitsKey(engineOf(threadId), threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force }), { fresh: true, keepOnManual: true, refreshOn: limitsRefreshOn(topics("limits", `limits:${engineOf(threadId)}`), () => limitsKey(engineOf(threadId), threadId)) });
+  const limits = useAsync(`thread-limits:${threadId}`, (signal, context) => readLimits(limitsKey(engineOf(threadId), threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force, signal }), { fresh: true, keepOnManual: true, refreshOn: limitsRefreshOn(topics("limits", `limits:${engineOf(threadId)}`), () => limitsKey(engineOf(threadId), threadId)) });
   const windows = windowsOf(limits.data);
   const checked = useLimitsChecked(limitsKey(engineOf(threadId), threadId), limits);
   return (

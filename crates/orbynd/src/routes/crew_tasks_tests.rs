@@ -1,5 +1,6 @@
-//! The Flow routes over HTTP: four reads that answer empty views, refuse bad input, hide with the flag off, are open to a
-//! remote viewer (they only read) and never hold the answer key. One task's sample read (KC5 slice 4) sits beside
+//! The Flow routes over HTTP: the reads that answer empty views, refuse bad input, hide with the flag off, are open to a
+//! remote viewer (they only read) and never hold the answer key. The Run page's link read names the task that made one pull
+//! request, and nothing for a number no task of that project published. One task's sample read (KC5 slice 4) sits beside
 //! them under `/api/crew/tasks`: it answers the record the store wrote and never the key either. The table, credential
 //! and flag-off walks of `crew_tests.rs` cover these routes too, since they sit under `/api/crew`.
 
@@ -397,10 +398,12 @@ async fn the_artifacts_read_answers_one_task_and_keeps_the_key_out() {
     assert_eq!(status, 200);
     assert_eq!(view["task"], task.as_str());
     assert_eq!(view["crew"], "crew-1");
-    // The seeded task has no run, so no check ran and there is no checkout to read a diff from.
+    // The seeded task has no run, so no check ran and there is no checkout to read a diff or a head from.
     assert_eq!(view["checks"], json!([]));
     assert!(view["diff"].is_null());
     assert_eq!(view["diff_absent"], "no_checkout");
+    assert!(view["head"].is_null());
+    assert_eq!(view["head_absent"], "no_checkout");
     assert_eq!(view["truncated"], false);
     let text = view.to_string();
     assert!(
@@ -443,6 +446,7 @@ async fn with_the_flag_off_they_are_not_there() {
     for path in [
         "/api/crew/flow/crews",
         "/api/crew/flow/tasks?crew=crew-1",
+        "/api/crew/flow/run-link?project=p&number=1",
         "/api/crew/flow/tasks/sha256:abc",
         "/api/crew/flow/tasks/sha256:abc/artifacts",
         "/api/crew/flow/tasks/sha256:abc/run",
@@ -494,4 +498,100 @@ async fn a_task_sample_is_read_by_task_and_an_unknown_task_is_not_there() {
         (404, &json!("not_found")),
         "{body}"
     );
+}
+
+/// A project whose own folder is `repo`, and one task of it whose forge intent published pull request `pull`. Returns the
+/// project's id and the task's id.
+fn seed_run_link(app: &Served, name: &str, repo: &str, pull: u64) -> (String, String) {
+    let project = app
+        .core
+        .store
+        .add_project(orbyn_core::store::NewProject {
+            path: repo,
+            name,
+            is_git: false,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap();
+    let (task, _) = seed_task(&app.core, name);
+    app.core
+        .store
+        .add_crew_forge_merge(&orbyn_core::store::ForgeMerge {
+            task_id: task.clone(),
+            repo: project.path.clone(),
+            remote: "origin".into(),
+            branch: "main".into(),
+            source: "crew/task-1".into(),
+            candidate: "a".repeat(40),
+            base: "b".repeat(40),
+            combined: None,
+            pull: Some(pull),
+            phase: orbyn_core::store::ForgePhase::Prepared,
+            merge_commit: None,
+            evidence: Vec::new(),
+            note: None,
+            merge_sent: false,
+            revision: 0,
+        })
+        .unwrap();
+    (project.id, task)
+}
+
+#[tokio::test]
+async fn a_pull_requests_run_link_names_the_task_that_made_it_and_nothing_else() {
+    let app = serve("run-link", true, false).await;
+    let (project, task) = seed_run_link(&app, "run-link", "/checkout/run-link", 142);
+    let (status, body) = app
+        .get(&format!(
+            "/api/crew/flow/run-link?project={project}&number=142"
+        ))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["task"], task.as_str());
+
+    // A number the project's own repository never published is not there, and neither is another repository's #9.
+    for path in [
+        format!("/api/crew/flow/run-link?project={project}&number=143"),
+        format!("/api/crew/flow/run-link?project={project}&number=9"),
+        "/api/crew/flow/run-link?project=nobody&number=142".to_owned(),
+    ] {
+        let (status, body) = app.get(&path).await;
+        assert_eq!(
+            (status, &body["code"]),
+            (404, &json!("not_found")),
+            "{path}"
+        );
+    }
+
+    // A second project whose own task published #142 answers its own task, never the first's.
+    let (other, other_task) =
+        seed_run_link(&app, "run-link-other", "/checkout/run-link-other", 142);
+    let (status, body) = app
+        .get(&format!(
+            "/api/crew/flow/run-link?project={other}&number=142"
+        ))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["task"], other_task.as_str());
+    assert_ne!(other_task, task);
+
+    // The read names no key: no check text and no key id.
+    let key = app.core.store.crew_answer_key(&task).unwrap().unwrap();
+    assert!(
+        !body.to_string().contains(key.id.as_str()),
+        "the link holds the key's id"
+    );
+
+    // A request with no project or no number is invalid input.
+    for path in [
+        "/api/crew/flow/run-link?number=142",
+        "/api/crew/flow/run-link?project=p",
+        "/api/crew/flow/run-link",
+        "/api/crew/flow/run-link?project=p&number=twelve",
+    ] {
+        let (status, body) = app.get(path).await;
+        assert_eq!(status, 400, "{path}");
+        assert_eq!(body["code"], "invalid_input", "{path}");
+    }
 }

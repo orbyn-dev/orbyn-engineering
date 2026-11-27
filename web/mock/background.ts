@@ -273,7 +273,8 @@ function seedFor(scenario: string): Seed {
       watches: {
         "bg-watch-main": {
           status: status("bg-watch-main", "failing", { last_checked_at: T + "14:02:00Z", last_exit_code: 1 }),
-          changes: [change(4, "failing", "started_template", T + "14:02:00Z", 1), recoveredYesterday, change(2, "failing", "needs_you", "2026-11-06T09:02:00Z", 1), baseline],
+          // The Fri 6 Nov needs_you row is the template start that could not run: watch-failing-template draws its sentence.
+          changes: [change(4, "failing", "started_template", T + "14:02:00Z", 1), recoveredYesterday, change(2, "failing", "needs_you", "2026-11-06T09:02:00Z", 1, null, "no_engine"), baseline],
         },
       },
     };

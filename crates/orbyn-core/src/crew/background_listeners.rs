@@ -50,7 +50,7 @@ use std::time::Duration;
 use orbyn_contracts::{IssueLabel, IssueSummary};
 use tokio_util::sync::CancellationToken;
 
-use super::background::EVERY_HOURS_MAX;
+use super::background::{EVERY_HOURS_MAX, window_start};
 use super::background_start::RUN_IN_PROGRESS;
 use super::triggers::{self, TriggerDef, TriggerKind};
 use super::watch::{CouldNotRun, WatchCheck};
@@ -180,10 +180,11 @@ impl Core {
         Ok(())
     }
 
-    /// The schedule timer: each enabled `schedule` crew fires once per `every_hours` bucket of `now`. The bucket is
-    /// counted from the Unix epoch, so it is stable across a restart, and the claims say which buckets have fired: a
-    /// bucket at or before the newest one claimed for the crew never fires, so a clock that moves back starts nothing.
-    /// A crew that is off is not looked at, so a bucket is not spent on it.
+    /// The schedule timer: each enabled `schedule` crew fires once per `every_hours` window of `now`. A window is named by
+    /// its start in unix seconds, counted from the epoch, so it is stable across a restart and comparable across intervals,
+    /// and the claims say which windows have fired: a start at or before the newest one claimed for the crew never fires, so a
+    /// clock that moves back starts nothing and a person who changes `every_hours` is never held back by the old interval's
+    /// claims. A crew that is off is not looked at, so a window is not spent on it.
     async fn crew_background_schedule_tick(self: &Arc<Self>, now: i64, stop: &CancellationToken) {
         let crews = self
             .store
@@ -200,16 +201,16 @@ impl Core {
                 tracing::warn!(crew = %crew.id, "a schedule crew has no usable every_hours; nothing fired");
                 continue;
             };
-            let bucket = now.div_euclid(i64::from(hours) * 3600);
+            let start = window_start(now, hours);
             match self.store.latest_schedule_bucket(&crew.id) {
-                Ok(Some(newest)) if bucket <= newest => continue,
+                Ok(Some(newest)) if start <= newest => continue,
                 Ok(_) => {}
                 Err(error) => {
-                    tracing::warn!(%error, crew = %crew.id, "a schedule's newest bucket could not be read");
+                    tracing::warn!(%error, crew = %crew.id, "a schedule's newest window start could not be read");
                     continue;
                 }
             }
-            let identity = format!("schedule:{}:{bucket}", crew.id);
+            let identity = format!("schedule:{}:{start}", crew.id);
             match self.store.claim_background_event(&identity) {
                 Ok(true) => {}
                 Ok(false) => continue,
@@ -218,7 +219,7 @@ impl Core {
                     continue;
                 }
             }
-            self.fire_background_event(&crew.id, "schedule", &format!("schedule:{bucket}"))
+            self.fire_background_event(&crew.id, "schedule", &format!("schedule:{start}"))
                 .await;
         }
     }
@@ -914,7 +915,7 @@ impl Core {
                     continue;
                 }
             };
-            let bucket = crate::crew::watch::window_start(now, hours);
+            let bucket = window_start(now, hours);
             match self.store.latest_watch_bucket(&crew.id) {
                 Ok(Some(newest)) if bucket <= newest => continue,
                 Ok(_) => {}

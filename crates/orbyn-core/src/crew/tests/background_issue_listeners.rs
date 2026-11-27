@@ -643,9 +643,14 @@ async fn a_refused_issue_label_firing_is_held_with_a_hashed_event_key() {
     );
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0].kind, PausedKind::Background);
+    // The one row is found by the kind the listener holds a start under, not by its place in the list.
+    let held = rows
+        .iter()
+        .find(|row| row.kind == PausedKind::Background)
+        .expect("the refused label start's held row");
+    assert!(!held.started, "the refused firing is held, not started");
     assert_eq!(
-        rows[0].key,
+        held.key,
         format!(
             "{id}:issue_label:{}:{}:{}",
             event_tag("team/app"),
@@ -653,13 +658,11 @@ async fn a_refused_issue_label_firing_is_held_with_a_hashed_event_key() {
             event_tag("bug")
         )
     );
-    assert!(rows[0].key.len() <= 128);
+    assert!(held.key.len() <= 128);
     assert!(
-        !rows[0].key.contains("team/app")
-            && !rows[0].key.contains(POISON)
-            && !rows[0].key.contains("bug"),
+        !held.key.contains("team/app") && !held.key.contains(POISON) && !held.key.contains("bug"),
         "outside text and the label stay out of the held key: {}",
-        rows[0].key
+        held.key
     );
 }
 

@@ -1,13 +1,14 @@
-import { Plus, Search } from "lucide-react";
+import { Download, Plus, Search } from "lucide-react";
 import { useRef, useState } from "react";
 import { ApiFailure } from "../../api/client";
+import { saveBlob } from "../../lib/download";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { Button } from "../../ui/controls";
 import { libraryApi, useLibrary, useSuggestions, type LibraryData } from "./api";
 import type { EnvSet, Kind, Prompt, RepoEnvSet, RepoPrompt, RepoWorkflow, Suggestions, SuggestionFile, Workflow } from "./contract";
 import { ItemForm } from "./ItemForm";
-import { plain, sourceLabel } from "./model";
+import { exportFileName, plain, sourceLabel } from "./model";
 import { DeleteItem, EnvSetPage, PromptPage, WorkflowPage } from "./Pages";
 import { UseDialog, type UseMode } from "./UseDialog";
 import "./library.css";
@@ -51,9 +52,10 @@ async function place(threadId: string, mode: Exclude<UseMode, "run">, text: stri
  * The Library panel (frames `workflow-*`; docs/execution-profiles-and-library.md, Part 2): saved workflows, prompts and environment sets,
  * in two tabs. From repo lists the entries the project commits in `.orbyn/`, read only; Personal holds the person's own items, on this
  * computer. Hidden entirely when the service has no library route. Nothing is written into a repository; a repository entry is
- * used by copying it to Personal first. Everything the service or a file says is text, escaped and cut. Planned, not drawn: the last
- * run of a workflow, "changed since the last commit", another worktree's items, Compare, Reveal here, applying a set to a shell,
- * and number or yes/no parameters (the contract has text, choice and path).
+ * used by copying it to Personal first. Everything the service or a file says is text, escaped and cut. The toolbar's Export is one
+ * quiet button, with no design frame and no screen of its own: it saves the service's document and writes nothing. Planned, not drawn:
+ * the last run of a workflow, "changed since the last commit", another worktree's items, Compare, Reveal here, applying a set to a
+ * shell, and number or yes/no parameters (the contract has text, choice and path).
  */
 export function LibraryPanel({ threadId, typeIntoTerminal }: { threadId: string; typeIntoTerminal: TypeIntoTerminal }) {
   const { data, error, settled, reload } = useLibrary();
@@ -115,6 +117,28 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
     }
   };
 
+  // Export is one toolbar button and no screen of its own: the service builds the document, the browser saves it, nothing is written.
+  // A multi-click gesture saves one file: only its first click counts, and `exporting` covers an export still pending.
+  const exporting = useRef(false);
+  const [busyExport, setBusyExport] = useState(false);
+  const exportAll = async () => {
+    if (exporting.current) return;
+    exporting.current = true;
+    setBusyExport(true);
+    setNotice("");
+    try {
+      const document = await libraryApi().exportLibrary();
+      saveBlob(exportFileName(document.exported_at), new Blob([JSON.stringify(document, null, 2)], { type: "application/json" }));
+      setNotice("Exported the library to a JSON file. It holds every kind; an env set goes by key name only, never a value.");
+    } catch (failure) {
+      const older = failure instanceof ApiFailure && (failure.status === 404 || failure.code === "not_found");
+      setNotice(older ? "This service has no library export. Update Orbyn, then try again." : `Couldn’t export the library. ${failure instanceof ApiFailure ? plain(failure.message, 160) : "Something went wrong."}`);
+    } finally {
+      exporting.current = false;
+      setBusyExport(false);
+    }
+  };
+
   const row = (origin: Tab, kind: Kind, key: string, name: string, line: string) => (
     <li key={`${origin}:${kind}:${key}`}>
       <button type="button" className="lib-row" aria-pressed={pick?.origin === origin && pick.kind === kind && pick.key === key} onClick={() => { setPick({ origin, kind, key }); setNotice(""); }}>
@@ -171,6 +195,7 @@ function LibraryBody({ threadId, projectId, data, reload, typeIntoTerminal, tab,
         <button type="button" role="tab" aria-selected={tab === "repo"} className="lib-tab" onClick={() => setTab("repo")}>From repo · {repoTotal}</button>
         <button type="button" role="tab" aria-selected={tab === "personal"} className="lib-tab" onClick={() => setTab("personal")}>Personal · {personalTotal}</button>
         <span className="lib-spacer" />
+        <Button small tone="quiet" icon={<Download size={14} aria-hidden />} busy={busyExport} onClick={(event) => { if (event.detail <= 1) void exportAll(); }}>Export</Button>
         <Button small icon={<Plus size={14} aria-hidden />} onClick={() => setOpen({ what: "form", kind: null, item: null })}>New item</Button>
       </div>
       <label className="lib-search">

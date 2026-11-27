@@ -24,6 +24,12 @@ fn strings(args: &[&str]) -> Vec<String> {
     args.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
+/// The timeline a detail read asks for when the issue had no state change: one empty GraphQL page.
+fn empty_timeline() -> String {
+    json!({ "data": { "repository": { "issue": { "timelineItems": { "nodes": [] } } } } })
+        .to_string()
+}
+
 fn github() -> GitHub {
     GitHub {
         cwd: std::env::temp_dir(),
@@ -262,7 +268,7 @@ async fn a_comment_answer_without_a_node_id_falls_back_to_its_numeric_id() {
     assert_eq!(comment.id, "99");
 }
 
-/// The answer to a react: the node query, the mutation, the detail's two reads and the counts' optional read.
+/// The answer to a react: the node query, the mutation, the detail's three reads and the counts' optional read.
 fn react_fixture(
     calls: Calls,
     on: bool,
@@ -308,6 +314,10 @@ fn react_fixture(
                 } else {
                     "OrbynRemoveReaction"
                 };
+                if query.contains("OrbynIssueActivity") {
+                    // The state changes the detail read carries beside the issue: this fixture's issue had none.
+                    return Ok(empty_timeline());
+                }
                 assert!(query.contains(wanted), "a {wanted} mutation, got {query}");
                 assert!(
                     args.iter().any(|arg| arg == &format!("subject={subject}")),
@@ -370,8 +380,8 @@ async fn an_issue_reaction_is_added_by_node_id_and_answers_the_trackers_counts()
     );
     assert_eq!(
         seen(&calls).len(),
-        5,
-        "the issue's node id, one mutation, the detail's two reads and the counts read"
+        6,
+        "the issue's node id, one mutation, the detail's three reads (itself, its links, its timeline) and the counts read"
     );
 }
 
@@ -402,8 +412,8 @@ async fn a_comment_reaction_uses_the_comments_node_id_and_removes_the_same_conte
     let calls = seen(&calls);
     assert_eq!(
         calls.len(),
-        5,
-        "the comment's ownership read, the mutation, the detail's two reads and the counts read"
+        6,
+        "the comment's ownership read, the mutation, the detail's three reads and the counts read"
     );
     let scope_read = &calls[0].0;
     assert!(
@@ -502,6 +512,9 @@ async fn a_reaction_can_be_added_and_taken_back_twice() {
                         json!({ "data": { "repository": { "issue": { "id": "I_issue_7" } } } })
                             .to_string(),
                     );
+                }
+                if query.contains("OrbynIssueActivity") {
+                    return Ok(empty_timeline());
                 }
                 let added = query.contains("OrbynAddReaction");
                 assert!(added || query.contains("OrbynRemoveReaction"), "{query}");
@@ -621,8 +634,8 @@ async fn a_react_on_a_gh_without_the_reactions_field_answers_without_counts() {
     );
     assert_eq!(
         seen(&calls).len(),
-        5,
-        "the counts read ran and answered nothing: node, mutation, detail, links, counts"
+        6,
+        "the counts read ran and answered nothing: node, mutation, detail, links, timeline, counts"
     );
 }
 
@@ -740,6 +753,13 @@ fn patch_fixture(calls: Calls) -> GhAnswer {
                 .unwrap()
                 .push((args.clone(), input.map(str::to_owned)));
             if args.first().map(String::as_str) == Some("api")
+                && args
+                    .iter()
+                    .any(|arg| arg.starts_with("query=query OrbynIssueActivity"))
+            {
+                return Ok(empty_timeline());
+            }
+            if args.first().map(String::as_str) == Some("api")
                 && args.get(1).map(String::as_str) == Some("-X")
                 && args.get(2).map(String::as_str) == Some("PATCH")
             {
@@ -799,8 +819,8 @@ async fn an_update_writes_only_the_fields_it_was_given_and_answers_the_issue_rea
     );
     assert_eq!(
         seen(&calls).len(),
-        3,
-        "one PATCH and the detail's two reads"
+        4,
+        "one PATCH and the detail's three reads"
     );
 }
 
