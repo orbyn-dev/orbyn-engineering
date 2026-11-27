@@ -852,7 +852,9 @@ tried once over HTTPS, and the job says so.
 ## Terminals
 
 A terminal on Windows opens a native `pwsh`, then `powershell`, then `ComSpec`. `SHELL`
-is ignored there. A thread holds up to 32 terminals, each with 5,000 lines and 8 MiB of scrollback kept
+is ignored there. Its shell's module analysis cache is pointed at Orbyn's own data folder
+(`PSModuleAnalysisCachePath`), so PowerShell cannot write `Microsoft\Windows\PowerShell` into a
+project checkout. A thread holds up to 32 terminals, each with 5,000 lines and 8 MiB of scrollback kept
 here. Terminals sharing a `group` are a split. The `main` terminal is what a plain
 socket opens and a terminal-tier run uses, and a plain one nobody returns to closes
 after a minute. Named terminals stay until closed. Settling or archiving closes them

@@ -22,6 +22,16 @@ test.beforeEach(({ page }) => page.setViewportSize({ width: 1400, height: 900 })
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/**
+ * One line of terminal text for the file links to see. The terminal runs the platform's own shell
+ * (host/terminal.rs `windows_shell`): Windows PowerShell has no printf, so its Write-Output takes a
+ * single-quoted string; a POSIX shell keeps printf with a double-quoted path.
+ */
+function printLine(text: string): string {
+  if (process.platform === "win32") return `Write-Output '${text.replace(/'/g, "''")}'\n`;
+  return `printf '%s\\n' "${text.replace(/(["\\$`])/g, "\\$1")}"\n`;
+}
+
 /** Types until the shell answers, since a shell still starting can lose what is typed. */
 async function run(page: Page, command: string, output: RegExp): Promise<Locator> {
   const input = page.locator(".terminal-drawer-body .xterm-helper-textarea").first();
@@ -60,8 +70,7 @@ test("an absolute file path in the terminal opens a preview tab", async ({ page 
   const file = join(thread.cwd, "terminal-preview.html");
   writeFileSync(file, "<!doctype html><title>Terminal preview</title><p>from the terminal</p>\n");
   await openTerminal(page);
-  const quoted = file.replace(/(["\\$`])/g, "\\$1");
-  const line = await run(page, `printf '%s\\n' "${quoted}"\n`, new RegExp(`^${escape(file)}`));
+  const line = await run(page, printLine(file), new RegExp(`^${escape(file)}`));
   await clickLine(page, line, 40);
   await expect
     .poll(async () => (await service.api<{ url: string }[]>("GET", `/api/threads/${id}/previews`)).map((tab) => tab.url))
@@ -77,7 +86,7 @@ test("a relative file path in the terminal opens a preview tab", async ({ page }
   const thread = await service.api<{ cwd: string }>("GET", `/api/threads/${id}`);
   writeFileSync(join(thread.cwd, "index.html"), "<!doctype html><title>Relative preview</title><p>relative</p>\n");
   await openTerminal(page);
-  const line = await run(page, "printf '%s\\n' ./index.html\n", /^\.\/index\.html/);
+  const line = await run(page, printLine("./index.html"), /^\.\/index\.html/);
   await clickLine(page, line, 4);
   await expect
     .poll(async () => (await service.api<{ url: string }[]>("GET", `/api/threads/${id}/previews`)).map((tab) => tab.url))
@@ -90,7 +99,7 @@ test("a missing file path in the terminal says it could not open", async ({ page
   const id = threadIdOf(page);
   await settled(service, id);
   await openTerminal(page);
-  const line = await run(page, "printf '%s\\n' ./missing.html\n", /^\.\/missing\.html/);
+  const line = await run(page, printLine("./missing.html"), /^\.\/missing\.html/);
   await clickLine(page, line, 4);
   await expect(page.getByText(/^Couldn't open it\./)).toBeVisible();
   expect(await service.api("GET", `/api/threads/${id}/previews`)).toEqual([]);
