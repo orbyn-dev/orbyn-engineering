@@ -7,10 +7,10 @@ use super::render::{render_height, render_title};
 use super::{
     ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, device_button,
     device_orientation, device_tool_summary, hinge_angle, hinge_preset, is_device_tool,
-    issue_query, issue_ref_value, issue_summary_value, matches_words, number, optional_text,
-    pull_check_name, pull_checks_value, pull_comment_body, pull_detail_value, pull_filter,
-    pull_limit, pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to,
-    pull_respond_args, pull_review, pull_update_args, strings, text, wait_seconds,
+    issue_close_reason, issue_query, issue_ref_value, issue_summary_value, matches_words, number,
+    optional_text, pull_check_name, pull_checks_value, pull_comment_body, pull_detail_value,
+    pull_filter, pull_limit, pull_list_value, pull_merge_args, pull_merge_refusal, pull_number,
+    pull_reply_to, pull_respond_args, pull_review, pull_update_args, strings, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -20,8 +20,8 @@ use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
     ActionKind, AddPullComment, CommentIssue, CreateIssue, CreateThread, DelegateTask,
-    DeviceActionInput, DeviceActionOutput, IssueKey, MergePull, PermissionMode, TaskSchedule,
-    Thread, UpdateThread, UpsertTask,
+    DeviceActionInput, DeviceActionOutput, IssueKey, IssueSetStateInput, MergePull, PermissionMode,
+    TaskSchedule, Thread, UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -134,6 +134,11 @@ impl Core {
                     "Comment on issue {} in this project's tracker",
                     text(args, "key")?
                 ),
+                "orbyn_issue_set_state" => format!(
+                    "Move issue {} to state {} in this project's tracker",
+                    text(args, "key")?,
+                    text(args, "state")?
+                ),
                 "orbyn_pull_request_respond" => {
                     let (_, body, resolved) = pull_respond_args(args)?;
                     let what = if body.is_some() {
@@ -225,6 +230,7 @@ impl Core {
                 base_branch: string("base_branch"),
                 effort: None,
                 options: std::collections::BTreeMap::new(),
+                branch_name_seed: None,
             })
             .await?;
         self.runs.enqueue(&thread.id, text(spec, "prompt")?, &[])?;
@@ -920,6 +926,23 @@ impl Core {
                     "body": self.issue_body_for_tool(&comment.body),
                     "note": ISSUE_NOTE,
                 })
+            }
+            "orbyn_issue_set_state" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                let detail = self
+                    .set_state_issue(IssueSetStateInput {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        key: key.key,
+                        state: text(args, "state")?.to_owned(),
+                        close_reason: issue_close_reason(args)?,
+                    })
+                    .await?;
+                let mut issue = issue_summary_value(&detail.summary);
+                issue["body"] = json!(self.issue_body_for_tool(&detail.body));
+                issue["note"] = json!(ISSUE_NOTE);
+                issue
             }
             "orbyn_issue_link" => {
                 let reader = self.issue_reader(&own).await?;
