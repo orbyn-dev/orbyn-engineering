@@ -8,6 +8,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -272,6 +273,14 @@ impl Drop for Spawned {
     }
 }
 
+/// The value each variable ends up with: `Command::env` lets a later entry for a key replace an
+/// earlier one, so the last entry is the one a spawn or a restart actually gets.
+fn effective_env(env: &[(String, String)]) -> BTreeMap<&str, &str> {
+    env.iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect()
+}
+
 pub struct Service {
     pub url: String,
     pub token: String,
@@ -312,14 +321,23 @@ impl Service {
     /// re-applies exactly `options`, so they must keep every variable the spawn was given: options
     /// that describe another environment would come back with another home on the restart.
     pub fn adopt(data: &Path, options: Options, ready: &Value, spawned: &mut Spawned) -> Self {
-        let dropped: Vec<&(String, String)> = spawned
-            .env()
-            .iter()
-            .filter(|(key, value)| !options.env.contains(&(key.clone(), value.clone())))
-            .collect();
+        // A restart re-applies `options` through `Command::env`, which keeps the last entry for a
+        // key, so compare the value each variable ends up with on both sides: a duplicate key in
+        // `options` that comes after the spawn's entry would otherwise pass this check while the
+        // restart gets another value.
+        let spawned_env = effective_env(spawned.env());
+        let options_env = effective_env(&options.env);
+        let mut differing: Vec<(&str, &str, Option<&str>)> = Vec::new();
+        for (key, value) in spawned_env {
+            let restarted = options_env.get(key).copied();
+            if restarted != Some(value) {
+                differing.push((key, value, restarted));
+            }
+        }
         assert!(
-            dropped.is_empty(),
-            "restarting with these options would drop the spawn's environment: {dropped:?}"
+            differing.is_empty(),
+            "restarting with these options would give the spawn a different environment \
+             (key, spawn, restart): {differing:?}"
         );
         let (child, stdout) = spawned.take_parts();
         Self {
@@ -752,7 +770,7 @@ pub async fn setup_adopted(dir: &TempDir, options: Options, engine: &str) -> (Se
     let mut spawned = Spawned::start(
         ORBYND,
         &data,
-        &[],
+        &options.args,
         options.env.clone(),
         &[("ORBYN_DEV_DISABLE_PERSON_KEY", "1")],
     );
