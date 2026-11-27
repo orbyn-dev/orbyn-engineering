@@ -319,10 +319,16 @@ async fn a_crashed_attempts_folder_is_cleared_instead_of_blocking_every_retry() 
     let repo = Path::new(&world.repo);
     let root = worktree_root(repo);
     // A folder git no longer lists, left by a crash: Orbyn's own name in Orbyn's own root, with the
-    // record Orbyn writes beside it before the folder is made.
+    // record Orbyn writes beside it before the folder is made, and the `.git` pointer a linked
+    // worktree keeps.
     let path = root.join("crew-worker-a");
     std::fs::create_dir_all(root.join("crew-worker-a/stale")).unwrap();
     std::fs::write(path.join("stale/left.txt"), "left behind\n").unwrap();
+    std::fs::write(
+        path.join(".git"),
+        format!("gitdir: {}/.git/worktrees/crew-worker-a", repo.display()),
+    )
+    .unwrap();
     std::fs::create_dir_all(root.join(".orbyn")).unwrap();
     std::fs::write(root.join(".orbyn/crew-worker-a"), path.to_str().unwrap()).unwrap();
     let made = world
@@ -369,6 +375,49 @@ async fn a_folder_orbyn_did_not_make_is_kept_and_the_start_refused() {
         git_out(repo, &["branch", "--list", "crew-worker-a"]),
         "",
         "no branch was started"
+    );
+}
+
+#[tokio::test]
+async fn a_stale_record_never_authorizes_deleting_a_replacement_folder() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let repo = Path::new(&world.repo);
+    let root = worktree_root(repo);
+    let made = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .unwrap()
+        .expect("a brief that writes gets a worktree");
+    let path = at(&made);
+    // A person removes the checkout with git's own command, so Orbyn's record outlives the folder it
+    // described, and then leaves a folder of their own at the same path.
+    git_out(
+        repo,
+        &["worktree", "remove", "--force", path.to_str().unwrap()],
+    );
+    assert!(!path.exists(), "the checkout is gone");
+    assert!(
+        root.join(".orbyn/crew-worker-a").is_file(),
+        "the record is still there, describing a folder that is gone"
+    );
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("notes.txt"), "a person's work\n").unwrap();
+    let error = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .expect_err("a stale record never authorizes deleting a folder Orbyn did not make");
+    assert!(error.message.contains("did not make"), "{}", error.message);
+    assert!(
+        path.join("notes.txt").is_file(),
+        "the replacement folder is kept whole"
+    );
+    assert_eq!(
+        listed(repo).len(),
+        1,
+        "nothing was made for the refused start"
     );
 }
 

@@ -482,18 +482,20 @@ Guards, all enforced in code:
 **Isolation**
 
 - **Built, off by default (#436):** a writing worker gets a checkout of its own, `<repo>-wt/crew-<member>` beside the
-  clone on branch `crew-<member>`, made before its thread and removed when that start fails. It is one folder per crew
-  member, reused across that member's tasks, so the folders cannot pile up one per task. A member's id names its folder
-  and branch unchanged, so it is lowercase letters, digits and hyphens, at most 59 characters; any other id is refused a
-  checkout instead of being mapped onto a name another member already has. Each folder has a record beside it,
-  `<repo>-wt/.orbyn/crew-<member>`, written before the folder is made: a folder a crash left and git no longer lists is
-  cleared by the next start for that member instead of blocking every retry, but only while that record says Orbyn made
-  it. Any other folder there is kept and the start refuses until a person moves or removes it, so a person's folder is
-  never deleted for Orbyn's convenience, and a checkout git lists on another branch is never taken for a worker's. It is
-  switched on by `CoreConfig::crew_writer_worktrees`, which ships `false`, because a start still records the key's
-  protected files and the checkout's index flags from the lead's checkout: switching it on gives the verifier a checkout
-  whose baseline was read somewhere else, which is the rest of #436. Read-only workers share the lead's checkout either
-  way.
+  clone on branch `crew-<member>`, made before its thread and removed when that start fails. A failed start removes only
+  the checkout it made, and keeps even that one while its worker cannot be confirmed stopped; a checkout that already
+  existed is never removed, so the member keeps what it held. It is one folder per crew member, reused across that
+  member's tasks, so the folders cannot pile up one per task. A member's id names its folder and branch unchanged, so it
+  is lowercase letters, digits and hyphens, at most 59 characters; any other id is refused a checkout instead of being
+  mapped onto a name another member already has. Each folder has a record beside it, `<repo>-wt/.orbyn/crew-<member>`,
+  written before the folder is made: a folder a crash left and git no longer lists is cleared by the next start for that
+  member instead of blocking every retry, but only while that record says Orbyn made it and the folder is still this
+  clone's checkout. Any other folder there is kept and the start refuses until a person moves or removes it, so a
+  person's folder is never deleted for Orbyn's convenience, and a checkout git lists on another branch is never taken for
+  a worker's. It is switched on by `CoreConfig::crew_writer_worktrees`, which ships `false`, because a start still
+  records the key's protected files and the checkout's index flags from the lead's checkout: switching it on gives the
+  verifier a checkout whose baseline was read somewhere else, which is the rest of #436. Read-only workers share the
+  lead's checkout either way.
 - **Today, with the flag off:** workers run in the lead's checkout. There is no merge gate for a single worker, and diff checks see the lead's uncommitted changes too.
 - The brief's file lease prevents two writers on the same files, and a worker's file-change tool outside it is refused
   at the gate with the lease's own words, before the write; the verifier's `file_scope` is no longer what catches it. A

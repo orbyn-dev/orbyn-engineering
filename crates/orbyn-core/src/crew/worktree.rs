@@ -97,10 +97,10 @@ impl Core {
         // Without that record the folder can hold a person's work, so it is kept and the start says
         // what is in the way instead of deleting it.
         if target.exists() && !listed(&repo, &target).await.map_err(internal)? {
-            if !made_by_orbyn(&root, &purpose) {
+            if !made_by_orbyn(&root, &purpose) || !is_linked_checkout(&target) {
                 return Err(invalid(format!(
-                    "The folder {} is in the way of the worker's worktree and Orbyn did not make it; \
-                     move or remove it yourself.",
+                    "The folder {} is in the way of the worker's worktree, and Orbyn did not make it \
+                     or it is no longer this clone's checkout; move or remove it yourself.",
                     target.display()
                 )));
             }
@@ -282,6 +282,17 @@ fn forget_made(root: &Path, purpose: &str) {
 /// Whether Orbyn's own record says it made this member's folder.
 fn made_by_orbyn(root: &Path, purpose: &str) -> bool {
     record_path(root, purpose).is_file()
+}
+
+/// Whether `folder` is a checkout this clone's worktrees make. A linked worktree keeps a `.git` file
+/// pointing at the repository's worktree records, so the folder on disk is the one the record was
+/// written for; a folder a person made, moved or restored at the same path has none, and a record
+/// left behind by a checkout that is gone describes no folder at all.
+fn is_linked_checkout(folder: &Path) -> bool {
+    let Ok(pointer) = std::fs::read_to_string(folder.join(".git")) else {
+        return false;
+    };
+    pointer.trim_start().starts_with("gitdir:") && pointer.contains("worktrees")
 }
 
 /// Git's answer as text, trimmed.
