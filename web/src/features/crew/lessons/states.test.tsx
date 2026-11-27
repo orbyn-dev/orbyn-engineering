@@ -129,6 +129,64 @@ describe("a lesson's edit save while it runs", () => {
   });
 });
 
+describe("the states that need a write to fail", () => {
+  it("draws the scan's refusal of an add, in the contract's own sentence, and keeps the text", async () => {
+    mock.reset("crew-lessons-add-secret");
+    const user = userEvent.setup();
+    render(<LessonAddPage repo="p-app" />);
+    const field = await screen.findByRole("textbox", { name: "Lesson text" });
+    await user.type(field, "The token is sk-live-xxxx.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Not saved: this looks like it holds a secret. Edit it and save again.",
+    );
+    expect(field).toHaveValue("The token is sk-live-xxxx.");
+    expect(window.location.hash).toBe("");
+  });
+
+  it("says the service could not save an add, and offers Try again", async () => {
+    mock.reset("crew-lessons-add-fails");
+    const user = userEvent.setup();
+    render(<LessonAddPage repo="p-app" />);
+    const field = await screen.findByRole("textbox", { name: "Lesson text" });
+    await user.type(field, "A sentence to keep.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Can’t save the lesson")).toBeInTheDocument();
+    expect(screen.getByText("The service could not save the lesson. Try again.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("");
+  });
+
+  it("says the service could not save an edit, and keeps the edit form", async () => {
+    mock.reset("crew-lessons-save-fails");
+    const user = userEvent.setup();
+    render(<LessonCardPage id="les-returnto" repo="p-app" />);
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const field = await screen.findByRole("textbox", { name: "Lesson text" });
+    await user.clear(field);
+    await user.type(field, "Check the fixture path before changing the test.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Can’t save the lesson")).toBeInTheDocument();
+    expect(screen.getByText("The service could not save the lesson. Try again.")).toBeInTheDocument();
+    expect(field).toHaveValue("Check the fixture path before changing the test.");
+  });
+
+  it("says the service could not delete the lesson, and keeps the card", async () => {
+    mock.reset("crew-lessons-delete-fails");
+    const user = userEvent.setup();
+    render(<LessonCardPage id="les-returnto" repo="p-app" />);
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByText("Can’t delete the lesson")).toBeInTheDocument();
+    expect(screen.getByText("The service could not delete the lesson. Try again.")).toBeInTheDocument();
+    // The delete failed, so the card stays with the lesson and no Undo window was opened.
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+  });
+});
+
 describe("the Add page when the projects read fails", () => {
   it("says Can’t read the projects, and its Retry reads the projects again", async () => {
     mock.reset("crew-lessons");
