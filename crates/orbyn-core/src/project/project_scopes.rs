@@ -21,7 +21,7 @@ use crate::util::{canonicalize, sha256_hex};
 
 pub(crate) mod git_facts;
 
-use git_facts::{GitFacts, ScopeGitFacts};
+use git_facts::{GitFacts, ScopeGitFacts, Watch};
 
 const MAX_PROJECTS: usize = 512;
 pub(crate) const MAX_PROJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
@@ -264,25 +264,6 @@ async fn metadata(path: &Path, args: &[&str], deadline: Instant) -> Option<(i32,
 /// answer rests on. `None` leaves the checkout unobserved, as a failed or partial read
 /// always did, and nothing is kept for it.
 async fn observe(path: &Path, real: &Path, is_git: bool, deadline: Instant) -> Option<GitFacts> {
-    // Inspect configuration without includes before a command that could load them.
-    // Global/system configuration and caller-provided config are disabled in metadata.
-    let repository = match metadata(
-        path,
-        &[
-            "config",
-            "--no-includes",
-            "--null",
-            "--get-regexp",
-            r"^(remote\..*\.url|include\..*|includeif\..*|url\..*\.(insteadof|pushinsteadof))$",
-        ],
-        deadline,
-    )
-    .await
-    {
-        Some((0, bytes)) => repository_from_config(&bytes).ok()?,
-        Some((1, _)) => None,
-        _ => return None,
-    };
     let output = match metadata(
         path,
         &["rev-parse", "--show-toplevel", "--absolute-git-dir"],
@@ -309,7 +290,33 @@ async fn observe(path: &Path, real: &Path, is_git: bool, deadline: Instant) -> O
         .as_deref()
         .map(Path::new)
         .filter(|dir| !dir.as_os_str().is_empty());
-    Some(GitFacts::work_tree(real, root, git_dir, repository))
+    // What the answer will rest on is watched before the configuration is read, so no byte the
+    // answer comes from is newer than the watch that vouches for it.
+    let watch = git_dir.and_then(|git_dir| Watch::work_tree(real, &root, git_dir));
+    // Inspect configuration without includes: the identity comes from the files the answer rests
+    // on, never from what a link in them points at. Global/system configuration and
+    // caller-provided config are disabled in metadata.
+    let repository = match metadata(
+        path,
+        &[
+            "config",
+            "--no-includes",
+            "--null",
+            "--get-regexp",
+            r"^(remote\..*\.url|include\..*|includeif\..*|url\..*\.(insteadof|pushinsteadof))$",
+        ],
+        deadline,
+    )
+    .await
+    {
+        Some((0, bytes)) => repository_from_config(&bytes).ok()?,
+        Some((1, _)) => None,
+        _ => return None,
+    };
+    // A file that changed while the configuration was read vouches for nothing: the answer is
+    // returned once and not kept, as any observation that cannot be watched is.
+    let watch = watch.filter(Watch::holds);
+    Some(GitFacts::work_tree(real, root, watch, repository))
 }
 
 async fn checkout(

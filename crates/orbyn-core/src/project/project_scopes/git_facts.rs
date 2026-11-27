@@ -14,12 +14,14 @@
 //! contains it, so a commit or a branch switch is observed rather than ignored. The
 //! work tree's `.git` is kept by the location it resolved to, because Git names the
 //! directory it resolved: a link retargeted at another repository leaves those files
-//! as they were. Any file that differs, any folder that now holds a `.git` where discovery found none,
-//! and any resolution that changed makes the next read observe the folder again: a
-//! folder that was deleted, moved, made a repository, or given another remote is
-//! never answered from what it used to be. An observation that cannot be watched (a
-//! file too large to read twice, a Git too old to name its directory) is answered
-//! once and not kept.
+//! as they were. What the answer rests on is watched before the configuration is read
+//! and confirmed after it, so facts are never kept against a later state than the one
+//! they were read from. Any file that differs, any folder that now holds a `.git`
+//! where discovery found none, and any resolution that changed makes the next read
+//! observe the folder again: a folder that was deleted, moved, made a repository, or
+//! given another remote is never answered from what it used to be. An observation that
+//! cannot be watched (a file too large to read twice, a Git too old to name its
+//! directory) is answered once and not kept.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -51,15 +53,15 @@ pub(super) struct GitFacts {
 }
 
 impl GitFacts {
-    /// What Git reported for the work tree rooted at `root`, read from `git_dir` when
-    /// it named one.
+    /// What Git reported for the work tree rooted at `root`, read from the files `watch` covers.
+    /// The watch is taken before the configuration is read and confirmed after it, so the facts are
+    /// never assembled from bytes the watch does not cover.
     pub(super) fn work_tree(
         real: &Path,
         root: PathBuf,
-        git_dir: Option<&Path>,
+        watch: Option<Watch>,
         repository: Option<Repository>,
     ) -> Self {
-        let watch = git_dir.and_then(|git_dir| Watch::work_tree(real, &root, git_dir));
         Self {
             real: real.to_path_buf(),
             root: Some(root),
@@ -99,7 +101,7 @@ impl GitFacts {
 
 /// What an answer rests on: the folders Git passed and the files it read.
 #[derive(Clone)]
-struct Watch {
+pub(super) struct Watch {
     /// Folders discovery looked in and found no `.git`, which must still hold none.
     passed: Vec<PathBuf>,
     /// The files whose bytes decided what Git reported.
@@ -109,7 +111,7 @@ struct Watch {
 impl Watch {
     /// The watch for a work tree: the folders discovery passed below the root, the
     /// work tree's `.git` link, and the files in the git directory Git read.
-    fn work_tree(real: &Path, root: &Path, git_dir: &Path) -> Option<Self> {
+    pub(super) fn work_tree(real: &Path, root: &Path, git_dir: &Path) -> Option<Self> {
         // A root that does not contain the folder names another view of the same
         // checkout, which this module does not watch, so the answer is not kept.
         let passed = passed_folders(real, root)?;
@@ -146,7 +148,7 @@ impl Watch {
     }
 
     /// Whether everything the answer rests on is still as it was.
-    fn holds(&self) -> bool {
+    pub(super) fn holds(&self) -> bool {
         self.passed.iter().all(|folder| no_git(folder)) && self.files.iter().all(Snapshot::holds)
     }
 }

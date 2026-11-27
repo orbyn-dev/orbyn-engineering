@@ -264,7 +264,12 @@ fn a_watched_file_that_differs_never_describes_the_folder_again() {
     repository(&folder);
     let real = crate::util::canonicalize(&folder).unwrap();
     let git_dir = real.join(".git");
-    let facts = super::GitFacts::work_tree(&real, real.clone(), Some(&git_dir), None);
+    let facts = super::GitFacts::work_tree(
+        &real,
+        real.clone(),
+        super::Watch::work_tree(&real, &real, &git_dir),
+        None,
+    );
     assert!(facts.still_describes(&real));
     configure(&folder, "origin", "git@host:Owner/Repo.git");
     assert!(
@@ -274,7 +279,12 @@ fn a_watched_file_that_differs_never_describes_the_folder_again() {
     let other = dir.path().join("other");
     repository(&other);
     let other = crate::util::canonicalize(&other).unwrap();
-    let facts = super::GitFacts::work_tree(&real, real.clone(), Some(&git_dir), None);
+    let facts = super::GitFacts::work_tree(
+        &real,
+        real.clone(),
+        super::Watch::work_tree(&real, &real, &git_dir),
+        None,
+    );
     assert!(
         !facts.still_describes(Path::new(&other)),
         "the folder resolved elsewhere"
