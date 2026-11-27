@@ -1,6 +1,7 @@
 import type { EngineStatus } from "../../../api/types";
 import { Button } from "../../../ui/controls";
 import { engineGap, plain, useEngineHosts, type Gap } from "../../enginehost";
+import { hasProviderDetail } from "../providers/providerDetailFamily";
 import { SettingRow } from "../rows/SettingRow";
 import { HostPill } from "./HostParts";
 import "./engineHost.css";
@@ -15,7 +16,8 @@ function useGap(engine: EngineStatus): Gap | null {
 
 /**
  * The Needs attention group of the Providers page: the engines that can't run yet, and why. Each row says one thing and offers the
- * one action that can change it. Nothing is drawn until the service reports engine hosts.
+ * one action that can change it, and only where the beta has the page that action opens. Nothing is drawn until the service reports
+ * engine hosts.
  */
 export function NeedsAttentionGroup({ engines, onOpen }: { engines: EngineStatus[]; onOpen(id: string): void }) {
   const { hosts } = useEngineHosts();
@@ -36,8 +38,9 @@ export function NeedsAttentionGroup({ engines, onOpen }: { engines: EngineStatus
             <span role="cell"><span className="name">{plain(engine.name)}</span><br /><span className="sub eh-sub">{gap.sentence}</span></span>
             <span role="cell" className="eh-chips"><HostPill chip={gap.chip} /></span>
             <span role="cell">
-              {gap.action === "open" ? <Button small onClick={() => onOpen(engine.id)}>Open</Button> : null}
-              {gap.action === "sign_in_again" ? <Button small onClick={() => onOpen(engine.id)}>Sign in again</Button> : null}
+              {/* Both actions are rows of the engine's detail page: an engine whose page the beta has not built keeps its words. */}
+              {hasProviderDetail(engine) && gap.action === "open" ? <Button small onClick={() => onOpen(engine.id)}>Open</Button> : null}
+              {hasProviderDetail(engine) && gap.action === "sign_in_again" ? <Button small onClick={() => onOpen(engine.id)}>Sign in again</Button> : null}
             </span>
           </div>
         ))}
