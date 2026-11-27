@@ -42,6 +42,25 @@ interface IssueRef {
 const links = () => service.api<Record<string, IssueRef[]>>("GET", "/api/issues/links");
 const chip = (page: Page) => page.locator(".iss-chip-btn");
 
+/**
+ * The thread's title once its first message has named it. The title run is detached from the
+ * turn, so the API still says "New thread" for a moment after the turn settles; assert the name
+ * it settles on rather than race that run (which a later read would then make transient).
+ */
+async function named(id: string) {
+  let title = "";
+  await expect
+    .poll(
+      async () => {
+        title = (await service.api<{ title: string }>("GET", `/api/threads/${id}`)).title;
+        return title;
+      },
+      { timeout: 15_000, message: "the first message names the thread" },
+    )
+    .not.toBe("New thread");
+  return title;
+}
+
 /** Opens the thread page the fixture started, and the Details popover. */
 async function threadWithDetails(page: Page) {
   await page.goto(`${service.page}#/threads/${threadId}`);
@@ -77,8 +96,8 @@ test.beforeEach(async ({ page }) => {
   await send(page, "start on the retry issue");
   await expect(page).toHaveURL(/#\/threads\//);
   threadId = threadIdOf(page);
-  threadTitle = (await service.api<{ title: string }>("GET", `/api/threads/${threadId}`)).title;
   await settled(service, threadId);
+  threadTitle = await named(threadId);
 });
 test.afterEach(async () => {
   // Leave no link behind: the issue page's Linked threads card is checked per test, so a retry starts from the same state.
