@@ -1910,13 +1910,13 @@ mod writes {
         assert!(!candidates.truncated, "two of each is the whole answer");
     }
 
-    /// GitLab allows a label name longer than the 200 characters a write may carry. Offering the cut name would
-    /// create and assign a different label, so the label is left out instead, and the answer says it is partial.
+    /// GitLab allows label names longer than the 200 characters a write may carry, and the read cuts at that same
+    /// 200. Offering either form would let an edit create a different label or refuse a name the picker offered, so a
+    /// name of 200 characters or more is left out, and the answer says it is partial.
     #[tokio::test]
     async fn a_label_a_write_cannot_name_in_full_is_left_out_rather_than_cut() {
         let at_cap = "c".repeat(MAX_LABEL);
         let too_long = "l".repeat(MAX_LABEL + 1);
-        let written = at_cap.clone();
         let server = Server::start(move |req| match req.path() {
             "/api/v4/projects/grp%2Fproj/labels" => Reply::json(&json!([
                 { "id": 1, "name": "bug", "color": "#d9534f" },
@@ -1934,8 +1934,8 @@ mod writes {
                 .iter()
                 .map(|label| label.name.as_str())
                 .collect::<Vec<_>>(),
-            ["bug", written.as_str()],
-            "a name too long to write in full is not offered cut"
+            ["bug"],
+            "a name at the read's cut, or past it, is not offered: update refuses a name at that length"
         );
         assert!(
             candidates.truncated,

@@ -548,8 +548,8 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   issue does not offer is `400 invalid` with nothing sent.
 - **`candidates`** answers the project's labels (`GET /projects/{path}/labels`, 100 a page) and its members, inherited
   ones included (`GET /projects/{path}/members/all`, 100 a page): at most 200 of each, `truncated` when a full second
-  page may have more. A label carries its colour. A label whose name is longer than a write can carry (200 characters,
-  where GitLab allows up to 255) is left out rather than cut, so the picker never offers a shorter, different name, and
+  page may have more. A label carries its colour. A label whose name is 200 characters or more is left out rather than
+  cut, because the read cuts at that length and a write refuses a name that long (GitLab itself allows up to 255), so
   `truncated` says the answer is partial. An assignee's `id` is the numeric member id, which is what the write
   sends, and its `name` is the person's own when GitLab reports one.
 - **`states`** is `Some` for every GitLab detail, its create answer and both write answers: `Open` and `Closed`. The
