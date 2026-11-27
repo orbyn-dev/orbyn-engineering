@@ -20,8 +20,9 @@
 //! where discovery found none, and any resolution that changed makes the next read
 //! observe the folder again: a folder that was deleted, moved, made a repository, or
 //! given another remote is never answered from what it used to be. An observation that
-//! cannot be watched (a file too large to read twice, a Git too old to name its
-//! directory) is answered once and not kept.
+//! cannot be watched (a file too large to read twice or not a regular file, a `.git` link
+//! that resolved elsewhere, a Git too old to name its directory) is answered once and not
+//! kept.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -115,7 +116,16 @@ impl Watch {
         // A root that does not contain the folder names another view of the same
         // checkout, which this module does not watch, so the answer is not kept.
         let passed = passed_folders(real, root)?;
-        let mut files = vec![Snapshot::read(root.join(".git"))];
+        let link = Snapshot::read(root.join(".git"));
+        // A `.git` directory other than the one discovery named is a link retargeted while the
+        // answer was read: the files watched below belong to the directory it named before, so the
+        // answer is not kept.
+        if let Seen::Directory(resolved) = &link.seen
+            && crate::util::canonicalize(git_dir).ok().as_deref() != Some(resolved.as_path())
+        {
+            return None;
+        }
+        let mut files = vec![link];
         for name in ["HEAD", "config", "config.worktree", "commondir"] {
             files.push(Snapshot::read(git_dir.join(name)));
         }
@@ -203,8 +213,9 @@ enum Seen {
     Directory(PathBuf),
     /// A file of this length, hashing to this digest.
     File { len: u64, digest: String },
-    /// A file too large to read on every settings read.
-    Oversize,
+    /// A file too large to read on every settings read, or not a regular file at all: reading a
+    /// pipe, socket or device can wait for a writer, so it is never read again.
+    Unwatchable,
 }
 
 impl Seen {
@@ -213,7 +224,7 @@ impl Seen {
             Ok(meta) if meta.is_dir() => Self::Directory(
                 crate::util::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
             ),
-            Ok(meta) if meta.len() > MAX_WATCHED_BYTES => Self::Oversize,
+            Ok(meta) if meta.len() > MAX_WATCHED_BYTES || !meta.is_file() => Self::Unwatchable,
             Ok(_) => match std::fs::read(path) {
                 Ok(bytes) => Self::File {
                     len: bytes.len() as u64,
@@ -227,7 +238,7 @@ impl Seen {
 
     fn holds(&self, path: &Path) -> bool {
         match self {
-            Self::Oversize => false,
+            Self::Unwatchable => false,
             Self::Absent => matches!(
                 std::fs::metadata(path),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound
@@ -236,7 +247,7 @@ impl Seen {
                 crate::util::canonicalize(path).is_ok_and(|now| now == *resolved)
             }
             Self::File { len, digest } => {
-                std::fs::metadata(path).is_ok_and(|meta| !meta.is_dir() && meta.len() == *len)
+                std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() == *len)
                     && std::fs::read(path).is_ok_and(|bytes| sha256_hex(&bytes) == *digest)
             }
         }
