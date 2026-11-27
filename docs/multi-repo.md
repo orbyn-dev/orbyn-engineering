@@ -299,8 +299,12 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   says "200 shown" quietly on its header.
 - **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
   chosen) and the Create pull request base check of the Changes footer act on the primary repository.
-- **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
-  `orbynd` with `ORBYN_MULTI_REPO=1`.
+- **Verified against a live service.** The project repository screens and the thread's repository routes ran against a real
+  `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec 3152baf7;
+  `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677 + spec f2b539677, 26 Nov 2026; and
+  `web/e2e/real/multi-repo-scan.spec.ts`, 2 passed @ app 97068179d + spec 97068179d, 26 Nov 2026. The Changes grouping ran
+  in `web/e2e/real/multi-repo-changes.spec.ts` (2 passed in #1592's evidence, which records no app or spec run id); still not run
+  against a live service: per-repository Git actions and pull requests, and opening another repository's file tab from the Changes list.
 
 ### As built: web UI (repo threads)
 
@@ -349,8 +353,10 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   stays on disk when it holds changes; several threads, a thread in one repository and a failed repository read keep the existing words
   (the service removes the clean worktrees; see "As built: pull requests and removal").
 - **Not done.** `GET .../files/metadata` still has no web caller. `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
-- **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
-  client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
+- **Verified against a live service.** The new-thread dialog, its `POST .../repo-threads`, the task folder read and the Repos popover
+  ran against a real `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec
+  3152baf7 (a repository added later joins the thread); `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677
+  + spec f2b539677, 26 Nov 2026 (the Repos chip's 390 px phone sheet).
 
 ## As built: repo_id on Git and file calls
 

@@ -44,6 +44,19 @@ it("lists SDK missing and Expired with the one action each offers, and leaves No
   expect(onOpen.mock.calls).toEqual([["claude"], ["codex"]]);
 });
 
+it("keeps the row but offers no action that would open a page the beta has not built, for an engine outside it", async () => {
+  setEngineHostApi(createEngineHostMock({ hosts: [host("cursor", { last_error: { kind: "auth", message: "401", causes: [] } })] }));
+  const onOpen = vi.fn();
+  render(<NeedsAttentionGroup engines={[engine("cursor", "Cursor")]} onOpen={onOpen} />);
+  const table = await screen.findByRole("table", { name: "Needs attention" });
+  const row = within(within(table).getByText("Cursor", { selector: ".name" }).closest("[role=row]") as HTMLElement);
+  // Cursor’s page is out of the beta, so the row says what happened and offers nothing to press.
+  expect(row.getByText("Your sign-in expired. Sign in with cursor.")).toBeVisible();
+  expect(row.getByText("Expired")).toBeVisible();
+  expect(row.queryByRole("button")).toBeNull();
+  expect(onOpen).not.toHaveBeenCalled();
+});
+
 it("draws the card for each gap on a detail page", async () => {
   setEngineHostApi(createEngineHostMock({ hosts }));
   const { rerender } = render(<EngineGapCard engine={engines[0]!} />);

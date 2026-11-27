@@ -852,7 +852,9 @@ tried once over HTTPS, and the job says so.
 ## Terminals
 
 A terminal on Windows opens a native `pwsh`, then `powershell`, then `ComSpec`. `SHELL`
-is ignored there. A thread holds up to 32 terminals, each with 5,000 lines and 8 MiB of scrollback kept
+is ignored there. Its shell's module analysis cache is pointed at Orbyn's own data folder
+(`PSModuleAnalysisCachePath`), so PowerShell cannot write `Microsoft\Windows\PowerShell` into a
+project checkout. A thread holds up to 32 terminals, each with 5,000 lines and 8 MiB of scrollback kept
 here. Terminals sharing a `group` are a split. The `main` terminal is what a plain
 socket opens and a terminal-tier run uses, and a plain one nobody returns to closes
 after a minute. Named terminals stay until closed. Settling or archiving closes them
@@ -2392,10 +2394,13 @@ for are not verified on a real install.
 Provider detail pages in the beta are limited to Claude Code, Codex and OpenCode,
 including their named instances. Other registered providers retain their list and
 instance-edit controls, but cannot open an unbuilt detail page, including before
-the catalog arrives. OpenCode reports its version through the bounded CLI probe;
-compatibility still comes only from the authenticated manifest. Without an
-OpenCode entry its support stays Unknown. Its detail page shows reported version,
-login, location and models; Crew tier mapping remains Planned.
+the catalog arrives. The Needs attention rows keep to it as well: an engine outside
+the beta states its gap and offers no action, since both actions it could draw
+(Open, Sign in again) are rows of that page. OpenCode reports its version through
+the bounded CLI probe; compatibility still comes only from the authenticated
+manifest. Without an OpenCode entry its support stays Unknown. Its detail page
+shows reported version, login, location and models; Crew tier mapping remains
+Planned.
 
 The ACP driver offers protocol version 1, the only one it speaks. An agent that answers 2
 in version 1's shape (`agentInfo`, `agentCapabilities`), as some shipped agents do, runs as
