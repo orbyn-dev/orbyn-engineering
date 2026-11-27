@@ -1097,6 +1097,29 @@ mod tests {
         crate::testing::unlink_dir(&link);
     }
 
+    /// cmd.exe also expands `%NAME%` inside a quoted argument, which `mklink` needs, so a fixture under
+    /// `a%USERNAME%b` would be linked as `a<user>b`: the junction helper must hand the paths over so that
+    /// nothing expands them.
+    #[test]
+    fn a_link_is_created_under_a_folder_named_with_a_percent_expansion() {
+        let dir = TempDir::new();
+        let holder = dir.path().join("a%USERNAME%b");
+        let target = holder.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("probe.txt"), "here\n").unwrap();
+        // The name the shell would expand to, so a link that expands is caught instead of only failing to link.
+        let expanded = format!("a{}b", std::env::var("USERNAME").unwrap_or_default());
+        std::fs::create_dir_all(dir.path().join(expanded)).unwrap();
+        let link = holder.join("link");
+        link_dir(&target, &link);
+        assert_eq!(
+            std::fs::read_to_string(link.join("probe.txt")).unwrap(),
+            "here\n",
+            "the link names the target folder, not an expanded name"
+        );
+        crate::testing::unlink_dir(&link);
+    }
+
     #[tokio::test]
     async fn the_library_is_refused_from_every_side() {
         let dir = TempDir::new();

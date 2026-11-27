@@ -45,13 +45,17 @@ pub fn link_dir(target: &Path, link: &Path) {
         use std::os::windows::process::CommandExt;
 
         // Junction creation needs no symbolic-link privilege on supported Windows.
-        // cmd.exe parses its own command line: it reads a `/` inside a bare path as a switch
-        // and splits a bare path on `&`, so name both paths the way cmd parses them, quoted.
+        // cmd.exe parses its own command line: it reads a `/` inside a bare path as a switch, splits a bare path
+        // on `&`, and expands `%NAME%` even inside the quotes `mklink` needs. Name the paths through environment
+        // variables, which cmd substitutes in one pass without reading them again, and keep delayed expansion off
+        // so a `!` in a name stays text.
         let native = |path: &Path| path.to_string_lossy().replace('/', r"\");
         let output = std::process::Command::new("cmd.exe")
-            .args(["/d", "/c", "mklink", "/J"])
-            .raw_arg(format!("\"{}\"", native(link)))
-            .raw_arg(format!("\"{}\"", native(target)))
+            .args(["/d", "/v:off", "/c", "mklink", "/J"])
+            .raw_arg(r#""%ORBYN_TEST_LINK_DIR%""#)
+            .raw_arg(r#""%ORBYN_TEST_TARGET_DIR%""#)
+            .env("ORBYN_TEST_LINK_DIR", native(link))
+            .env("ORBYN_TEST_TARGET_DIR", native(target))
             .output()
             .unwrap();
         assert!(
