@@ -472,13 +472,12 @@ async fn populated_schema21_owner_fences_migration_then_schema22_preserves_rows_
 }
 
 async fn qualify_populated_migration(binary: std::ffi::OsString, previous: i64) {
-    use std::io::BufRead;
     let dir = TempDir::new();
     let data = dir.path().join("data");
     let private = dir.path().join("private-home");
     std::fs::create_dir_all(&private).unwrap();
-    let private_options = || Options {
-        env: [
+    let private_env = || -> Vec<(String, String)> {
+        [
             ("HOME", private.clone()),
             ("CODEX_HOME", private.join("codex")),
             ("CLAUDE_CONFIG_DIR", private.join("claude")),
@@ -489,56 +488,26 @@ async fn qualify_populated_migration(binary: std::ffi::OsString, previous: i64) 
         ]
         .into_iter()
         .map(|(key, value)| (key.to_owned(), value.to_str().unwrap().to_owned()))
-        .chain(std::iter::once((
-            "ORBYN_KNOWN_ENGINE_IDS".into(),
-            "[]".into(),
-        )))
-        .collect(),
+        .collect()
+    };
+    // The private environment, plus the engine list a restart of this service passes on: the options
+    // handed to `adopt` have to keep every variable the spawn is given.
+    let private_options = || Options {
+        env: private_env()
+            .into_iter()
+            .chain(std::iter::once((
+                "ORBYN_KNOWN_ENGINE_IDS".into(),
+                "[]".into(),
+            )))
+            .collect(),
         ..Options::default()
     };
-    let mut command = std::process::Command::new(binary);
-    command
-        .args(["serve", "--data-dir"])
-        .arg(&data)
-        .env("ORBYN_OFFLINE", "1")
-        .env("ORBYN_CLAUDE_BIN", support::FAKE)
-        .env("ORBYN_CODEX_BIN", support::FAKE)
-        .env("HOME", &private)
-        .env("CODEX_HOME", private.join("codex"))
-        .env("CLAUDE_CONFIG_DIR", private.join("claude"))
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    for key in [
-        "XDG_CONFIG_HOME",
-        "XDG_DATA_HOME",
-        "XDG_CACHE_HOME",
-        "XDG_STATE_HOME",
-    ] {
-        command.env(key, private.join(key));
-    }
-    let mut child = command.spawn().unwrap();
-    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
-    let mut ready = String::new();
-    stdout.read_line(&mut ready).unwrap();
-    if ready.is_empty() {
-        let output = child.wait_with_output().unwrap();
-        panic!(
-            "schema20 fixture failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    let ready: Value = serde_json::from_str(&ready).unwrap();
+    let mut spawned = support::Spawned::start(&binary, &data, &[], private_env(), &[]);
+    let ready = spawned
+        .ready()
+        .unwrap_or_else(|error| panic!("schema{previous} fixture failed: {error}"));
     // Service owns this exact child and releases it on every assertion failure.
-    let old = Service {
-        url: ready["url"].as_str().unwrap().to_owned(),
-        token: ready["token"].as_str().unwrap().to_owned(),
-        access_key: ready["access_key"].as_str().map(str::to_owned),
-        person_key: None,
-        client: reqwest::Client::new(),
-        child,
-        stdout,
-    };
+    let old = Service::adopt(&data, private_options(), &ready, &mut spawned);
     old.ensure_workspace(dir.path()).await;
     let (status, mut original) = old
         .send(

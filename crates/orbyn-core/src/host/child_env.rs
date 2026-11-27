@@ -196,16 +196,73 @@ pub fn for_engine(command: &mut Command) {
     apply(command, true);
 }
 
+/// The variable Windows PowerShell takes its module analysis cache path from.
+///
+/// Its default is `%LOCALAPPDATA%\Microsoft\Windows\PowerShell\ModuleAnalysisCache`, and a
+/// shell that cannot resolve that base writes the cache relative to its working directory:
+/// an Orbyn terminal opened in a project checkout then dirties it with an untracked
+/// `Microsoft\` folder. A value the person set to an absolute path is left alone.
+#[cfg(windows)]
+const MODULE_ANALYSIS_CACHE: &str = "PSModuleAnalysisCachePath";
+
+/// The cache file a Windows terminal's shell gets, outside any project checkout. Orbyn's own
+/// data folder is the base, the same place the service keeps its caches; without one, the
+/// user's profile data folder, then the system temp folder, keeps the path absolute.
+#[cfg(windows)]
+fn terminal_module_cache(vars: &[(OsString, OsString)]) -> Option<PathBuf> {
+    // Windows environment names ignore case yet keep the spelling they were set with, so a
+    // `psmoduleanalysiscachepath` inherited from a parent is the same setting as the name
+    // below; an exact comparison would miss the person's absolute path and replace it.
+    let value = |name: &str| {
+        vars.iter()
+            .find(|(key, _)| {
+                key.to_str()
+                    .is_some_and(|key| key.eq_ignore_ascii_case(name))
+            })
+            .map(|(_, value)| PathBuf::from(value))
+    };
+    if value(MODULE_ANALYSIS_CACHE).is_some_and(|path| path.is_absolute()) {
+        return None;
+    }
+    let data = value("ORBYN_DATA_DIR")
+        .filter(|dir| dir.is_absolute())
+        .or_else(|| {
+            value("LOCALAPPDATA")
+                .map(|dir| dir.join("Orbyn"))
+                .filter(|dir| dir.is_absolute())
+        })
+        .or_else(|| {
+            value("USERPROFILE")
+                .map(|home| home.join("AppData").join("Local").join("Orbyn"))
+                .filter(|dir| dir.is_absolute())
+        })
+        .unwrap_or_else(|| std::env::temp_dir().join("orbyn"));
+    let cache = data.join("powershell").join("ModuleAnalysisCache");
+    cache.is_absolute().then_some(cache)
+}
+
 /// Names to drop and values to set on a terminal. A shell is the person's own, so
 /// the login preference does not reach it; an engine's console (`engine`) is an
 /// engine, so it does.
 pub fn for_terminal(engine: bool) -> EnvPlan {
     let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-    terminal_plan(
+    let changes = terminal_plan(
         &vars,
         engine,
         engine && PREFER_SAVED_LOGIN.load(Ordering::Relaxed),
-    )
+    );
+    // The shell does not create the folder it is told to cache in, and a missing parent
+    // would leave the cache unwritten; the spawn makes it first.
+    #[cfg(windows)]
+    if let Some((_, cache)) = changes
+        .set
+        .iter()
+        .find(|(name, _)| name == MODULE_ANALYSIS_CACHE)
+        && let Some(parent) = Path::new(cache).parent()
+    {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    changes
 }
 
 /// The terminal's plan for the given variables, so a test can feed it any set.
@@ -217,6 +274,12 @@ fn terminal_plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool
         .find(|(name, _)| name == "PATH")
         .map(|(_, value)| value.clone());
     changes.set.push(("PATH".into(), widened(base.as_deref())));
+    #[cfg(windows)]
+    if let Some(cache) = terminal_module_cache(vars) {
+        changes
+            .set
+            .push((MODULE_ANALYSIS_CACHE.into(), cache.into_os_string()));
+    }
     changes
 }
 
@@ -855,6 +918,101 @@ mod tests {
                 "{kind}"
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_terminal_points_the_powershell_module_cache_out_of_the_checkout() {
+        let inherited = vars(&[
+            ("LOCALAPPDATA", r"C:\Users\team\AppData\Local"),
+            ("TEMP", r"C:\Temp"),
+        ]);
+        let cache = terminal_plan(&inherited, false, false)
+            .set
+            .into_iter()
+            .find(|(name, _)| name == MODULE_ANALYSIS_CACHE)
+            .map(|(_, value)| PathBuf::from(value))
+            .expect("the terminal env carries the module analysis cache path");
+        assert_eq!(
+            cache,
+            PathBuf::from(r"C:\Users\team\AppData\Local\Orbyn\powershell\ModuleAnalysisCache")
+        );
+        assert!(cache.is_absolute(), "{}", cache.display());
+        assert!(
+            !cache.starts_with(std::env::current_dir().unwrap()),
+            "{} is inside the checkout",
+            cache.display()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_terminal_keeps_an_absolute_module_cache_the_person_set() {
+        let mine = vars(&[("PSModuleAnalysisCachePath", r"C:\mine\ModuleAnalysisCache")]);
+        assert!(
+            terminal_plan(&mine, false, false)
+                .set
+                .iter()
+                .all(|(name, _)| name != MODULE_ANALYSIS_CACHE)
+        );
+        let relative = vars(&[("PSModuleAnalysisCachePath", r"Microsoft\Windows\PowerShell")]);
+        let cache = terminal_plan(&relative, false, false)
+            .set
+            .into_iter()
+            .find(|(name, _)| name == MODULE_ANALYSIS_CACHE)
+            .map(|(_, value)| PathBuf::from(value))
+            .expect("a relative setting is replaced");
+        assert!(cache.is_absolute(), "{}", cache.display());
+        assert!(
+            cache.ends_with(r"powershell\ModuleAnalysisCache"),
+            "{}",
+            cache.display()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_terminal_reads_the_module_cache_names_without_regard_to_case() {
+        // Windows keeps the spelling a variable was set with, so the person's setting can
+        // arrive lower-cased and must still keep its precedence.
+        let mine = vars(&[("psmoduleanalysiscachepath", r"C:\mine\ModuleAnalysisCache")]);
+        assert!(
+            terminal_plan(&mine, false, false)
+                .set
+                .iter()
+                .all(|(name, _)| name != MODULE_ANALYSIS_CACHE),
+            "a lower-cased absolute setting is kept"
+        );
+        let relative = vars(&[("psmoduleanalysiscachepath", r"Microsoft\Windows\PowerShell")]);
+        let replaced = terminal_plan(&relative, false, false)
+            .set
+            .into_iter()
+            .find(|(name, _)| name == MODULE_ANALYSIS_CACHE)
+            .map(|(_, value)| PathBuf::from(value))
+            .expect("a lower-cased relative setting is replaced");
+        assert!(replaced.is_absolute(), "{}", replaced.display());
+        // The fallback bases are read the same way, so another spelling still bases the
+        // default path where it says, and ORBYN_DATA_DIR keeps its precedence.
+        let bases = vars(&[
+            ("localappdata", r"C:\Users\team\AppData\Local"),
+            ("USERPROFILE", r"C:\Users\team"),
+        ]);
+        assert_eq!(
+            terminal_module_cache(&bases),
+            Some(PathBuf::from(
+                r"C:\Users\team\AppData\Local\Orbyn\powershell\ModuleAnalysisCache"
+            ))
+        );
+        let with_data = vars(&[
+            ("orbyn_data_dir", r"D:\Orbyn\data"),
+            ("LocalAppData", r"C:\Users\team\AppData\Local"),
+        ]);
+        assert_eq!(
+            terminal_module_cache(&with_data),
+            Some(PathBuf::from(
+                r"D:\Orbyn\data\powershell\ModuleAnalysisCache"
+            ))
+        );
     }
 
     #[test]

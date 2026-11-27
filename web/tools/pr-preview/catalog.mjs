@@ -182,6 +182,14 @@ export const FRAMES = {
   "pr-list-signedout": { route: "#/pulls", scenario: "pulls-signed-out" },
   "pr-list-draft": { route: "#/pulls", scenario: "pulls", steps: [click("button", "Drafts", { prefix: true })] },
   "pr-list-offline": { route: "#/pulls", scenario: "pulls", steps: [{ do: "offline" }] },
+  // The command palette's unreadable Pull requests note (Engineer designs v195, palette-prs-unreadable): the read fails, so the
+  // note under the group's heading draws the alert triangle, the words and Retry.
+  "palette-prs-unreadable": {
+    route: "#/threads/t-done",
+    pre: [{ route: "**/api/pulls?*", status: 503 }],
+    steps: [click("button", "Search or ask", { prefix: true }), { do: "fill", label: "Search", value: "zz", exact: true }],
+    wait: 900,
+  },
   "pr-list-filtered": {
     route: "#/pulls",
     scenario: "pulls",
@@ -1248,7 +1256,8 @@ export const FRAMES = {
    *  off, a correction for all repositories, the promote confirm and the refusal the contract gives a lesson that names
    *  a path, the move-back confirm, the add form, the list right after a delete with its Undo toast, the add's saved
    *  card, a lesson over the five-lesson limit, one that became a skill, one the repository's switch keeps out, one left
-   *  out of a brief, and the escape and revert sources on a repository lesson. */
+   *  out of a brief, the escape and revert sources on a repository lesson, and the writes that fail: the scan's refusal
+   *  of an add, and the add, save and delete failures. */
   "lessons-card": { route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto", scenario: "crew-lessons" },
   "lessons-edit": {
     route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates",
@@ -1312,6 +1321,39 @@ export const FRAMES = {
     scenario: "crew-lessons",
     steps: [click("button", "Delete")],
     wait: 1800,
+  },
+  "lessons-add-refused": {
+    route: "#/settings/crew/lessons/add?repo=p-app",
+    scenario: "crew-lessons-add-secret",
+    steps: [
+      { do: "fill", label: "Lesson text", value: "Use sk-live-4f9a2b1c in the login test." },
+      click("button", "Save"),
+      { do: "wait", ms: 600 },
+    ],
+  },
+  "lessons-add-failed": {
+    route: "#/settings/crew/lessons/add?repo=p-app",
+    scenario: "crew-lessons-add-fails",
+    steps: [
+      { do: "fill", label: "Lesson text", value: "Run the web tests before you open a pull request." },
+      click("button", "Save"),
+      { do: "wait", ms: 600 },
+    ],
+  },
+  "lessons-save-failed": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-dates",
+    scenario: "crew-lessons-save-fails",
+    steps: [
+      click("button", "Edit"),
+      { do: "fill", label: "Lesson text", value: "Date formatting goes through the one formatter, and the tests check it." },
+      click("button", "Save"),
+      { do: "wait", ms: 600 },
+    ],
+  },
+  "lessons-delete-failed": {
+    route: "#/settings/crew/lessons/lesson?repo=p-app&id=les-returnto",
+    scenario: "crew-lessons-delete-fails",
+    steps: [click("button", "Delete"), { do: "wait", ms: 600 }],
   },
 
 };

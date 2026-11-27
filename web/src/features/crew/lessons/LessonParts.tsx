@@ -253,18 +253,20 @@ function FragmentRow({ label, value }: { label: string; value: ReactNode }) {
 
 /**
  * One evidence id as its own element: a task opens its thread, an escape the Escapes page, and a revert or merge is plain
- * text. Shared by a lesson's card and the proposal screens, so every place that names evidence links it the same way.
+ * text. Shared by a lesson's card and the proposal screens, so every place that names evidence links it the same way; the
+ * shared .cx-t10r class gives the inline link the crew's 24 px target (WCAG 2.2 AA 2.5.8).
  */
 export function EvidenceId({ one }: { one: LessonEvidence }) {
   if (one.kind === "task")
     return (
-      <a href={routeHref({ name: "thread", id: one.id })} style={{ color: "var(--color-text)" }}>
+      <a className="cx-t10r" href={routeHref({ name: "thread", id: one.id })} style={{ color: "var(--color-text)" }}>
         {evidenceWord(one)}
       </a>
     );
   if (one.kind === "escape")
     return (
       <a
+        className="cx-t10r"
         href={routeHref({ name: "settings", section: "crew", crewPage: "escapes" })}
         style={{ color: "var(--color-text)" }}
       >

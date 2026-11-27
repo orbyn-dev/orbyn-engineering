@@ -104,9 +104,7 @@ impl RpcClient {
                     continue;
                 };
                 // A full queue waits here: the engine's next write is the backpressure, not our memory.
-                if !route(message, &router, &inbound_tx).await {
-                    break;
-                }
+                route(message, &router, &inbound_tx).await;
             }
             lock(&router).clear();
         });
@@ -202,38 +200,31 @@ fn lock(pending: &Pending) -> std::sync::MutexGuard<'_, HashMap<i64, oneshot::Se
 /// Sends one engine line to the driver. A full queue waits (the engine's own pipe is the backpressure); a queue
 /// whose driver is gone drops that frame and keeps routing responses, so a late engine notification cannot stop
 /// the pending calls of a short session.
-async fn route(message: Value, pending: &Pending, inbound: &mpsc::Sender<Inbound>) -> bool {
+async fn route(message: Value, pending: &Pending, inbound: &mpsc::Sender<Inbound>) {
     let method = message.get("method").and_then(Value::as_str);
     let id = message.get("id").filter(|id| !id.is_null());
     match (method, id) {
         (Some(method), Some(id)) => {
-            if inbound
+            // A closed queue drops the frame: its driver is gone, so nothing is waiting for this one.
+            let _ = inbound
                 .send(Inbound::Request {
                     id: id.clone(),
                     method: method.to_owned(),
                     params: message.get("params").cloned().unwrap_or(Value::Null),
                 })
-                .await
-                .is_err()
-            {
-                return true;
-            }
+                .await;
         }
         (Some(method), None) => {
-            if inbound
+            let _ = inbound
                 .send(Inbound::Notification {
                     method: method.to_owned(),
                     params: message.get("params").cloned().unwrap_or(Value::Null),
                 })
-                .await
-                .is_err()
-            {
-                return true;
-            }
+                .await;
         }
         (None, Some(id)) => {
             let Some(sender) = id.as_i64().and_then(|id| lock(pending).remove(&id)) else {
-                return true;
+                return;
             };
             let result = match message.get("error") {
                 Some(error) => Err(RpcCallError {
@@ -252,7 +243,6 @@ async fn route(message: Value, pending: &Pending, inbound: &mpsc::Sender<Inbound
         }
         (None, None) => {}
     }
-    true
 }
 
 #[cfg(test)]
@@ -304,6 +294,26 @@ mod tests {
         }
         flood.await.unwrap();
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_closed_driver_queue_still_routes_a_pending_response() {
+        let pending: Pending = Arc::default();
+        let (sender, receiver) = oneshot::channel();
+        lock(&pending).insert(3, sender);
+        // The driver is gone before the engine's lines arrive: its queue has no receiver left.
+        let (inbound, inbound_rx) = mpsc::channel(1);
+        drop(inbound_rx);
+        // A notification and a request for that driver are dropped, not routed and not fatal.
+        route(json!({"method":"notice"}), &pending, &inbound).await;
+        route(json!({"id":"srv-1","method":"ask"}), &pending, &inbound).await;
+        // A response still reaches its caller, so a late frame cannot strand a pending call.
+        route(json!({"id":3,"result":{"ok":true}}), &pending, &inbound).await;
+        let answer = tokio::time::timeout(Duration::from_secs(5), receiver)
+            .await
+            .expect("a closed driver queue must not strand a pending response");
+        assert_eq!(answer.unwrap().unwrap(), json!({"ok": true}));
+        assert!(lock(&pending).is_empty());
     }
 
     #[tokio::test]

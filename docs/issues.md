@@ -71,12 +71,15 @@ type IssueSummary = { tracker; scope; key; display_key; title; url; author: {log
 type IssueDetail = IssueSummary & {
   body: string;
   comments: IssueComment[];            // the first 50, oldest first; never more in the beta
+  activity?: IssueActivity[];          // the issue's own state changes, oldest first; absent when none was read
   linked_pull_requests: { repository: string; number: number; title: string; url: string;
                           state: "open" | "closed" | "merged"; is_draft: boolean; closes_issue: boolean;
                           checks?: PullChecks | null }[];  // absent is unknown, never "no checks"
   linked_threads: string[];            // thread ids that link this issue
   reactions?: { content: string; count: number }[] | null;  // null unless this answer reports them
 };
+type IssueActivity = { kind: "closed" | "reopened"; actor: {login}|null; at: string;
+                       close_reason?: "completed" | "not_planned" | null };  // never on a reopen
 type IssueRef = { tracker; scope; key; display_key; title; state; labels };  // what a link stores
 type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: number } | null;
                    failed: { tracker: TrackerKind; message: string }[];
@@ -99,14 +102,34 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
 - A tracker that fails for any other reason while others answer goes in `failed`, with the service's own message
   (never the raw tracker response). An invalid request, such as a paging cursor the service did not issue, is
-  `400 invalid_input` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
-  cached 30 seconds.
+  `400 invalid_input` instead and fails the whole listing.
+- **Cache.** A listing is up to 100 issues per tracker and scope, and each page is kept 30 seconds. A write through
+  this service in that tracker and scope (create, comment, an edit, a state change) drops every cached page of it as
+  soon as the tracker answers, so the next listing reads the tracker again instead of the page cached before it; a
+  listing that was still asking the tracker when the write landed is not cached, so it cannot put the page it read
+  back. It is that whole scope and no more: the tracker applies the filters, so which cached pages the changed issue
+  belongs to cannot be known here, while nothing outside the tracker and scope of the write can have changed. A scope
+  is matched by its whole name, so a write to `org/Project` leaves `org/Project Two` cached. A write whose answer does
+  not prove it failed may have been applied, so it drops the same pages: that is a tracker that never answered, and
+  one that answered a read of a write it had already stored (a rate limit, a refusal, a `404` or an unreadable reply
+  on that read). A reaction changes no field a page carries and no order it sorts by, so it drops none. Dropping the
+  page guarantees a fresh read, not that the write is in its answer: on GitHub that read is a `gh issue list`
+  `--search` call (`sort`), which can lag a new or changed issue, so a page read in that window can still miss it.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
   report them gives `[]`. A link carries `checks` when the tracker reports CI for it: the same `PullChecks`
   counts the pull request list carries. GitHub reads them with one `gh pr view --json statusCheckRollup` per
   link, in that link's own repository and best effort, so a link the person cannot read leaves the other links
   shown. Only the first 20 links of an issue are read (each read is one API call against the account's shared hourly limit); a link past that stays shown with no `checks`, which is unknown (over the read limit). Absent is unknown, never "no checks"; the other trackers report no linked pull requests, so they carry
   no `checks` either.
+- `activity` is the issue's own state changes as the tracker's timeline reports them, oldest first: the closed event
+  (`kind: "closed"`, carrying `close_reason` when the tracker says how it closed) and a reopen after it
+  (`kind: "reopened"`, never with a reason). GitHub reads them beside the detail in one bounded GraphQL page
+  (`timelineItems(last: 50, itemTypes: [CLOSED_EVENT, REOPENED_EVENT])`, through the person's own `gh`), best effort:
+  a timeline the account cannot read, or a `gh` that does not answer, leaves `activity` empty — no event known, never
+  "nothing happened" — and the issue is still shown. At most 50 events are kept. The other four trackers report no
+  timeline, so the field is left out of their answer (an absent `activity` means no event known, never an empty `[]`).
+  It rides on `IssueDetail`: no route and no stored field. These events are tracker text like the rest and never reach an
+  engine ("Issue text is untrusted").
 - A link keeps an `IssueRef` snapshot beside the thread (table `issue_links`; the migration takes the next
   free number at merge time), so a chip draws with the tracker offline. A read of the issue refreshes it.
 
@@ -586,13 +609,13 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   page and the engine tools can default to it. `scope` must be one of the connection's scopes; a tracker that is not
   connected is `400 invalid_input`. It stores two names and no secret, writes one audit row (`issues.project.bind`, ids
   and names only), and never changes the connection, the project or any issue.
-- **Engines.** The engine-facing issue tools (N24) are list, read, create, comment, link, unlink and thread list:
-  create and comment call the same Core functions, in the project's own connected tracker and scope, as the Person
-  routes do, so they take the same inputs and answer the same refusals (a tracker that is not connected answers the
-  one "no connected issue tracker" refusal). They are acting tools, so a run's tool approval policy gates each call
-  as it gates every other acting tool; a Crew worker cannot use them (its allow list refuses an unlisted tool by
-  default). Engine tools never use the person key and add no Person-class authority; react is not an engine tool, and
-  set_state is not built because the service has no update/state route (a separate row).
+- **Engines.** The engine-facing issue tools (N24) are list, read, create, comment, set_state, link, unlink and
+  thread list: create, comment and set_state call the same Core functions, in the project's own connected tracker and
+  scope, as the Person routes do, so they take the same inputs and answer the same refusals (a tracker that is not
+  connected answers the one "no connected issue tracker" refusal; a tracker whose edit is not built answers the same
+  unsupported refusal the route answers). They are acting tools, so a run's tool approval policy gates each call as it
+  gates every other acting tool; a Crew worker cannot use them (its allow list refuses an unlisted tool by default).
+  Engine tools never use the person key and add no Person-class authority; react is not an engine tool.
 - **Tests when built.** Each write against the local fake server of each tracker that supports it: exact status and `code`,
   the exact field sent, no token in the answer or the audit row; `403 desktop_required` without the person key and
   nothing sent; a refusal changes nothing here; the route table and class tests pass without special cases.
@@ -632,16 +655,17 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
     word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
     nothing left writes nothing, and a removal deletes by the award's id. The answer carries each award name and
     count from the award list's first page of 100, and carries no counts (`null`) when that page is full, because
-    more may be behind it; a removal whose own-award lookup runs out of those pages answers `tracker_unavailable`
-    rather than pretending the award is gone.
+    more may be behind it; an add or a removal whose own-award lookup runs out of those pages answers
+    `tracker_unavailable` rather than pretending the award is not there.
   - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
     `400 invalid_input` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
     React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
     directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
-    left writes nothing. The answer carries each content word and count from at most two pages of 50, and carries
-    no counts when the last page is full, because more may be behind it. Label names are resolved against the
-    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid_input` even though it
-    exists.
+    left writes nothing, as far as those pages show: a reaction they do not carry while the last page is full may be
+    behind it, so both directions answer `tracker_unavailable` rather than guess, writing nothing. The answer carries
+    each content word and count from at most two pages of 50, and carries no counts when the last page is full, because
+    more may be behind it. Label names are resolved against the repository's labels read up to five pages of 50, so a
+    label beyond the first 250 is `400 invalid_input` even though it exists.
   - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
     Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
     than one is `400 invalid_input`, as is a label with a semicolon in it); comment writes markdown and answers the stored
@@ -747,17 +771,18 @@ The tracker field is required: a body without it is `400 invalid_input`, never r
   `204` again when there was nothing bound: "no binding" is the desired end state, so the call is idempotent rather
   than a `404`.
 - **Read side**: the contract specifies no read route for the binding, so none is added and nothing defaults to it
-  yet: the page does not draw a bound tracker and the engine tools (N24) still take an explicit tracker and scope.
-  A later read (and the page/engine defaulting) can read the stored row; the storage is the minimal write-only slice.
+  yet: the page does not draw a bound tracker, and the engine tools (N24) keep reading the project's own tracker and
+  scope from its git remote. A later read (and the page/engine defaulting) can read the stored row; the storage is the
+  minimal write-only slice.
 - **Not verified.** No real tracker was contacted: the binding stores names the connection already reports, and the
   route is tested through the real service with a stand-in `gh` and a local fake tracker connection. No real
   `orbynd` service run with a real connected tracker exercises it.
 
 ### As built (N24 engine issue tools)
 
-Seven engine-facing tools over the project's own connected tracker and scope, alongside the existing routes: before
-this row they were list, read, link, unlink and thread list; now `orbyn_issue_create` and `orbyn_issue_comment` join
-them.
+Eight engine-facing tools over the project's own connected tracker and scope, alongside the existing routes: before
+this row they were list, read, link, unlink and thread list; now `orbyn_issue_create`, `orbyn_issue_comment` and
+`orbyn_issue_set_state` join them.
 
 - `orbyn_issue_create`: `{ title, body?, labels?, assignees?, template? }` — the same `CreateIssue` fields, caps and
   validation as `POST /api/issues/item/create`, in the project's tracker/scope from its own git remote (never from an
@@ -767,12 +792,18 @@ them.
 - `orbyn_issue_comment`: `{ key, body }` — the same `CommentIssue` fields and 1-64 KiB not-blank rule as
   `POST /api/issues/item/comment`. It answers the stored comment (`id`, `author`, `created_at`, `body` cleaned and cut,
   and the note).
-- **Permission and approval.** Both are acting tools: each call goes through the run's own tool approval policy
-  (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
+- `orbyn_issue_set_state`: `{ key, state, close_reason? }` — the same `IssueSetStateInput` fields and rules as
+  `POST /api/issues/item/state`: `state` is the `name` of one of the issue's `states` (the detail is read first),
+  and `close_reason` is `completed` or `not_planned`, only for a closed state and `completed` when omitted. It
+  answers the issue as the other issue tools do: the summary fields, the body cleaned of the framing markers and cut at
+  16 KiB, and the note. Only GitHub's edit is built, so in a project on another connected tracker the call answers the
+  route's `422 unsupported` refusal verbatim as a plain tool failure, and nothing is read or sent.
+- **Permission and approval.** All three writes are acting tools: each call goes through the run's own tool approval
+  policy (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
   worker's allow list names no issue tool, so a worker is refused by default; the allow list was not widened.
-- **Not built.** `set_state` stays out: the service has no update/state route yet (its own parity row), and a tool
-  cannot be backed by a core function that does not exist. React is not in this row. No real tracker was contacted:
-  the tool tests use a local fake issue reader over a fake project remote.
+- **Not built.** React is not in this row. No real tracker was contacted: the tool tests use a local fake issue reader
+  over a fake project remote, and a Unix-only real-service run keeps a stand-in `gh` and observes the GitHub state
+  write's `PATCH` arguments.
 
 ## Not done
 
@@ -789,13 +820,14 @@ Found in the post-merge review of the create, comment, react, template and bindi
 
 ## What T3 has that this does not (Planned)
 
-The event timeline, "involved/mentioned"
-filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
+The event timeline's state changes (the closed event and a reopen) are read for GitHub and carried in
+`IssueDetail.activity`; the rest of the timeline, the "involved/mentioned" filters and more than the first 50
+comments are not. Neither is in the beta; each is a later row. Creating, commenting and
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
 project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and Planned
 for the other four, whose sections say so; `candidates` is a GitLab, Forgejo, Azure DevOps and Linear gap too. The
-engine-facing issue tools (N24) list, read, create, comment, link, unlink and list a thread's linked issues; they do not
-change state (the service has no state route for them).
+engine-facing issue tools (N24) list, read, create, comment, set a state, link, unlink and list a thread's linked
+issues; a state move is GitHub-only, as the route is.
 
 ## Differences from the web side's guessed contract
 
@@ -807,7 +839,8 @@ change state (the service has no state route for them).
 
 - `get` takes the whole ref, `get(tracker, scope, key)`: a key is unique only within a scope.
 - `TrackerRow` adds `host` and `detail`; `connect` and `disconnect` are new calls (Person-class).
-- `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests` and `linked_threads`, and
+- `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests`, `linked_threads` and
+  `activity` (the state changes its tracker's timeline reports, GitHub only), and
   `reactions` (the tracker's own words and counts, absent when it does not report them); `IssueList` adds
   `next_cursors`. A linked pull request adds `checks` (the pull request list's own counts, absent when the
   read did not answer).

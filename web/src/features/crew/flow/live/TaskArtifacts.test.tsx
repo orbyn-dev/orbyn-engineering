@@ -51,7 +51,7 @@ describe("the artifacts view", () => {
     expect(screen.getByTitle(/Nothing records that an artifact’s bytes were pruned/)).toBeInTheDocument();
     expect(view).toHaveTextContent("Rules for every artifact");
     expect(view).toHaveTextContent("Pinned to a commit.");
-    expect(screen.getByTitle("No read reports the checkout’s head, so this view cannot mark an artifact stale")).toBeInTheDocument();
+    expect(screen.getByTitle("The read reports the checkout’s head and each row’s commit, so a row can be marked stale; this view does not mark one yet")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
   });
 

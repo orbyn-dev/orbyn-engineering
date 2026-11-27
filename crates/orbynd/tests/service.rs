@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use serde_json::{Value, json};
-use support::{Options, Service, TempDir, setup, text_of, types_of};
+use support::{Options, Service, TempDir, setup, setup_adopted, text_of, types_of};
 
 #[tokio::test]
 async fn token_is_required_on_api_agui_and_ws() {
@@ -618,6 +618,89 @@ async fn crash_recovery_interrupts_runs_and_expires_approvals() {
     // The thread works again after recovery.
     reopened.admit(&thread, "hello").await;
     assert_eq!(reopened.finished(&thread).await, "completed");
+}
+
+#[tokio::test]
+async fn a_crash_while_an_approval_is_open_closes_the_tool_call_and_interrupts_the_run() {
+    let dir = TempDir::new();
+    let launches = dir.path().join("launches");
+    let options = || Options {
+        env: vec![(
+            "ORBYN_FAKE_LAUNCH_FILE".into(),
+            launches.to_string_lossy().into_owned(),
+        )],
+        ..Options::default()
+    };
+    let (service, thread) = setup_adopted(&dir, options(), "codex").await;
+    // The interrupted thread must not continue by itself, or the recovered state is a new run. The
+    // PUT is checked, not fired and forgotten: a preference that silently failed to save would
+    // surface later as "recovery must not start an engine turn" and hide the real cause.
+    let off = json!({ "values": { "continue_threads_after_update": false } });
+    let response = service
+        .client
+        .put(format!("{}/api/preferences", service.url))
+        .bearer_auth(&service.token)
+        .json(&off)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "the preference is saved before the crash"
+    );
+    let saved: Value = response.json().await.unwrap();
+    let stored = saved
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == "continue_threads_after_update")
+        .unwrap_or_else(|| panic!("the preference was not written: {saved}"));
+    assert_eq!(stored["value"], false, "{saved}");
+    service.admit(&thread, "[approve]").await;
+    // The kill point is the fake engine's own record that it started the turn, not a sleep: the
+    // approval then proves the tool call is open and the service has written it down.
+    service.wait_for_launch("codex-turn").await;
+    let approval = service.pending().await;
+    assert_eq!(service.run_state(&thread).await, "awaiting_approval");
+    let launches_before = service.launches().len();
+
+    let reopened = service.restart();
+
+    // The dead process left the tool call open and its approval undecided; recovery closes both,
+    // ends the run interrupted, and starts no engine turn for it.
+    assert_eq!(reopened.run_state(&thread).await, "interrupted");
+    let expired = reopened.json("/api/approvals?state=expired").await;
+    assert!(
+        expired
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == approval["id"]),
+        "the approval is not expired: {expired}"
+    );
+    let events = reopened.all_events(&thread).await;
+    let open = events
+        .iter()
+        .find(|event| event["event"]["type"] == "TOOL_CALL_START")
+        .expect("the crash caught a tool call open");
+    let tool_call = open["event"]["toolCallId"].clone();
+    let note = events
+        .iter()
+        .find(|event| {
+            event["event"]["type"] == "TOOL_CALL_RESULT"
+                && event["event"]["toolCallId"] == tool_call
+        })
+        .unwrap_or_else(|| panic!("the open tool call {tool_call} was not closed: {events:?}"));
+    assert_eq!(note["event"]["content"], "Interrupted before a result.");
+    let last = events.last().unwrap();
+    assert_eq!(last["event"]["type"], "RUN_ERROR");
+    assert_eq!(last["event"]["code"], "interrupted");
+    assert_eq!(
+        reopened.launches().len(),
+        launches_before,
+        "a recovery must not start an engine turn"
+    );
 }
 
 #[tokio::test]

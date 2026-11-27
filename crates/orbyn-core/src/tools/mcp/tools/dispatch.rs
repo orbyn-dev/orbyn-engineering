@@ -7,10 +7,10 @@ use super::render::{render_height, render_title};
 use super::{
     ISSUE_NOTE, MAX_BATCH, MAX_HITS, MAX_SEARCH_CHARS, NO_ISSUE_READER, PULL_NOTE, device_button,
     device_orientation, device_tool_summary, hinge_angle, hinge_preset, is_device_tool,
-    issue_query, issue_ref_value, issue_summary_value, matches_words, number, optional_text,
-    pull_check_name, pull_checks_value, pull_comment_body, pull_detail_value, pull_filter,
-    pull_limit, pull_list_value, pull_merge_args, pull_merge_refusal, pull_number, pull_reply_to,
-    pull_respond_args, pull_review, pull_update_args, strings, text, wait_seconds,
+    issue_close_reason, issue_query, issue_ref_value, issue_summary_value, matches_words, number,
+    optional_text, pull_check_name, pull_checks_value, pull_comment_body, pull_detail_value,
+    pull_filter, pull_limit, pull_list_value, pull_merge_args, pull_merge_refusal, pull_number,
+    pull_reply_to, pull_respond_args, pull_review, pull_update_args, strings, text, wait_seconds,
 };
 use crate::app::Core;
 use crate::error::{CoreError, Result};
@@ -20,8 +20,8 @@ use crate::store::AuditRecord;
 use crate::tools::mcp::McpBinding;
 use orbyn_contracts::{
     ActionKind, AddPullComment, CommentIssue, CreateIssue, CreateThread, DelegateTask,
-    DeviceActionInput, DeviceActionOutput, IssueKey, MergePull, PermissionMode, TaskSchedule,
-    Thread, UpdateThread, UpsertTask,
+    DeviceActionInput, DeviceActionOutput, IssueKey, IssueSetStateInput, MergePull, PermissionMode,
+    TaskSchedule, Thread, UpdateThread, UpsertTask,
 };
 use serde_json::{Value, json};
 use std::path::Path;
@@ -134,6 +134,11 @@ impl Core {
                     "Comment on issue {} in this project's tracker",
                     text(args, "key")?
                 ),
+                "orbyn_issue_set_state" => format!(
+                    "Move issue {} to state {} in this project's tracker",
+                    text(args, "key")?,
+                    text(args, "state")?
+                ),
                 "orbyn_pull_request_respond" => {
                     let (_, body, resolved) = pull_respond_args(args)?;
                     let what = if body.is_some() {
@@ -202,6 +207,12 @@ impl Core {
             if let Verdict::Deny(reason) = self.gate.request(&binding.scope, ask).await {
                 return Err(CoreError::PolicyDenied(reason));
             }
+        }
+        // The device tools carry the deepest chain on the tool surface, so they run before the
+        // general dispatcher's large frame exists, and their own future lives on the heap: a
+        // debug build's transport call must fit a normal thread's stack (#1515).
+        if is_device_tool(name) {
+            return Box::pin(self.run_device_tool(binding, name, args)).await;
         }
         self.run_orbyn_tool(binding, name, args).await
     }
@@ -922,6 +933,23 @@ impl Core {
                     "note": ISSUE_NOTE,
                 })
             }
+            "orbyn_issue_set_state" => {
+                let reader = self.issue_reader(&own).await?;
+                let key = issue_key(args, &reader)?;
+                let detail = self
+                    .set_state_issue(IssueSetStateInput {
+                        tracker: reader.tracker,
+                        scope: reader.scope.clone(),
+                        key: key.key,
+                        state: text(args, "state")?.to_owned(),
+                        close_reason: issue_close_reason(args)?,
+                    })
+                    .await?;
+                let mut issue = issue_summary_value(&detail.summary);
+                issue["body"] = json!(self.issue_body_for_tool(&detail.body));
+                issue["note"] = json!(ISSUE_NOTE);
+                issue
+            }
             "orbyn_issue_link" => {
                 let reader = self.issue_reader(&own).await?;
                 let key = issue_key(args, &reader)?;
@@ -1007,12 +1035,25 @@ impl Core {
                 self.project_task(binding, id)?;
                 json!({ "thread_id": self.run_task(id).await? })
             }
+            other => return Err(CoreError::NotFound(format!("tool {other}"))),
+        })
+    }
+
+    /// The device tools' own dispatch, kept out of [`Self::run_orbyn_tool`]'s match: the
+    /// screenshot's device chain is the deepest future on the tool surface, and a debug build's
+    /// frame for the general dispatcher (about 450 KiB here) must not sit under it (#1515).
+    async fn run_device_tool(
+        &self,
+        binding: &McpBinding,
+        name: &str,
+        args: &Value,
+    ) -> Result<Value> {
+        Ok(match name {
             "orbyn_device_list" => {
                 // Rule 6: the row goes before the effect it describes, so it carries fixed
                 // values only; the list's counts are the answer's, not the audit row's.
                 self.audit_device_tool(binding, "device.tool.list", "", json!({}))?;
-                // Boxed: the device call's future is deep and a debug test thread's stack is
-                // small, so it lives on the heap (the #1515 follow-up).
+                // Boxed: the device call's future is deep, so it lives on the heap.
                 let list = Box::pin(self.devices.list()).await;
                 serde_json::to_value(&list)?
             }

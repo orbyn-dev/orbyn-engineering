@@ -113,7 +113,15 @@ export function useAsync<T>(key: string, load: (signal: AbortSignal, context: Lo
         }
       },
       (error: unknown) => {
-        if (id !== generation.current || isAbort(error)) return;
+        if (id !== generation.current) return;
+        // A cancellation this screen did not cause, such as a request it joined whose owner's screen went
+        // away: nothing answers it and nothing failed. The lane still has to be released, or an event
+        // parked behind the read waits forever and later events only set eventWaiting. A cancellation from
+        // this screen's own cleanup or a newer read already failed the generation check above.
+        if (isAbort(error)) {
+          settled();
+          return;
+        }
         settled();
         if (freshRef.current && id !== generation.current) return;
         // A read an event started never replaces what is on screen with an error.

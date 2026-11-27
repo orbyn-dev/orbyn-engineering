@@ -50,6 +50,31 @@ it("lists the states GitHub offers, marks the current one, and one choice is one
   expect(mock.writes).toEqual(["state:412:Closed:completed"]);
 });
 
+it("a second choice after the first answer, before the screen draws it, is not a second write", async () => {
+  const mock = createIssuesMock();
+  setIssuesApi(mock);
+  window.location.hash = "#/issues/github/orbyn-dev%2Forbyn-engineering/412";
+  const user = userEvent.setup();
+  render(<IssuesPage />);
+  await user.click(await stateButton());
+  const items = within(await screen.findByRole("menu", { name: "Change the state" })).getAllByRole("menuitem");
+  // Hold the first answer so the second click lands after it and before the screen draws it: a delayed frame under load once let
+  // the item that was leaving the screen start a second write.
+  const answering = mock.setState.bind(mock);
+  let answer = () => {};
+  vi.spyOn(mock, "setState").mockImplementationOnce((ref, state) => new Promise((resolve) => {
+    answer = () => void answering(ref, state).then(resolve);
+  }));
+  await user.click(items[1]!);
+  await act(async () => {
+    answer();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    items[1]!.click();
+  });
+  await waitFor(() => expect(screen.getByRole("button", { name: "State: Closed" })).toBeVisible());
+  expect(mock.writes).toEqual(["state:412:Closed:completed"]);
+});
+
 it("choosing the current state writes nothing", async () => {
   const mock = createIssuesMock();
   setIssuesApi(mock);

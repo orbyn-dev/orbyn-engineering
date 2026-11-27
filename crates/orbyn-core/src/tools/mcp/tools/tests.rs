@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use base64::Engine as _;
 use orbyn_contracts::{
-    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueActor, IssueComment,
-    IssueDetail, IssueState, IssueStateCategory, IssueSummary, PermissionMode, PolicyEffect,
-    PullCheck, PullChecks, PullRequest, PullRequestDetail, TrackerKind,
+    ActionKind, AuditEvent, ConnectTracker, CreatePolicyRule, IssueActor, IssueCloseReason,
+    IssueComment, IssueDetail, IssueState, IssueStateCategory, IssueSummary, PermissionMode,
+    PolicyEffect, PullCheck, PullChecks, PullRequest, PullRequestDetail, TrackerKind,
 };
 use serde_json::{Value, json};
 
@@ -510,6 +510,11 @@ struct FakeIssues {
     issues: Vec<IssueSummary>,
     bodies: HashMap<String, String>,
     lists: AtomicUsize,
+    /// Every detail read the tool asked for, so a refusal can prove nothing was read either.
+    reads: AtomicUsize,
+    /// Whether this tracker's edit is built. When it is, its issues offer the three state names
+    /// GitHub offers, so a state move travels the same path a GitHub one does.
+    editable: bool,
     scopes: Mutex<Vec<String>>,
     query: Mutex<Option<IssueQuery>>,
     /// Every write the tool sent, exactly as the tracker received it.
@@ -518,6 +523,38 @@ struct FakeIssues {
 
 impl FakeIssues {
     fn new() -> Arc<Self> {
+        Self::build(false)
+    }
+
+    /// The same reader with its edit built, for the tools that write an issue.
+    fn editing() -> Arc<Self> {
+        Self::build(true)
+    }
+
+    /// The states a reader whose edit is built offers; the same names and reasons GitHub offers.
+    fn states(&self) -> Option<Vec<IssueState>> {
+        self.editable.then(|| {
+            vec![
+                IssueState {
+                    category: IssueStateCategory::Open,
+                    name: "Open".into(),
+                    close_reason: None,
+                },
+                IssueState {
+                    category: IssueStateCategory::Closed,
+                    name: "Closed".into(),
+                    close_reason: Some(IssueCloseReason::Completed),
+                },
+                IssueState {
+                    category: IssueStateCategory::Closed,
+                    name: "Closed as not planned".into(),
+                    close_reason: Some(IssueCloseReason::NotPlanned),
+                },
+            ]
+        })
+    }
+
+    fn build(editable: bool) -> Arc<Self> {
         let issue = |key: &str, title: &str, labels: &[&str]| IssueSummary {
             tracker: TrackerKind::Gitlab,
             scope: "team/app".into(),
@@ -556,6 +593,8 @@ impl FakeIssues {
             ],
             bodies,
             lists: AtomicUsize::new(0),
+            reads: AtomicUsize::new(0),
+            editable,
             scopes: Mutex::new(Vec::new()),
             query: Mutex::new(None),
             writes: Mutex::new(Vec::new()),
@@ -590,6 +629,7 @@ impl IssueSource for FakeIssues {
     }
 
     async fn get(&self, scope: &str, key: &str) -> crate::error::Result<IssueDetail> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         let mut summary = self
             .issues
             .iter()
@@ -603,9 +643,42 @@ impl IssueSource for FakeIssues {
             comments: vec![],
             linked_pull_requests: vec![],
             linked_threads: vec![],
+            activity: vec![],
             reactions: None,
-            states: None,
+            states: self.states(),
         })
+    }
+
+    fn can_edit(&self) -> bool {
+        self.editable
+    }
+
+    /// Moves the named issue the way a tracker with its edit built does, and answers the issue as
+    /// the tracker stored it, so the tool's answer keeps the detail read's shape.
+    async fn set_state(
+        &self,
+        scope: &str,
+        key: &str,
+        state: &str,
+        close_reason: Option<IssueCloseReason>,
+    ) -> crate::error::Result<IssueDetail> {
+        self.writes.lock().unwrap().push(json!({
+            "kind": "set_state",
+            "scope": scope,
+            "key": key,
+            "state": state,
+            "close_reason": close_reason,
+        }));
+        let mut detail = self.get(scope, key).await?;
+        detail.summary.state = detail
+            .states
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .find(|offered| offered.name == state)
+            .cloned()
+            .ok_or_else(|| CoreError::Invalid("That state is not one this issue offers.".into()))?;
+        Ok(detail)
     }
 
     async fn create(&self, scope: &str, new: &NewIssue<'_>) -> crate::error::Result<IssueDetail> {
@@ -629,6 +702,7 @@ impl IssueSource for FakeIssues {
             comments: vec![],
             linked_pull_requests: vec![],
             linked_threads: vec![],
+            activity: vec![],
             reactions: None,
             states: None,
         })
@@ -669,11 +743,28 @@ struct IssueWorld {
     _dir: TempDir,
     core: Arc<Core>,
     token: String,
+    thread: String,
     reader: Arc<FakeIssues>,
 }
 
 async fn issue_world(connected: bool) -> IssueWorld {
-    issue_world_at(connected, "https://gitlab.example.test/team/app.git").await
+    issue_world_reader(
+        connected,
+        "https://gitlab.example.test/team/app.git",
+        FakeIssues::new(),
+    )
+    .await
+}
+
+/// The same world whose tracker also edits: its issues offer the three states GitHub names, so a
+/// state move travels the path a GitHub one does.
+async fn editable_issue_world() -> IssueWorld {
+    issue_world_reader(
+        true,
+        "https://gitlab.example.test/team/app.git",
+        FakeIssues::editing(),
+    )
+    .await
 }
 
 /// The same world over a GitHub origin, for the CI tools that read `gh` runs.
@@ -682,6 +773,10 @@ async fn github_pull_world() -> IssueWorld {
 }
 
 async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
+    issue_world_reader(connected, origin, FakeIssues::new()).await
+}
+
+async fn issue_world_reader(connected: bool, origin: &str, reader: Arc<FakeIssues>) -> IssueWorld {
     let dir = TempDir::new();
     let repo = dir.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
@@ -698,7 +793,6 @@ async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
     core.mcp.bind_host(&core);
     core.issues
         .set_credentials(Credentials::new(Arc::new(MemoryBackend::default()), "test"));
-    let reader = FakeIssues::new();
     core.issues.set_source(TrackerKind::Gitlab, reader.clone());
     if connected {
         core.connect_issue_tracker(
@@ -745,7 +839,7 @@ async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
         .register(McpBinding {
             scope: RunScope {
                 run_id: "run-issues".into(),
-                thread_id: thread.id,
+                thread_id: thread.id.clone(),
                 engine: "alpha".into(),
                 family: "alpha".into(),
                 write_scope: None,
@@ -760,6 +854,7 @@ async fn issue_world_at(connected: bool, origin: &str) -> IssueWorld {
         _dir: dir,
         core,
         token,
+        thread: thread.id,
         reader,
     }
 }
@@ -906,6 +1001,10 @@ async fn every_issue_tool_but_the_thread_list_refuses_a_project_with_no_reader()
             "orbyn_issue_comment",
             json!({ "key": "1", "body": "Looks good" }),
         ),
+        (
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Open" }),
+        ),
         ("orbyn_issue_link", json!({ "key": "1" })),
         ("orbyn_issue_unlink", json!({ "key": "1" })),
     ] {
@@ -1042,18 +1141,222 @@ async fn an_issue_comment_refuses_a_blank_body_and_an_unknown_key() {
 }
 
 #[tokio::test]
-async fn the_state_tool_is_not_offered_because_the_service_has_no_state_route() {
-    let w = issue_world(true).await;
-    assert!(
-        !is_tool("orbyn_issue_set_state"),
-        "set_state needs the service's update/state route, which is a separate row"
+async fn an_issue_state_move_answers_the_issue_and_sends_the_contract_fields() {
+    let w = editable_issue_world().await;
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Closed as not planned", "close_reason": "not_planned" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["key"], "1");
+    assert_eq!(answer["state"]["name"], "Closed as not planned");
+    assert_eq!(answer["state"]["category"], "closed");
+    assert_eq!(answer["state"]["close_reason"], "not_planned");
+    assert_eq!(answer["note"], ISSUE_NOTE);
+    let body = answer["body"].as_str().unwrap();
+    assert!(body.contains("Keep"), "{body}");
+    assert!(!body.contains("ISSUE TEXT"), "{body}");
+    assert_eq!(
+        w.reader.writes.lock().unwrap().clone(),
+        vec![json!({
+            "kind": "set_state",
+            "scope": "team/app",
+            "key": "1",
+            "state": "Closed as not planned",
+            "close_reason": "not_planned",
+        })],
+        "the tool sends the contract's fields in the project's own scope"
     );
-    let names = w.tool_names().await;
-    assert!(!names.iter().any(|name| name == "orbyn_issue_set_state"));
 }
 
 #[tokio::test]
-async fn tools_list_names_all_seven_issue_tools_with_their_effects() {
+async fn an_issue_state_move_defaults_the_reason_and_reopens_without_one() {
+    let w = editable_issue_world().await;
+    // A closed state with no reason is completed: the Core's contract default, not the tool's guess.
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Closed" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"]["name"], "Closed");
+    assert_eq!(answer["state"]["close_reason"], "completed");
+    let (answer, error) = w
+        .call_json(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Open" }),
+        )
+        .await;
+    assert!(!error, "{answer}");
+    assert_eq!(answer["state"]["name"], "Open");
+    assert_eq!(
+        w.reader.writes.lock().unwrap().clone(),
+        vec![
+            json!({
+                "kind": "set_state",
+                "scope": "team/app",
+                "key": "1",
+                "state": "Closed",
+                "close_reason": "completed",
+            }),
+            json!({
+                "kind": "set_state",
+                "scope": "team/app",
+                "key": "1",
+                "state": "Open",
+                "close_reason": null,
+            }),
+        ],
+        "the reason the contract defaults to is the one the tracker receives"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_state_move_refuses_arguments_the_tool_cannot_take() {
+    let w = editable_issue_world().await;
+    for (args, wanted) in [
+        (json!({}), "key is required."),
+        (json!({ "key": 1, "state": "Open" }), "key is required."),
+        (json!({ "key": "1" }), "state is required."),
+        (json!({ "key": "1", "state": " " }), "state is required."),
+        (
+            json!({ "key": "1", "state": "Open", "close_reason": 7 }),
+            "close_reason must be a string.",
+        ),
+        (
+            json!({ "key": "1", "state": "Open", "close_reason": "done" }),
+            "close_reason must be completed or not_planned.",
+        ),
+        (
+            // The route's serde enum reads the reason exactly, so a padded value is refused there
+            // and here alike.
+            json!({ "key": "1", "state": "Closed", "close_reason": " not_planned " }),
+            "close_reason must be completed or not_planned.",
+        ),
+        (
+            json!({ "key": "1", "state": "Done" }),
+            "That state is not one this issue offers.",
+        ),
+        (
+            json!({ "key": "1", "state": "Open", "close_reason": "completed" }),
+            "A close reason is only for a closed state.",
+        ),
+    ] {
+        let (text, error) = w.call_text("orbyn_issue_set_state", args.clone()).await;
+        assert!(error, "{args} was not refused: {text}");
+        assert!(text.contains(wanted), "{args}: {text}");
+    }
+    assert!(
+        w.reader.writes.lock().unwrap().is_empty(),
+        "a refused move sends no write"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_state_move_passes_an_unsupported_edit_through_as_a_failure() {
+    // The fake GitLab reader keeps its edit unbuilt, as GitLab, Forgejo, Azure DevOps and Linear do:
+    // the route's 422 unsupported reaches the tool as a plain failure, and nothing is read or sent.
+    let w = issue_world(true).await;
+    let (text, error) = w
+        .call_text(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Open" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, "GitLab issue edits arrive in a later update.");
+    assert!(w.reader.writes.lock().unwrap().is_empty());
+    assert_eq!(
+        w.reader.reads.load(Ordering::SeqCst),
+        0,
+        "nothing was read either"
+    );
+}
+
+#[tokio::test]
+async fn a_denied_state_move_answers_the_denial_and_runs_nothing() {
+    let w = editable_issue_world().await;
+    w.core
+        .store
+        .add_rule(
+            &CreatePolicyRule {
+                effect: PolicyEffect::Deny,
+                kind: ActionKind::Tool,
+                pattern: "=orbyn_issue_set_state".into(),
+                engine: None,
+                note: None,
+            },
+            "test",
+        )
+        .unwrap();
+    let (text, error) = w
+        .call_text(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Closed" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(
+        text,
+        "Blocked by policy: Matched rule =orbyn_issue_set_state"
+    );
+    assert!(
+        w.reader.writes.lock().unwrap().is_empty(),
+        "the tracker was written"
+    );
+    assert_eq!(w.reader.reads.load(Ordering::SeqCst), 0, "nothing was read");
+    let audit = w.core.store.list_audit(None, 100).unwrap();
+    assert!(
+        audit
+            .iter()
+            .any(|row| row.action == "action.deny" && row.target == "orbyn_issue_set_state"),
+        "a denied call is audited, and only as a denial"
+    );
+}
+
+#[tokio::test]
+async fn a_crew_worker_cannot_use_the_issue_state_tool() {
+    let w = editable_issue_world().await;
+    make_crew_worker(&w.core, &w.thread);
+    let (text, error) = w
+        .call_text(
+            "orbyn_issue_set_state",
+            json!({ "key": "1", "state": "Closed" }),
+        )
+        .await;
+    assert!(error, "{text}");
+    assert_eq!(text, "A crew worker cannot use orbyn_issue_set_state.");
+    assert!(w.reader.writes.lock().unwrap().is_empty());
+    assert_eq!(
+        w.reader.reads.load(Ordering::SeqCst),
+        0,
+        "the refusal runs nothing"
+    );
+}
+
+#[tokio::test]
+async fn the_state_tool_is_offered_and_gated_like_the_other_issue_writes() {
+    let w = issue_world(true).await;
+    assert!(
+        is_tool("orbyn_issue_set_state"),
+        "the service's state route exists, so the tool is offered"
+    );
+    assert!(
+        has_effect("orbyn_issue_set_state"),
+        "a state move writes to the tracker"
+    );
+    let names = w.tool_names().await;
+    assert!(
+        names.iter().any(|name| name == "orbyn_issue_set_state"),
+        "the tool list names it: {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn tools_list_names_all_eight_issue_tools_with_their_effects() {
     let w = issue_world(false).await;
     let names = w.tool_names().await;
     for (name, effect) in [
@@ -1061,6 +1364,7 @@ async fn tools_list_names_all_seven_issue_tools_with_their_effects() {
         ("orbyn_issue_read", false),
         ("orbyn_issue_create", true),
         ("orbyn_issue_comment", true),
+        ("orbyn_issue_set_state", true),
         ("orbyn_issue_link", true),
         ("orbyn_issue_unlink", true),
         ("orbyn_issue_thread_list", false),
@@ -1087,6 +1391,19 @@ async fn tools_list_names_all_seven_issue_tools_with_their_effects() {
         list.args,
         &[("label", "string"), ("state", "string"), ("text", "string")]
     );
+    let state = TOOLS
+        .iter()
+        .find(|tool| tool.name == "orbyn_issue_set_state")
+        .unwrap();
+    assert_eq!(
+        state.args,
+        &[
+            ("key", "string"),
+            ("state", "string"),
+            ("close_reason", "string")
+        ]
+    );
+    assert_eq!(state.required, &["key", "state"]);
     assert!(list.required.is_empty());
     let thread_list = TOOLS
         .iter()
@@ -2758,15 +3075,35 @@ impl DeviceWorld {
         }
     }
 
-    /// Calls the tool through the dispatch entry the MCP layer uses: the gate, the Crew
-    /// refusal, the audit row and the device call all live there. The transport adds its own
-    /// future chain on top, which the screenshot's deep device future does not leave room for
-    /// on a debug build's test thread, so a tool call here skips only that framing.
+    /// One request through the MCP transport, the way the shell sends it: the JSON-RPC
+    /// envelope, the token's binding and the budget timer around the dispatch entry.
+    async fn rpc(&self, method: &str, params: Value) -> Value {
+        let message = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        self.core
+            .mcp
+            .handle(&self.token, &message)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    /// Calls the tool through that same transport, so a device tool test covers the chain a
+    /// live engine does and not only the dispatch entry behind it (#1515).
     async fn call_text(&self, name: &str, args: Value) -> (String, bool) {
-        match self.core.call_orbyn_tool(&self.binding, name, &args).await {
-            Ok(value) => (value.to_string(), false),
-            Err(error) => (error.public_message(), true),
+        let reply = self
+            .rpc("tools/call", json!({ "name": name, "arguments": args }))
+            .await;
+        if let Some(text) = reply["result"]["content"][0]["text"].as_str() {
+            return (text.to_owned(), reply["result"]["isError"] == json!(true));
         }
+        // A name the tool table never held is the transport's own error, not a tool result.
+        (
+            reply["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            true,
+        )
     }
 
     async fn call_json(&self, name: &str, args: Value) -> (Value, bool) {
@@ -2921,17 +3258,16 @@ async fn the_device_tools_are_hidden_from_a_machine_without_platform_tools() {
     let w = DeviceWorld::new(Fake::unavailable_devices).await;
     let names = w.tool_names().await;
     assert!(!names.iter().any(|name| is_device_tool(name)), "{names:?}");
-    // A hidden tool is as unknown as a name the table never held: the dispatch entry the
-    // MCP layer calls answers that tool's NotFound, exactly as it does for an unknown name.
-    for name in [
-        "orbyn_device_list",
-        "orbyn_device_power_off",
-        "orbyn_no_such_tool",
-    ] {
+    // A hidden tool answers its own NotFound, as if the table never held it.
+    for name in ["orbyn_device_list", "orbyn_device_power_off"] {
         let (text, error) = w.call_text(name, json!({})).await;
         assert!(error, "{name}: {text}");
         assert_eq!(text, format!("tool {name} not found"));
     }
+    // A name the table never held is the transport's own error, not a tool's answer.
+    let (text, error) = w.call_text("orbyn_no_such_tool", json!({})).await;
+    assert!(error, "{text}");
+    assert_eq!(text, "Unknown tool orbyn_no_such_tool.");
 }
 
 #[tokio::test]
@@ -3256,6 +3592,58 @@ async fn the_device_screenshot_row_is_written_before_the_device_answers() {
             .count(),
         1
     );
+}
+
+/// The screenshot's success path through the transport on a normal debug test thread: the
+/// reply is the JSON-RPC envelope the shell reads, with the image inside it. A device call
+/// that grew past the thread's stack would abort this test instead of failing it (#1515).
+#[tokio::test]
+async fn the_device_screenshot_succeeds_through_the_mcp_transport() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    let reply = w
+        .rpc(
+            "tools/call",
+            json!({
+                "name": "orbyn_device_screenshot",
+                "arguments": { "device_id": "android:Pixel_8" },
+            }),
+        )
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    let content = &reply["result"]["content"][0];
+    assert_eq!(content["type"], "text", "{reply}");
+    assert!(reply["result"]["isError"] != json!(true), "{reply}");
+    let answer: Value = serde_json::from_str(content["text"].as_str().unwrap()).unwrap();
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(answer["device"]["id"], "android:Pixel_8", "{answer}");
+    assert!(
+        answer["image"]
+            .as_str()
+            .is_some_and(|image| !image.is_empty()),
+        "{answer}"
+    );
+    // One row for the one call, written before the device answered (rule 6).
+    the_one(&w.audit(), "device.tool.screenshot");
+}
+
+/// The list tool takes the same transport path, so its counts arrive inside the envelope
+/// too, and the deep future is not only the screenshot's (#1515).
+#[tokio::test]
+async fn the_device_list_succeeds_through_the_mcp_transport() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    let reply = w
+        .rpc(
+            "tools/call",
+            json!({ "name": "orbyn_device_list", "arguments": {} }),
+        )
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert!(reply["result"]["isError"] != json!(true), "{reply}");
+    let answer: Value =
+        serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(answer["devices"].as_array().unwrap().len(), 4, "{answer}");
+    assert_eq!(answer["platforms"].as_array().unwrap().len(), 2, "{answer}");
+    the_one(&w.audit(), "device.tool.list");
 }
 
 #[tokio::test]

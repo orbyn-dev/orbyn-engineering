@@ -5,10 +5,35 @@ use super::harness::{Turn, report};
 use super::review_support::commit_all;
 use crate::crew::{MergeTarget, ReviewAnswer};
 use crate::source_control::forge::with_crew_fixture;
-use crate::store::ForgePhase;
+use crate::store::{AutopilotEvent, ForgePhase};
 use crate::testing::run_git;
 use serde_json::json;
 use std::sync::Arc;
+
+/// The lane row called `lane` in a review answer, found by name: the answer lists its lanes in start order, so a
+/// place in the list is not the lane the test asked for.
+fn lane_row<'a>(answer: &'a serde_json::Value, lane: &str) -> &'a serde_json::Value {
+    answer["lanes"]
+        .as_array()
+        .expect("the review answer lists its lanes")
+        .iter()
+        .find(|row| row["lane"].as_str() == Some(lane))
+        .unwrap_or_else(|| panic!("the review answer has the {lane} lane"))
+}
+
+/// The one audit event of `kind` on a task, found by the kind it names: the store records it once, so the test
+/// never reads its place in the task's list.
+fn one_event<'a>(events: &'a [AutopilotEvent], kind: &str) -> &'a AutopilotEvent {
+    let mut matching = events.iter().filter(|event| event.kind == kind);
+    let event = matching
+        .next()
+        .unwrap_or_else(|| panic!("no {kind} audit event: {events:?}"));
+    assert!(
+        matching.next().is_none(),
+        "more than one {kind} audit event: {events:?}"
+    );
+    event
+}
 
 #[tokio::test]
 async fn a_person_can_prepare_a_distinct_core_correction_without_moving_their_checkout() {
@@ -86,16 +111,8 @@ async fn a_person_can_prepare_a_distinct_core_correction_without_moving_their_ch
                 .crew_forge_correction(&s.task)
                 .unwrap()
                 .unwrap();
-        let requested: Vec<_> =
-            s.w.core
-                .store
-                .crew_autopilot_events(&s.task)
-                .unwrap()
-                .into_iter()
-                .filter(|event| event.kind == "correction_requested")
-                .collect();
-        assert_eq!(requested.len(), 1, "{requested:?}");
-        let body = &requested[0].body;
+        let events = s.w.core.store.crew_autopilot_events(&s.task).unwrap();
+        let body = &one_event(&events, "correction_requested").body;
         assert_eq!(body["actor"], "person");
         assert_eq!(body["parent"], s.task.as_str());
         assert_eq!(body["parent_commit"], original.merge_commit.as_str());
@@ -180,7 +197,7 @@ async fn a_core_correction_earns_its_review_gate_and_reconciles_one_published_pr
             )
             .await;
         assert!(!error, "{review}");
-        let reviewer = review["lanes"][0]["task"]
+        let reviewer = lane_row(&review, "correctness")["task"]
             .as_str()
             .expect("the normal reviewer starts");
         s.w.until_state(reviewer, "passed").await;
@@ -230,6 +247,7 @@ async fn a_core_correction_earns_its_review_gate_and_reconciles_one_published_pr
         );
         // The forge text is fixed by code and names the original PR; no agent text and no mention.
         let create = state.lock().unwrap().create_args.clone();
+        // A flag's value is the next argument: the pair read is the command line's own order, not a fixture's.
         let title = create
             .windows(2)
             .find(|pair| pair[0] == "--title")
@@ -846,11 +864,16 @@ async fn a_certain_forge_watch_prepares_but_only_a_persons_revert_publishes() {
         );
         assert_eq!(gitq(&s.w.repo, &["rev-parse", "HEAD"]).await, local);
         let events = s.w.core.store.crew_autopilot_events(&s.task).unwrap();
-        let kind =
-            |kind: &str| -> Vec<_> { events.iter().filter(|event| event.kind == kind).collect() };
-        assert_eq!(kind("correction_prepared").len(), 1, "{events:?}");
-        assert_eq!(kind("correction_prepared")[0].body["actor"], "watch");
-        assert!(kind("correction_requested").is_empty(), "{events:?}");
+        assert_eq!(
+            one_event(&events, "correction_prepared").body["actor"],
+            "watch"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| event.kind != "correction_requested"),
+            "{events:?}"
+        );
 
         // Nothing but a person's Revert can queue it: not the lead's tool, not the plain Queue route.
         let (answer, error) =
@@ -896,17 +919,10 @@ async fn a_certain_forge_watch_prepares_but_only_a_persons_revert_publishes() {
             .await
             .unwrap();
         let events = s.w.core.store.crew_autopilot_events(&s.task).unwrap();
-        let requested: Vec<_> = events
-            .iter()
-            .filter(|event| event.kind == "correction_requested")
-            .collect();
-        assert_eq!(requested.len(), 1, "{events:?}");
-        assert_eq!(requested[0].body["actor"], "person");
-        assert_eq!(
-            requested[0].body["candidate"],
-            correction.candidate.as_str()
-        );
-        assert_eq!(requested[0].body["base"], correction.base.as_str());
+        let requested = one_event(&events, "correction_requested");
+        assert_eq!(requested.body["actor"], "person");
+        assert_eq!(requested.body["candidate"], correction.candidate.as_str());
+        assert_eq!(requested.body["base"], correction.base.as_str());
         assert!(
             s.w.core
                 .store
@@ -926,8 +942,10 @@ async fn a_certain_forge_watch_prepares_but_only_a_persons_revert_publishes() {
             )
             .await;
         assert!(!error, "{review}");
-        s.w.until_state(review["lanes"][0]["task"].as_str().unwrap(), "passed")
-            .await;
+        let lane_task = lane_row(&review, "correctness")["task"]
+            .as_str()
+            .expect("the correctness lane's review task");
+        s.w.until_state(lane_task, "passed").await;
         s.w.until("a watched correction earns normal review", |w| {
             w.core
                 .review_lane_gate(&correction.task_id, "correctness", &correction.candidate)

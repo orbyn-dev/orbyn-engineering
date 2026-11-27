@@ -231,6 +231,40 @@ pub struct CrewDashboardRecent {
 }
 }
 
+wire! {
+/// The dashboard's project menu: how many merges each repository the service lists made in one
+/// window, so the menu draws a count beside a name without a request per repository first. Counts
+/// only - no rate, no cost, no per-repository figure; the [`CrewDashboard`] read of one repository
+/// is what answers those, and a rate or a median is never worked out from this answer because a
+/// count alone is not the sample the page states under a figure.
+pub struct CrewDashboardProjects {
+    /// The window actually read: 30, 60 or 90.
+    pub days: u32,
+    /// When the counts were taken, Unix seconds.
+    #[ts(type = "number")]
+    pub as_of: i64,
+    /// One row per repository the service lists, in the service's own project order. A repository
+    /// the person has never used Crew in is here with `merges: 0`, never left out: no merges is a
+    /// figure the records can state, unlike a cost or a cycle time they cannot measure.
+    pub projects: Vec<CrewDashboardProjectCount>,
+    /// The project list had more repositories than one answer holds, so the rows beyond the bound
+    /// are not here. The menu says the counts are partial rather than drawing a cut list as whole.
+    pub truncated: bool,
+}
+}
+
+wire! {
+/// One repository's merges in the window: the same figure [`CrewDashboard`] answers as `merges` for
+/// that repository, so the menu and the page never disagree.
+pub struct CrewDashboardProjectCount {
+    /// The project id the count is keyed by. The name is the project list's, not this read's: an
+    /// answer over every repository carries no text to scrub.
+    pub project: String,
+    /// Merges in the window.
+    pub merges: u32,
+}
+}
+
 /// The default window, in days: `days` on the request.
 pub const CREW_DASHBOARD_DAYS_DEFAULT: u32 = 60;
 

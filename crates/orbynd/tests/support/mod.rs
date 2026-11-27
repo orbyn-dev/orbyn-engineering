@@ -8,6 +8,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -126,10 +127,158 @@ impl Drop for TempDir {
     }
 }
 
-#[derive(Default)]
+/// The newest schema this build knows: what a start upgrades an old database to.
+pub fn latest_schema() -> i64 {
+    orbyn_core::store::MIGRATIONS
+        .last()
+        .expect("a migration list")
+        .0
+}
+
+/// Every schema version this build's migration list holds, in order: the versions a start records
+/// once each. A count against `latest_schema` says the same thing only while the versions stay
+/// contiguous, so the assertions compare against the list itself.
+pub fn migration_versions() -> Vec<i64> {
+    orbyn_core::store::MIGRATIONS
+        .iter()
+        .map(|(version, _)| *version)
+        .collect()
+}
+
+/// Builds the database the service opens in `data` at exactly schema version `through`, the way an
+/// install of that release left it, by applying the real migration list and recording each version.
+/// The returned connection writes the fixture rows a case needs; the migration list stays the source
+/// of truth, so the fixture cannot drift from the schema a later release upgrades.
+pub fn old_database(data: &Path, through: i64) -> rusqlite::Connection {
+    std::fs::create_dir_all(data).unwrap();
+    let conn = rusqlite::Connection::open(data.join("orbyn.sqlite3")).unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys=ON;
+         CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+    )
+    .unwrap();
+    for (version, sql) in orbyn_core::store::MIGRATIONS
+        .iter()
+        .filter(|(version, _)| *version <= through)
+    {
+        conn.execute_batch(sql).unwrap();
+        conn.execute(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 'fixture')",
+            [version],
+        )
+        .unwrap();
+    }
+    conn
+}
+
+#[derive(Clone, Default)]
 pub struct Options {
     pub env: Vec<(String, String)>,
     pub args: Vec<String>,
+}
+
+/// A child a case spawned itself, with the environment it was given, so `Service::adopt` can check
+/// that the options a restart would pass on still describe that environment.
+pub struct Spawned {
+    child: Option<Child>,
+    stdout: Option<BufReader<std::process::ChildStdout>>,
+    env: Vec<(String, String)>,
+}
+
+impl Spawned {
+    /// Starts `serve --data-dir` the way the harness starts one, with `args` and `env` on top of its
+    /// own variables and `defaults` in between. The environment stays with the child: a case that
+    /// adopts the process must hand `Service` the options a restart re-applies, and `adopt` refuses
+    /// options that would drop it.
+    pub fn start(
+        binary: impl AsRef<std::ffi::OsStr>,
+        data: &Path,
+        args: &[String],
+        env: Vec<(String, String)>,
+        defaults: &[(&str, &str)],
+    ) -> Self {
+        let mut command = Command::new(binary.as_ref());
+        command
+            .args(["serve", "--data-dir"])
+            .arg(data)
+            .args(args)
+            .env("ORBYN_CLAUDE_BIN", FAKE)
+            .env("ORBYN_CODEX_BIN", FAKE)
+            .env("ORBYN_OFFLINE", "1")
+            .current_dir(data.parent().unwrap_or(data))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // The runner's own Claude session or task-tool switches must not decide a test: a test that
+        // needs one asks for it through the environment it hands over here.
+        for name in [
+            "CLAUDECODE",
+            "ORBYN_CLAUDE_TASK_TOOLS",
+            "CLAUDE_CODE_ENABLE_TODO_TOOLS",
+        ] {
+            command.env_remove(name);
+        }
+        for (key, value) in defaults {
+            command.env(key, value);
+        }
+        for (key, value) in &env {
+            command.env(key, value);
+        }
+        let mut child = command.spawn().unwrap();
+        let stdout = BufReader::new(child.stdout.take().unwrap());
+        Self {
+            child: Some(child),
+            stdout: Some(stdout),
+            env,
+        }
+    }
+
+    /// The environment this spawn was given, which a restart's options have to keep.
+    pub fn env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
+    /// The ready line `serve` prints once it listens, or the child's stderr when it exited first.
+    pub fn ready(&mut self) -> Result<Value, String> {
+        let mut line = String::new();
+        self.stdout
+            .as_mut()
+            .expect("an unadopted spawn")
+            .read_line(&mut line)
+            .unwrap();
+        if line.is_empty() {
+            let mut text = String::new();
+            let child = self.child.as_mut().expect("an unadopted spawn");
+            std::io::Read::read_to_string(child.stderr.as_mut().unwrap(), &mut text).unwrap();
+            return Err(text);
+        }
+        Ok(serde_json::from_str(&line).unwrap())
+    }
+
+    fn take_parts(&mut self) -> (Child, BufReader<std::process::ChildStdout>) {
+        (
+            self.child.take().expect("an unadopted spawn"),
+            self.stdout.take().expect("an unadopted spawn"),
+        )
+    }
+}
+
+impl Drop for Spawned {
+    /// A case that stops before adopting would otherwise leave its process running.
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// The value each variable ends up with: `Command::env` lets a later entry for a key replace an
+/// earlier one, so the last entry is the one a spawn or a restart actually gets.
+fn effective_env(env: &[(String, String)]) -> BTreeMap<&str, &str> {
+    env.iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect()
 }
 
 pub struct Service {
@@ -142,6 +291,10 @@ pub struct Service {
     pub child: Child,
     /// Everything after the ready line, for tests of the shell channel.
     pub stdout: BufReader<std::process::ChildStdout>,
+    /// The folder handed to `serve --data-dir`, which a restart opens again.
+    data: PathBuf,
+    /// The options this service started with, which a restart passes on.
+    options: Options,
 }
 
 impl Service {
@@ -150,54 +303,54 @@ impl Service {
     }
 
     pub fn try_start(data: &Path, options: Options) -> Result<Self, String> {
-        let mut command = Command::new(ORBYND);
-        command
-            .args(["serve", "--data-dir"])
-            .arg(data)
-            .args(&options.args)
-            .env("ORBYN_CLAUDE_BIN", FAKE)
-            .env("ORBYN_CODEX_BIN", FAKE)
-            .env("ORBYN_OFFLINE", "1")
-            // Person routes need the desktop shell's key. Most tests have no shell, so the development
-            // override (debug builds only) is on; a test of the key itself sets it to "0".
-            .env("ORBYN_DEV_DISABLE_PERSON_KEY", "1")
-            .current_dir(data.parent().unwrap_or(data))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        // The runner's own Claude session or task-tool switches must not decide a test: a
-        // test that needs one asks for it through `options.env`.
-        for name in [
-            "CLAUDECODE",
-            "ORBYN_CLAUDE_TASK_TOOLS",
-            "CLAUDE_CODE_ENABLE_TODO_TOOLS",
-        ] {
-            command.env_remove(name);
+        // Person routes need the desktop shell's key. Most tests have no shell, so the development
+        // override (debug builds only) is on; a test of the key itself sets it to "0".
+        let mut spawned = Spawned::start(
+            ORBYND,
+            data,
+            &options.args,
+            options.env.clone(),
+            &[("ORBYN_DEV_DISABLE_PERSON_KEY", "1")],
+        );
+        let start = spawned.ready()?;
+        Ok(Self::adopt(data, options, &start, &mut spawned))
+    }
+
+    /// Adopts a service a test started itself with `serve --data-dir`, from its ready line and its
+    /// process, so it still owns the child and can restart it like one started here. A restart
+    /// re-applies exactly `options`, so they must keep every variable the spawn was given: options
+    /// that describe another environment would come back with another home on the restart.
+    pub fn adopt(data: &Path, options: Options, ready: &Value, spawned: &mut Spawned) -> Self {
+        // A restart re-applies `options` through `Command::env`, which keeps the last entry for a
+        // key, so compare the value each variable ends up with on both sides: a duplicate key in
+        // `options` that comes after the spawn's entry would otherwise pass this check while the
+        // restart gets another value.
+        let spawned_env = effective_env(spawned.env());
+        let options_env = effective_env(&options.env);
+        let mut differing: Vec<(&str, &str, Option<&str>)> = Vec::new();
+        for (key, value) in spawned_env {
+            let restarted = options_env.get(key).copied();
+            if restarted != Some(value) {
+                differing.push((key, value, restarted));
+            }
         }
-        for (key, value) in &options.env {
-            command.env(key, value);
-        }
-        let mut child = command.spawn().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let mut line = String::new();
-        let mut stdout = BufReader::new(stdout);
-        stdout.read_line(&mut line).unwrap();
-        if line.is_empty() {
-            let mut text = String::new();
-            std::io::Read::read_to_string(child.stderr.as_mut().unwrap(), &mut text).unwrap();
-            let _ = child.wait();
-            return Err(text);
-        }
-        let start: Value = serde_json::from_str(&line).unwrap();
-        Ok(Self {
-            url: start["url"].as_str().unwrap().to_owned(),
-            token: start["token"].as_str().unwrap().to_owned(),
-            access_key: start["access_key"].as_str().map(str::to_owned),
-            person_key: start["person_key"].as_str().map(str::to_owned),
+        assert!(
+            differing.is_empty(),
+            "restarting with these options would give the spawn a different environment \
+             (key, spawn, restart): {differing:?}"
+        );
+        let (child, stdout) = spawned.take_parts();
+        Self {
+            url: ready["url"].as_str().unwrap().to_owned(),
+            token: ready["token"].as_str().unwrap().to_owned(),
+            access_key: ready["access_key"].as_str().map(str::to_owned),
+            person_key: ready["person_key"].as_str().map(str::to_owned),
             client: reqwest::Client::new(),
             child,
             stdout,
-        })
+            data: data.to_owned(),
+            options,
+        }
     }
 
     pub fn get(&self, path: &str) -> reqwest::RequestBuilder {
@@ -460,6 +613,51 @@ impl Service {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+
+    /// Kills this process and starts a fresh service on the same data folder with the same
+    /// options, so a crash case reads the recovered state through the routes.
+    pub fn restart(mut self) -> Service {
+        self.kill();
+        Service::start(&self.data, self.options.clone())
+    }
+
+    /// The fake engine's launch records so far, one per line of `ORBYN_FAKE_LAUNCH_FILE`.
+    pub fn launches(&self) -> Vec<Value> {
+        let file = self.signal_file("ORBYN_FAKE_LAUNCH_FILE");
+        std::fs::read_to_string(file)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
+    /// Waits until the fake engine has recorded a launch with `mode`, and returns that record.
+    /// This is the kill point a crash case waits for instead of sleeping: the engine itself
+    /// says it reached the step, so the test kills at a chosen point, not a guessed one.
+    pub async fn wait_for_launch(&self, mode: &str) -> Value {
+        for _ in 0..1000 {
+            if let Some(record) = self
+                .launches()
+                .into_iter()
+                .find(|record| record["mode"] == mode)
+            {
+                return record;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the fake engine recorded no {mode} launch");
+    }
+
+    /// The path of a record file this service's options give the fake engine.
+    fn signal_file(&self, name: &str) -> PathBuf {
+        let value = self
+            .options
+            .env
+            .iter()
+            .find_map(|(key, value)| (key == name).then_some(value))
+            .unwrap_or_else(|| panic!("the test's options set no {name}"));
+        PathBuf::from(value)
+    }
 }
 
 /// An open SSE response, read frame by frame.
@@ -561,6 +759,27 @@ pub fn library(root: &Path) -> PathBuf {
 /// A trusted project with a thread on `engine`.
 pub async fn setup(dir: &TempDir, options: Options, engine: &str) -> (Service, String) {
     let service = Service::start(&dir.path().join("data"), options);
+    project_and_thread(dir, service, engine).await
+}
+
+/// The same setup, but the case spawns the process itself and adopts it: the options it hands
+/// `adopt` are the environment a restart re-applies, so a case that restarts proves the adopted
+/// service keeps it.
+pub async fn setup_adopted(dir: &TempDir, options: Options, engine: &str) -> (Service, String) {
+    let data = dir.path().join("data");
+    let mut spawned = Spawned::start(
+        ORBYND,
+        &data,
+        &options.args,
+        options.env.clone(),
+        &[("ORBYN_DEV_DISABLE_PERSON_KEY", "1")],
+    );
+    let ready = spawned.ready().expect("the adopted service listens");
+    let service = Service::adopt(&data, options, &ready, &mut spawned);
+    project_and_thread(dir, service, engine).await
+}
+
+async fn project_and_thread(dir: &TempDir, service: Service, engine: &str) -> (Service, String) {
     let folder = dir.path().join("project");
     std::fs::create_dir_all(&folder).unwrap();
     let project = service.project(&folder, true).await;

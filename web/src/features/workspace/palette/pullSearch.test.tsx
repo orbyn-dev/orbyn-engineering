@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMockFetch } from "../../../test-support";
@@ -86,6 +86,25 @@ describe("while the pull request list is read, and when it cannot be (palette-pr
     await user.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(mock.length).toBe(before + 1));
     await waitFor(() => expect(screen.queryByText(/Couldn’t read pull requests/)).toBeNull());
+  });
+
+  it("draws the frame's alert icon before the line when the list cannot be read, and none while it is read", async () => {
+    let answer: (response: Response) => void = () => undefined;
+    pullsAnswer(() => new Promise<Response>((resolve) => { answer = resolve; }));
+    const user = userEvent.setup();
+    render(<CommandPalette start="root" onClose={() => undefined} />);
+    await user.type(await screen.findByRole("combobox"), "ne");
+    // palette-prs-loading draws the spinner and the words, not the alert icon; that icon belongs to the unreadable line.
+    expect(await screen.findByText("Looking for pull requests…")).toBeVisible();
+    expect(document.querySelector(".palette-note-icon")).toBeNull();
+    await act(async () => answer(new Response(JSON.stringify({ code: "offline", message: "offline" }), { status: 503 })));
+    const line = await screen.findByText("Couldn’t read pull requests. Threads and commands still work.");
+    const note = line.parentElement;
+    // palette-prs-unreadable draws the alert triangle first, hidden from the reading order.
+    const icon = note?.querySelector("svg.palette-note-icon");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    expect(note?.firstElementChild).toBe(icon);
   });
 
   it("never shows the service's own words for the failure", async () => {

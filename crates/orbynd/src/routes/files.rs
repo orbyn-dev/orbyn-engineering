@@ -138,6 +138,9 @@ struct SearchQuery {
     q: String,
     #[serde(default)]
     content: bool,
+    /// A multi-repository thread's repository; absent is the primary one.
+    #[serde(default)]
+    repo_id: Option<String>,
 }
 
 async fn search_files(
@@ -146,10 +149,11 @@ async fn search_files(
     Query(query): Query<SearchQuery>,
 ) -> ApiResult<impl IntoResponse> {
     Ok(Json(
-        state
-            .core
-            .search_files(&id, &query.q, query.content)
-            .await?,
+        orbyn_core::in_repo(
+            query.repo_id.clone(),
+            state.core.search_files(&id, &query.q, query.content),
+        )
+        .await?,
     ))
 }
 
