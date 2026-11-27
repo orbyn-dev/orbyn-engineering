@@ -5,6 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { once } from "node:events";
 import { SCRIPTED_ENGINE, USAGE_ENGINE } from "./engine-scripts";
 import { editForgeState, readForgeState } from "./forge-state";
@@ -138,7 +139,17 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
   writeFileSync(log, "");
   writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: [{ name: "bug", color: "d73a4a", description: "About bug" }, { name: "docs", color: "0075ca", description: "About docs" }], template: pullRow({ number: 0, title: "" }), issues: STAND_IN_ISSUES }));
   if (process.platform === "win32") {
-    symlinkSync(STAND_IN_GH, join(bin, "gh.mjs"));
+    const launcher = join(bin, "gh.mjs");
+    try {
+      symlinkSync(STAND_IN_GH, launcher);
+    } catch (error) {
+      // A stock Windows box refuses a file symlink without Developer Mode (EPERM, or EACCES when a policy
+      // takes the right away). A launcher that imports the stand-in runs it from its real path, so its own
+      // relative imports resolve, and forge specs run without elevation.
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EPERM" && code !== "EACCES") throw error;
+      writeFileSync(launcher, `import ${JSON.stringify(pathToFileURL(STAND_IN_GH).href)};\n`);
+    }
     writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
   } else {
     symlinkSync(STAND_IN_GH, join(bin, "gh"));
@@ -287,6 +298,25 @@ function viteReady(vite: ChildProcess, port: number): Promise<void> {
   });
 }
 
+/**
+ * Deletes a run's temp directory once its processes have exited. Windows can still hold the service's
+ * workspace for a moment longer than the exit wait, and a busy box stretches that out (EBUSY), so retry
+ * there; a directory a stale child still holds after that is left to the OS rather than failing the run.
+ */
+async function removeRunDir(dir: string) {
+  const deadline = process.platform === "win32" ? Date.now() + 10_000 : 0;
+  for (;;) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      return;
+    } catch (error) {
+      if (process.platform !== "win32" || (error as NodeJS.ErrnoException).code !== "EBUSY") throw error;
+      if (Date.now() >= deadline) return;
+      await new Promise((done) => setTimeout(done, 250));
+    }
+  }
+}
+
 /** A real `orbynd` on a fresh data directory, with the dev UI proxied to it. */
 export async function startService(options: ServiceOptions = {}): Promise<Service> {
   if (!existsSync(BIN)) throw new Error(`Build the service first: cargo build -p orbynd (${BIN})`);
@@ -429,7 +459,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
       vite?.kill();
       await Promise.all(gone);
       // An engine or preview the service just stopped can still be closing its files.
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      await removeRunDir(dir);
     },
   };
 }

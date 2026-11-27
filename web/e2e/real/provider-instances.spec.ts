@@ -10,6 +10,8 @@ const executable = join(dirname(process.env.ORBYN_BIN ?? resolve(import.meta.dir
 const instances = async (service: Service) => (await service.api<{ key: string; value: Instance[] }[]>("GET", "/api/preferences")).find((row) => row.key === "provider_instances")!.value;
 const seed = (service: Service, rows: Instance[]) => service.api("PUT", "/api/preferences", { values: { provider_instances: rows } });
 const local = (id = "work"): Instance => ({ id, driver: "_local_acp", name: id === "work" ? "Work" : id, program: executable, args: ["acp", "two literal words", ""], enabled: true, forward: { keep: id } });
+/** A named Claude instance: a family whose row opens a detail page, so its detail controls are offered. */
+const named = (id: string, name: string): Instance => ({ id, driver: "claude", name, program: join(dirname(executable), "no-claude-instance"), enabled: true, forward: { keep: id } });
 const args = formatArgs(["acp", "two literal words", ""]);
 const open = async (page: Page, service: Service) => {
   await page.goto(`${service.page}#/settings/providers`);
@@ -28,7 +30,7 @@ function writes(page: Page) {
 const disabledEngines = async (service: Service) => (await service.api<{ key: string; value: string[] }[]>("GET", "/api/preferences")).find((row) => row.key === "disabled_engines")!.value;
 const edit = (page: Page, name: string) => page.getByRole("button", { name: `Edit ${name}`, exact: true });
 
-test("Local ACP command is added with one CAS, keeps literal args and Models, and stays when turned off", async ({ page }, info) => {
+test("Local ACP command is added with one CAS, keeps literal args, and stays when turned off without a detail page", async ({ page }, info) => {
   const { service } = await startProject();
   try {
     const seen = writes(page); await open(page, service);
@@ -50,12 +52,18 @@ test("Local ACP command is added with one CAS, keeps literal args and Models, an
     await expect.poll(async () => (await instances(service)).length).toBe(1);
     const id = (await instances(service))[0]!.id;
     expect((await instances(service))[0]).toEqual({ id, driver: "_local_acp", name: "Browser work", program: executable, args: ["acp", "two literal words", ""], enabled: true });
-    await expect(page.getByRole("heading", { name: "Browser work", exact: true })).toBeVisible();
-    await expect(page.getByText("Models", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Add custom model", exact: true }).click();
-    await expect(page.getByRole("dialog", { name: "Add custom model", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    // A local ACP command is not one of the families with a detail page (providerDetailFamily.ts), so its row
+    // keeps the list and instance-edit controls and offers nothing the detail page owns: no Models, no Remove.
+    const providers = page.getByRole("table", { name: "Providers" });
+    const browserWork = providers.getByRole("row").filter({ hasText: "Browser work" });
+    await expect(browserWork).toBeVisible();
+    await expect(browserWork).toContainText("via ACP");
+    await expect(browserWork.getByRole("button", { name: "Edit Browser work", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Browser work", exact: true })).toHaveCount(0);
+    await expect(page.getByText("Models", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Add custom model", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Remove Browser work", exact: true })).toHaveCount(0);
+    await browserWork.getByRole("button", { name: "Edit Browser work", exact: true }).click();
     const editor = page.getByRole("dialog", { name: /^Edit / });
     await expect(editor.getByRole("textbox", { name: "Executable", exact: true })).toHaveValue(executable);
     await expect(editor.getByRole("textbox", { name: "Arguments", exact: true })).toHaveValue(args);
@@ -68,11 +76,10 @@ test("Local ACP command is added with one CAS, keeps literal args and Models, an
     const engines = await service.api<{ id: string; instance_of?: string; tier: string }[]>("GET", "/api/engines");
     expect(engines).toContainEqual(expect.objectContaining({ id, instance_of: "_local_acp", tier: "acp" }));
     expect(engines.some((engine) => engine.id === "_local_acp")).toBe(false);
-    await page.getByRole("button", { name: "Providers", exact: true }).click();
     await page.getByRole("switch", { name: "Use Browser work", exact: true }).click();
     await expect.poll(() => disabledEngines(service)).toContain(id);
     expect((await instances(service))[0]).toMatchObject({ id, program: executable, args: ["acp", "two literal words", ""] });
-    await expect(page.getByRole("button", { name: "Browser work", exact: true })).toBeVisible();
+    await expect(browserWork).toBeVisible();
     await edit(page, "Browser work").click();
     await expect(page.getByRole("textbox", { name: "Executable", exact: true })).toHaveValue(executable);
     await page.screenshot({ path: info.outputPath("turned-off-local-instance.png") });
@@ -85,9 +92,9 @@ test("Local ACP command is added with one CAS, keeps literal args and Models, an
 test("instance name conflicts retain the draft until Reload and preserve peers on edit and remove", async ({ page }, info) => {
   const { service } = await startProject();
   try {
-    await seed(service, [local(), local("peer")]); const seen = writes(page); await open(page, service);
+    await seed(service, [named("work", "Work"), local("peer")]); const seen = writes(page); await open(page, service);
     await edit(page, "Work").click();
-    const external = [ { ...local(), name: "External", forward: { keep: "external" } }, local("peer") ];
+    const external = [ { ...named("work", "Work"), name: "External", forward: { keep: "external" } }, local("peer") ];
     await seed(service, external);
     const dialog = page.getByRole("dialog", { name: /^Edit / });
     const name = dialog.getByRole("textbox", { name: "Display name", exact: true });
@@ -106,6 +113,7 @@ test("instance name conflicts retain the draft until Reload and preserve peers o
     await dialog.getByRole("button", { name: "Save", exact: true }).click();
     await expect.poll(() => instances(service)).toEqual([{ ...external[0], name: "Draft work" }, external[1]]);
     expect(seen).toHaveLength(2);
+    // The named Claude instance's row opens its detail page, which is where Remove lives for an instance.
     await page.getByRole("button", { name: "Draft work", exact: true }).click();
     await page.getByRole("button", { name: "Remove Draft work", exact: true }).click();
     await page.getByRole("dialog", { name: "Remove Draft work?" }).getByRole("button", { name: "Remove", exact: true }).click();
