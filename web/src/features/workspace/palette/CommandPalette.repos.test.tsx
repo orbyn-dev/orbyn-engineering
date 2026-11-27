@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { flushSync } from "react-dom";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useRoute } from "../../../product/state/route";
 import { fileTabId, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { chooseRepo } from "../../repos";
@@ -48,6 +49,12 @@ async function goToFile(query: string) {
   render(<CommandPalette start="files" onClose={() => undefined} />);
   await user.type(await screen.findByRole("combobox"), query);
   return user;
+}
+
+/** The shell redraws the palette when the route changes, as the app's does. */
+function Routed() {
+  useRoute();
+  return <CommandPalette start="files" onClose={() => undefined} />;
 }
 
 it("searches the repository the explorer's chip names, and its file opens as that repository's tab", async () => {
@@ -116,6 +123,29 @@ it("opens a row in the repository it was found in when the chip moves on before 
   });
   expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "plans/plan.md", repoId: OTHER }));
   expect(useUi.getState().fileReveal?.repoId).toBe(OTHER);
+});
+
+it("opens a row in the thread it was found in when browser Back changes the thread while it is open", async () => {
+  // The reported path (#1777 review): Back moves the route under the mounted palette. The route is read during a render,
+  // so one committed render draws the previous thread's rows while the new thread's checkout is current; the row must
+  // open in the thread whose read found it, not in the checkout the route now names.
+  const { asked } = serve();
+  useWorkspace.setState({
+    threads: { t: { id: "t", project_id: "p", cwd: "/repo" }, u: { id: "u", project_id: "p", cwd: "/other" } } as never,
+  });
+  const user = userEvent.setup();
+  render(<Routed />);
+  await user.type(await screen.findByRole("combobox"), "plan");
+  const row = await screen.findByRole("button", { name: "plans/plan.md" });
+  await waitFor(() => expect(repoIdAsked(asked).length).toBeGreaterThan(0));
+  act(() => {
+    window.location.hash = "#/threads/u";
+    flushSync(() => window.dispatchEvent(new HashChangeEvent("hashchange")));
+    // The row found in `t` is still drawn while the route names `u`.
+    expect(row.isConnected).toBe(true);
+    row.click();
+  });
+  expect(useUi.getState().fileReveal).toMatchObject({ threadId: "t", cwd: "/repo", path: "plans/plan.md" });
 });
 
 it("says the service's refusal and offers trust instead of an empty list when the repository is not trusted", async () => {
