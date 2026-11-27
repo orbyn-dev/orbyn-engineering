@@ -10,8 +10,14 @@ test.describe.configure({ mode: "serial" });
  * GitHub is contacted: the service's GitHub reader runs the stand-in, and the connection names the `o/r` scope it answers for.
  *
  * Covered: linking from the Details card's Link an issue search over the real `find` route, the header issue chip and the
- * thread list marker, the issue page with its Linked threads card, unlinking from the Details row, the chip's link form with
- * its not-found error, and the chip as a bottom sheet on a phone.
+ * thread list marker, the issue page with its Linked threads card, unlinking from the Details row, the chip's own link form
+ * with its not-found error and its successful second link, and the chip as a bottom sheet on a phone whose long press arms
+ * the row and unlinks from it.
+ *
+ * Not covered, and why: a failing tracker is not named under the search because `GET /api/issues/find` answers a plain
+ * `IssueRef[]` with no per-tracker failure, and the four token trackers that could fail need a keychain token (an owner
+ * action); the Linked threads card's read-failure notice and Retry need `GET /api/issues/links` to fail, but that is the
+ * service's own store read and no real-service route can make it fail without a page mock; a real tracker is an owner action.
  */
 
 test.setTimeout(60_000);
@@ -196,4 +202,79 @@ test("the chip links and unlinks with its own form, refuses an unknown issue, an
   await expect(sheet).toContainText("1 linked issue");
   await expect(sheet.getByRole("button", { name: "#7 Retry the queue" })).toBeVisible();
   await expect(sheet.getByRole("button", { name: "Close" })).toBeVisible();
+
+  // A held press is what arms a row on a phone: down, hold past 500 ms, then off the row before letting go (a release on
+  // the row is its open click, which navigates to the issue). Playwright's mouse also hovers, so the hold is proven by the
+  // row's own data-armed attribute, not by hover; the Unlink is then one route write.
+  const open = sheet.getByRole("button", { name: "#7 Retry the queue" });
+  // The row's text is split across its key and title spans (#7 + Retry the queue, no space between), so match the title.
+  const prow = sheet.locator(".iss-prow").filter({ hasText: "Retry the queue" });
+  const unlink = sheet.getByRole("button", { name: "Unlink #7" });
+  await expect(prow).not.toHaveAttribute("data-armed", "true");
+  // hover() waits for the row to be stable (the sheet is still rising), so the raw mouse press cannot land off it.
+  await open.hover();
+  const at = await open.boundingBox();
+  const head = await sheet.getByText("1 linked issue").boundingBox();
+  if (at === null || head === null) throw new Error("the phone sheet did not lay its row out");
+  await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+  await page.mouse.down();
+  await expect(prow).toHaveAttribute("data-armed", "true");
+  await page.mouse.move(head.x + head.width / 2, head.y + head.height / 2);
+  await expect(unlink).toHaveCSS("opacity", "1");
+  await page.mouse.up();
+  // The release landed off the row, so the open click did not run: still on the thread, and the row is still armed.
+  expect(new URL(page.url()).hash).toBe(`#/threads/${threadId}`);
+  await expect(unlink).toHaveCSS("opacity", "1");
+  let unlinks = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === `/api/threads/${threadId}/issue-links/remove`) unlinks += 1; });
+  const unlinked = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/threads/${threadId}/issue-links/remove`);
+  await unlink.click();
+  expect((await unlinked).status()).toBe(204);
+  expect(unlinks).toBe(1);
+  await expect(chip(page)).toHaveCount(0);
+  expect((await links())[threadId] ?? []).toEqual([]);
+});
+
+test("the chip's own form links a second issue through the real find route", async ({ page }) => {
+  await linkFromDetails(page, "7", /#7 Retry the queue/);
+  await expect(chip(page)).toContainText("#7");
+  await chip(page).click();
+  const list = page.getByRole("dialog", { name: "Issues" });
+  await expect(list).toContainText("1 linked issue");
+  await list.getByRole("button", { name: "Link an issue…" }).click();
+  const form = list.getByRole("combobox", { name: "Issue number or link" });
+  // The chip's form searches the real find route as the person types; a number is looked up as the issue key.
+  const searched = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/issues/find");
+  await form.fill("12");
+  const found = await searched;
+  expect(found.status()).toBe(200);
+  expect((await found.json()) as IssueRef[]).toEqual([
+    {
+      tracker: "github",
+      scope: "o/r",
+      key: "12",
+      display_key: "#12",
+      title: "Tidy the docs",
+      state: { category: "open", name: "Open", close_reason: null },
+      labels: [{ name: "docs" }],
+    },
+  ]);
+  const option = list.getByRole("option", { name: /#12 Tidy the docs/ });
+  await expect(option).toBeVisible();
+  await option.click();
+  // Choosing writes nothing; Link is the one write, and the service keeps the link with its issue snapshot.
+  await expect(list.getByRole("button", { name: "Link", exact: true })).toBeEnabled();
+  expect((await links())[threadId] ?? []).toHaveLength(1);
+  let linkPosts = 0;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === `/api/threads/${threadId}/issue-links`) linkPosts += 1; });
+  const written = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === `/api/threads/${threadId}/issue-links`);
+  await list.getByRole("button", { name: "Link", exact: true }).click();
+  expect((await written).status()).toBe(204);
+  expect(linkPosts).toBe(1);
+  expect((await links())[threadId]!.map((ref) => ref.key)).toEqual(["7", "12"]);
+  // The chip reloads the thread's links: two now, both named in the open list.
+  await expect(chip(page)).toContainText("Issues 2");
+  await expect(list).toContainText("2 linked issues");
+  await expect(list.getByRole("button", { name: "#7 Retry the queue" })).toBeVisible();
+  await expect(list.getByRole("button", { name: "#12 Tidy the docs" })).toBeVisible();
 });
