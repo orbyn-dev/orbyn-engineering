@@ -245,6 +245,17 @@ describe("the routes", () => {
     expect(await createHttpIssuesApi().candidates(REF)).toEqual({ labels: [], assignees: [], truncated: false });
   });
 
+  it("keeps the whole name of a label the picker offers, because a write sends that name for the label", async () => {
+    // Longer than the 80 a login is kept to, the longest name a reader offers whole, and one that is long only in
+    // UTF-16 units: a label travels by name, so any cut here would send a name that is a different label.
+    const long = "l".repeat(120);
+    const longest = "m".repeat(199);
+    const emoji = "🚩".repeat(150);
+    service(() => json({ labels: [{ name: long }, { name: longest }, { name: emoji }], assignees: [], truncated: false }));
+    const found = await createHttpIssuesApi().candidates(REF);
+    expect(found.labels).toEqual([{ name: long }, { name: longest }, { name: emoji }]);
+  });
+
   it("reads the tracker's templates for a scope, with string labels, capped bodies and no entry a create cannot name", async () => {
     service(() => json([
       { id: "bug", name: "Bug report", description: "Something is broken", body: "Steps to reproduce:", labels: ["bug", 7, ""] },

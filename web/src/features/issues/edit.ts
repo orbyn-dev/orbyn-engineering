@@ -13,6 +13,13 @@ export const LABELS_MAX = 50;
 export const ASSIGNEES_MAX = 25;
 /** The most of each a picker draws; the service reads at most 200 and says `truncated` when there were more. */
 export const CANDIDATES_MAX = 200;
+/**
+ * The label ceiling the picker must not cut below, in characters: `MAX_LABEL_CHARS` (`crates/orbyn-core/src/issues/mod.rs`)
+ * and GitLab's `MAX_LABEL` (`crates/orbyn-core/src/issues/gitlab.rs`) are both 200, and a reader's `candidates` offers
+ * every name shorter than that whole. A label travels by name, so a shortened name is a different label: a write would
+ * create or assign that one instead of the label the person picked. Keep this in step with those two constants.
+ */
+export const LABEL_NAME_MAX = 200;
 /** 64 KiB, counted in bytes of UTF-8 as the service counts them: a comment is 1 to 64 KiB and not blank. */
 export const COMMENT_MAX = 64 * 1024;
 
@@ -76,6 +83,16 @@ export const routeAbsent = (status: number, code: string, message: string): bool
 
 const asText = (value: unknown, length: number): string | null => (typeof value === "string" ? value.slice(0, length) : null);
 
+/**
+ * `text` cut to at most `max` characters, counted as the service counts them (`chars().count()`, one per Unicode scalar
+ * value) and never in the middle of one. A `slice` cut counts UTF-16 units, so it would shorten a name that holds
+ * characters outside the basic plane while leaving the shorter ones whole.
+ */
+const capChars = (text: string, max: number): string => {
+  const chars = Array.from(text);
+  return chars.length > max ? chars.slice(0, max).join("") : text;
+};
+
 /** `states` as the service sent them, keeping only well-formed entries with capped names; `undefined` when it sent no list at all. */
 export function readStates(value: unknown): IssueState[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -96,7 +113,9 @@ export function readCandidates(value: unknown): IssueCandidates {
   const row = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
   const labels: IssueCandidates["labels"] = [];
   for (const entry of (Array.isArray(row.labels) ? row.labels : []).slice(0, CANDIDATES_MAX)) {
-    const name = typeof entry === "object" && entry !== null ? asText((entry as Record<string, unknown>).name, 80) : null;
+    // The name a label is drawn by is the name a write sends, so it is never cut below what the reader offers whole.
+    const raw = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>).name : null;
+    const name = typeof raw === "string" ? capChars(raw, LABEL_NAME_MAX) : null;
     if (name) labels.push({ name });
   }
   const assignees: IssueCandidates["assignees"] = [];

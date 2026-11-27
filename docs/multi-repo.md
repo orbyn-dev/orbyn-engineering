@@ -87,13 +87,18 @@ type ReposView = { repositories: RepoRow[]; clone_directory: string | null; max_
 type PublishInput = { name: string /* owner/name */; visibility: "private" | "public" };
 type StartThreadInput = { repos: { repo_id: string; base_branch: string }[]; engine: string;
                           model: string | null; permission_mode: PermissionMode; message?: string };
-type ThreadRepo = { repo_id; name; branch; added: number; deleted: number; trusted: boolean;
-                    files?: string[] };
+type ThreadRepo = { repo_id; name; branch; base_branch?: string | null; added: number; deleted: number;
+                    trusted: boolean; files?: string[] };
 ```
 
 - `ThreadRepo.files`: **confirmed.** The paths of this repository's changed files, relative to the
   repository root. A change in the Changes list carries `repo_id` and a repo-relative path, so two
   repositories can each have a `README.md`. Absent when the service has not read the changes yet.
+- `ThreadRepo.base_branch`: **confirmed.** The branch this repository's worktree branch was cut from: the
+  repository's `StartRepoChoice.base_branch` at the start, or the branch checked out in that repository when
+  it was added later. Absent only for a repository stored before the service recorded it (migration 90): the
+  base is then not known and is never guessed. The web app does not read it yet; a follow-up compares a
+  branch against it instead of the primary repository's base.
 - `StartThreadInput.permission_mode`: **confirmed.** The thread is created in that mode, checked against the
   engine's `permission_modes`; a mode the engine does not offer is `400 permission_mode_unsupported`
   (Cursor refuses what it cannot enforce, as for a single-repository thread). `model` of `null` is the
@@ -365,8 +370,9 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 
 ## As built: repo_id on Git and file calls
 
-Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path); a thread with no rows is
-an ordinary thread and nothing below changes for it. The rows are written by thread creation in the next slice.
+Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path), and
+migration 90 adds the base branch each row's worktree was cut from; a thread with no rows is an ordinary thread and
+nothing below changes for it. The rows are written by thread creation in the next slice.
 
 - **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`,
   `PUT .../files/content`, `POST .../previews/file`, `POST .../files/open` and `POST .../paths/resolve` (`GitAction`,
@@ -409,8 +415,9 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
-- **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `added`, `deleted`, `trusted`, `files` at most
-  200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary thread.
+- **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `base_branch`, `added`, `deleted`, `trusted`,
+  `files` at most 200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary
+  thread.
 - **Pull requests per repository.** See "As built: pull requests and removal" below.
 
 ## As built: repository threads and the task folder
@@ -425,7 +432,8 @@ navigation coordinates.
   included, must be trusted, finished cloning and a Git repository: `409 repo_untrusted`, `400`, `409 not_git`. All of that is
   checked before anything is created. `permission_mode` must be one the engine offers (`400 permission_mode_unsupported`).
 - **Branch.** One name for every repository: `branch_name` (a valid branch name, at most 200 characters), else `orbyn/<first 8 characters
-  of the thread id>`. A repository that already has the name refuses the start (`400`), so nothing is overwritten.
+  of the thread id>`. A repository that already has the name refuses the start (`400`), so nothing is overwritten. Each stored row
+  records the base its worktree was cut from (`ThreadRepo.base_branch`, migration 90), so the choice survives the start.
 - **Folder.** `<data>/threads/<thread id>/`, one worktree per repository at `<folder>/<name>` made with
   `git worktree add -b <branch> -- <path> refs/heads/<base>`. The folder is not a repository. The thread's `cwd` is the folder, so the
   engine's working directory and write scope contain every worktree and approvals name the absolute worktree path as always. If any
@@ -437,7 +445,8 @@ navigation coordinates.
   `POST .../paths/resolve` takes it on the body, so a link to one repository's file resolves in that repository.
 - **Adding a repository** (`POST /api/threads/{id}/repos` `{ repo_id }`, `ThreadRepo`): a trusted repository of the project that is not
   in the thread, on the thread's branch cut from that repository's current branch (`400` when none is checked out, when it already has
-  the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class.
+  the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class. The row
+  records that current branch as its `base_branch`, since it is the branch the worktree was cut from.
 - **Not built.** Per-repository settings.
 
 ## As built: pull requests and removal
