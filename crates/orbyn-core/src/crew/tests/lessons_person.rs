@@ -111,7 +111,7 @@ fn seed(
 
 /// The repository lesson the fixture seeded as `Repository lesson {n}.`, found by the text its loop gave it: the
 /// fixture numbers its rows, so a test that means one of them names it instead of reading a place in the store's order.
-fn numbered<'a>(lessons: &'a [CrewLesson], n: usize) -> &'a CrewLesson {
+fn numbered(lessons: &[CrewLesson], n: usize) -> &CrewLesson {
     let text = format!("Repository lesson {n}.");
     lessons
         .iter()
