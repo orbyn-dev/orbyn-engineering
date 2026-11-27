@@ -827,11 +827,10 @@ async fn dashboard_projects(
     State(state): State<AppState>,
     query: QueryMap,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(
-        state
-            .core
-            .crew_dashboard_projects(number(&query, "days")?, unix_now())?,
-    ))
+    Ok(Json(state.core.crew_dashboard_projects(
+        number(&query, "days")?,
+        unix_now(),
+    )?))
 }
 
 /// The areas of a project under the circuit breaker (shadow): `project`, `limit`, `offset`. Read-only.

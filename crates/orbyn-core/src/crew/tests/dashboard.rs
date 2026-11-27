@@ -1349,12 +1349,11 @@ fn merged_elsewhere(r: &Rig, name: &str, merged: i64) -> String {
     let draft = super::fake::draft(json!({ "outcome": "Elsewhere." }));
     let task_brief = stamper.brief(&draft).unwrap();
     let sealed = stamper.answer_key(&key(), &task_brief.id).unwrap();
-    let task = r
-        .w
-        .core
-        .store
-        .create_crew_task(&task_brief, &sealed, &format!("run-{name}"))
-        .unwrap();
+    let task =
+        r.w.core
+            .store
+            .create_crew_task(&task_brief, &sealed, &format!("run-{name}"))
+            .unwrap();
     r.w.core
         .store
         .add_crew_run(task.id.as_str(), &thread.id, "worker-elsewhere")
@@ -1434,19 +1433,28 @@ async fn the_projects_read_counts_every_repository_and_only_the_window() {
 
     for (days, merges) in [(Some(30), 1), (Some(60), 2), (Some(90), 2)] {
         let answer = r.w.core.crew_dashboard_projects(days, now).unwrap();
-        assert_eq!(answer.days, days.unwrap(), "the window asked is the one read");
+        assert_eq!(
+            answer.days,
+            days.unwrap(),
+            "the window asked is the one read"
+        );
         assert_eq!(
             count_of(&answer, &r.project),
             merges,
             "days {days:?}: only the window's merges are counted"
         );
         assert_eq!(
-            merges, r.read(days, 0, now).merges,
+            merges,
+            r.read(days, 0, now).merges,
             "days {days:?}: the menu's count is the page's own figure"
         );
         // A second repository's merge is its own row, never added to another's.
         assert_eq!(count_of(&answer, &elsewhere), 1);
-        assert_eq!(count_of(&answer, &unused), 0, "no Crew use is zero, never left out");
+        assert_eq!(
+            count_of(&answer, &unused),
+            0,
+            "no Crew use is zero, never left out"
+        );
         assert!(!answer.truncated);
         assert!(answer.as_of > 0);
     }
@@ -1454,15 +1462,14 @@ async fn the_projects_read_counts_every_repository_and_only_the_window() {
     assert_eq!(answer.days, 60, "60 days when none is asked");
 
     // Every repository the service lists has a row, and no other row is invented.
-    let listed: Vec<String> = r
-        .w
-        .core
-        .store
-        .list_projects()
-        .unwrap()
-        .into_iter()
-        .map(|project| project.id)
-        .collect();
+    let listed: Vec<String> =
+        r.w.core
+            .store
+            .list_projects()
+            .unwrap()
+            .into_iter()
+            .map(|project| project.id)
+            .collect();
     let mut rows: Vec<String> = answer
         .projects
         .iter()
@@ -1489,7 +1496,9 @@ async fn the_projects_read_refuses_a_window_it_does_not_serve_and_the_flag_being
         );
     }
     let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
-    let refused = w.core.crew_dashboard_projects(None, crate::util::unix_now());
+    let refused = w
+        .core
+        .crew_dashboard_projects(None, crate::util::unix_now());
     assert!(
         matches!(refused, Err(CoreError::NotFound(_))),
         "{refused:?}"
@@ -1519,11 +1528,10 @@ async fn the_projects_read_says_when_the_menu_lists_more_repositories_than_one_a
     let full = r.w.core.crew_dashboard_projects(None, now).unwrap();
     assert_eq!(full.projects.len(), 2);
     assert!(!full.truncated);
-    let cut = r
-        .w
-        .core
-        .crew_dashboard_projects_with_cap(None, now, 1)
-        .unwrap();
+    let cut =
+        r.w.core
+            .crew_dashboard_projects_with_cap(None, now, 1)
+            .unwrap();
     assert_eq!(cut.projects.len(), 1);
     assert!(cut.truncated, "a cut list says so");
 }
@@ -1534,7 +1542,9 @@ async fn the_projects_read_says_when_the_menu_lists_more_repositories_than_one_a
 async fn the_projects_read_answers_history_unreadable_when_the_records_cannot_be_read() {
     let r = rig().await;
     r.w.core.store.break_crew_dashboard_for_test();
-    let refused = r.w.core.crew_dashboard_projects(None, crate::util::unix_now());
+    let refused =
+        r.w.core
+            .crew_dashboard_projects(None, crate::util::unix_now());
     assert!(
         matches!(
             refused,

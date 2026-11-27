@@ -188,7 +188,11 @@ async fn the_projects_read_needs_the_flag_the_token_and_answers_a_row_for_every_
     let project = fixtures::add_project(&on.core, on.dir.join("project").to_str().unwrap());
     let (status, answer) = on.get(PROJECTS, true).await;
     assert_eq!(status, 200);
-    assert_eq!(answer["days"], json!(60), "30 or 60 or 90; 60 when none is asked");
+    assert_eq!(
+        answer["days"],
+        json!(60),
+        "30 or 60 or 90; 60 when none is asked"
+    );
     assert!(answer["as_of"].as_i64().unwrap_or_default() > 0);
     assert_eq!(answer["truncated"], json!(false));
     assert_eq!(
