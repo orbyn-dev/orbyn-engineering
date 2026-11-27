@@ -60,19 +60,23 @@ export function useRouteFocus(routeKey: string, routeName: string, ready: boolea
   // What had focus, and which page was showing, when settings opened.
   const opener = useRef<{ element: Element | null; key: string } | null>(null);
   useEffect(() => {
+    const before = previous.current;
+    // What opened Settings is recorded the moment the route enters it, never when its screen arrives:
+    // the wait for a first chunk is exactly when tabbing moves the keyboard, and closing Settings must
+    // return to the control that opened it rather than to whatever the tab reached meanwhile.
+    if (routeName === "settings" && before.name !== "settings" && opener.current === null) {
+      const active = document.activeElement;
+      opener.current = { element: active && active !== document.body ? active : null, key: before.key };
+    }
     if (!ready) return;
     const root = main.current;
     if (!root) return;
-    const before = previous.current;
     // The screen only became ready: the phone's sheet closed over the same page, so nothing moved and
     // focus stays where it was given (the title bar button, or the sheet's own Close). A page that
     // changed is followed below.
     if (!first.current && before.key === routeKey && before.name === routeName) return;
     previous.current = { key: routeKey, name: routeName };
-    if (routeName === "settings" && before.name !== "settings") {
-      const active = document.activeElement;
-      opener.current = { element: active && active !== document.body ? active : null, key: before.key };
-    } else if (routeName !== "settings" && before.name === "settings") {
+    if (routeName !== "settings" && before.name === "settings") {
       // Closing settings returns to what opened it, if it is still there and the page behind is showing.
       const back = opener.current;
       opener.current = null;
