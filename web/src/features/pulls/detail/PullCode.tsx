@@ -160,8 +160,14 @@ export function PullCode({
   const names = files.data.map((file) => file.path);
   const sentence = names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
   const mark = (file: PullFile, next: boolean) => {
-    pullsApi.setViewed(projectId, number, [file.path], next).then(files.reload, (failure: unknown) =>
-      pushToast(`Couldn't mark that. ${toFailure(failure).message}`),
+    pullsApi.setViewed(projectId, number, [file.path], next).then(
+      () => files.reload(),
+      (failure: unknown) => {
+        // The service keeps a mark the forge did not save, and its message says so; read the
+        // files back so the box shows the mark that is kept instead of snapping back.
+        pushToast(`Couldn't mark that. ${toFailure(failure).message}`);
+        void files.reload();
+      },
     );
   };
   const submit = async (event: string) => {

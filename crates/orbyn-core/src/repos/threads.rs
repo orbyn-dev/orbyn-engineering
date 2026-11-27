@@ -345,6 +345,7 @@ impl Core {
             base_branch: None,
             effort: None,
             options: BTreeMap::new(),
+            branch_name_seed: None,
         };
         let thread = match self
             .create_thread_in(
