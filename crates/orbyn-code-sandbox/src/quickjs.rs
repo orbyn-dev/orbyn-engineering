@@ -377,7 +377,15 @@ async fn execute<'js>(
             let text: String = globals.get("__out").map_err(|e| internal(&e.to_string()))?;
             serde_json::from_str(&text).map_err(|e| internal(&e.to_string()))
         }
-        Err(caught) => Err(classify_caught(ctx, &caught, shared)),
+        Err(caught) => {
+            // Reading the exception's properties runs the script's own getters, so the clock stays
+            // running while it is inspected: the work a getter hides is still the script's CPU, and
+            // the interrupt hook ends it, with `classify` reading that `cpu_hit` before anything else.
+            shared.resume_clock();
+            let error = classify_caught(ctx, &caught, shared);
+            shared.pause_clock();
+            Err(error)
+        }
     }
 }
 
@@ -390,6 +398,11 @@ fn classify_caught(ctx: &Ctx<'_>, caught: &rquickjs::CaughtError<'_>, shared: &S
         }
         error.code = code;
         error.line = exception.stack().as_deref().and_then(first_line);
+    }
+    // Those reads run the script's own getters, so the CPU limit can be reached after `classify`
+    // looked: the engine's record decides, not the order the reads happened in.
+    if shared.cpu_hit.load(Ordering::SeqCst) {
+        return limit_error("The script used more than its CPU time.".into());
     }
     let _ = ctx;
     error
@@ -420,9 +433,11 @@ fn engine_error(caught: &rquickjs::CaughtError<'_>) -> Option<(String, String)> 
 /// including a thrown number or object, is what the script threw and is reported as it is.
 fn carries_no_reason(caught: &rquickjs::CaughtError<'_>) -> bool {
     match caught {
-        rquickjs::CaughtError::Exception(_) => {
-            engine_error(caught).is_none_or(|(_, message)| message.trim().is_empty())
-        }
+        // The message alone decides: a `name` that is absent or cannot be read does not make a
+        // thrown `Error` reasonless, and replacing its message with a limit's would be a lie.
+        rquickjs::CaughtError::Exception(exception) => exception
+            .message()
+            .is_none_or(|text| text.trim().is_empty()),
         rquickjs::CaughtError::Value(value) => {
             if value.is_null() || value.is_undefined() {
                 return true;

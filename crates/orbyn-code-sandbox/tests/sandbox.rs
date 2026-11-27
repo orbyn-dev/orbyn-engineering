@@ -440,3 +440,36 @@ async fn a_script_message_is_not_a_limit() {
         assert!(text.contains(message), "{message}: {text}");
     }
 }
+
+#[tokio::test]
+async fn a_getter_on_the_thrown_error_still_ends_at_the_cpu_limit() {
+    // Classifying an exception reads its properties, and a getter there is the script's own code:
+    // a loop in it must end at the CPU limit like any other, not hold the executor past both.
+    let limits = Limits {
+        cpu: Duration::from_millis(100),
+        ..Limits::default()
+    };
+    let code = "const e = new Error('boom');\n\
+                Object.defineProperty(e, 'name', { get() { while (true) {} } });\n\
+                throw e;";
+    let (kind, text) = failure(code, limits).await;
+    assert_eq!(kind, ErrorKind::Limit, "{text}");
+    assert!(text.to_lowercase().contains("cpu"), "{text}");
+}
+
+#[tokio::test]
+async fn a_thrown_error_keeps_its_message_when_its_name_cannot_be_read() {
+    // A heap refusal is already recorded, but the script's own error explains itself: a `name` the
+    // engine cannot read must not turn that message into the heap's diagnostic.
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let code = "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+                const e = new Error('recovered');\n\
+                Object.defineProperty(e, 'name', { value: undefined });\n\
+                throw e;";
+    let (kind, text) = failure(code, limits).await;
+    assert_eq!(kind, ErrorKind::Runtime, "{text}");
+    assert!(text.contains("recovered"), "{text}");
+}
