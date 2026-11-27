@@ -472,7 +472,21 @@ impl ApprovalGate {
             // makes itself, which reaches no Orbyn route and so cannot be fenced from here.
             ApprovalState::Allowed => match self.lease.get() {
                 Some(lease) => match lease.lease(scope, &after_wait).await {
-                    Review::Deny(words) => Verdict::Deny(words),
+                    Review::Deny(words) => {
+                        // This refusal is this request's outcome, so it is recorded like the one asked before the
+                        // wait; the person's approval stays its own decision in the approval row.
+                        self.store.append_audit(&AuditRecord {
+                            actor: format!("engine:{}", scope.engine),
+                            action: "action.deny".into(),
+                            target: after_wait.target.clone(),
+                            decision: Some(PolicyEffect::Deny),
+                            source: "crew_lease".into(),
+                            thread_id: Some(scope.thread_id.clone()),
+                            run_id: Some(scope.run_id.clone()),
+                            detail: json!({ "kind": after_wait.kind }),
+                        })?;
+                        Verdict::Deny(words)
+                    }
                     _ => Verdict::Allow,
                 },
                 None => Verdict::Allow,
