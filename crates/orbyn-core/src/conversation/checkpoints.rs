@@ -20,8 +20,16 @@ use crate::source_control::git;
 use crate::store::AuditRecord;
 use crate::util::new_id;
 
-pub fn checkpoint_ref(thread_id: &str, run_id: &str, point: &str) -> String {
-    format!("refs/orbyn/checkpoints/{thread_id}/{run_id}/{point}")
+/// The ref one folder's checkpoint is kept under. Two repositories of one thread can share a Git common directory:
+/// two linked worktrees of one repository are enrolled as two repositories, and one ref would be written twice, so
+/// the folder's repository is part of the name and no recorded checkpoint is left unreachable
+/// (docs/architecture.md).
+pub fn checkpoint_ref(thread_id: &str, run_id: &str, repo_id: Option<&str>, point: &str) -> String {
+    let folder = repo_id.map_or_else(
+        || "checkout".to_owned(),
+        |repo_id| format!("repo-{repo_id}"),
+    );
+    format!("refs/orbyn/checkpoints/{thread_id}/{run_id}/{folder}/{point}")
 }
 
 /// The native rollback a rewind applied, and what it needs to drop the point again if a
@@ -268,9 +276,88 @@ impl Core {
         git::recent_commits(Path::new(&thread.cwd), 100).await
     }
 
+    /// Whether a folder still holds exactly what its safety snapshot recorded, taken again just before it is written.
+    async fn folder_matches_its_safety(&self, one: &Restoring) -> Result<bool> {
+        let index = self.scratch_index()?;
+        let now = git::snapshot(&one.worktree, None, &index).await?;
+        git::same_tree(&one.worktree, &one.safety, &now).await
+    }
+
+    /// Writes each folder's restore, one folder at a time, and refuses one whose files moved since its safety
+    /// snapshot: that change is in no snapshot, so writing over it would lose it. The position of the folder that
+    /// could not be written comes with the error, so a caller can record which folders did move.
+    async fn apply_restores(
+        &self,
+        restores: &[Restoring],
+    ) -> std::result::Result<(), (usize, CoreError)> {
+        for (position, one) in restores.iter().enumerate() {
+            let unchanged = self
+                .folder_matches_its_safety(one)
+                .await
+                .map_err(|error| (position, error))?;
+            if !unchanged {
+                return Err((
+                    position,
+                    CoreError::Git(
+                        "Your files changed while the restore was preparing, so this folder was left as it is."
+                            .into(),
+                    ),
+                ));
+            }
+            git::restore_worktree(&one.worktree, &one.safety, &one.target)
+                .await
+                .map_err(|error| (position, error))?;
+        }
+        Ok(())
+    }
+
+    /// Words for the folder a restore could not move, without its path: a repository's name, or the thread's own
+    /// folder for an ordinary thread.
+    fn restore_root_name(&self, thread_id: &str, repo_id: Option<&str>) -> String {
+        let Some(repo_id) = repo_id else {
+            return "the thread's own folder".to_owned();
+        };
+        let named = self.store.thread_repos(thread_id).ok().and_then(|repos| {
+            repos
+                .into_iter()
+                .find(|repo| repo.repo_id == repo_id)
+                .map(|repo| repo.name)
+        });
+        match named {
+            Some(name) => format!("the repository \"{name}\""),
+            None => "a repository".to_owned(),
+        }
+    }
+
+    /// Records a restore that stopped part-way. The success row keeps its shape; this one lists the folders that did
+    /// move and names the one that could not, so a partial restore is never read as a whole one (docs/multi-repo.md).
+    fn audit_partial_restore(
+        &self,
+        actor: &str,
+        thread_id: &str,
+        moved: &[Restoring],
+        failed: &Restoring,
+    ) -> Result<()> {
+        let mut detail = restore_detail(moved);
+        if let Some(fields) = detail.as_object_mut() {
+            fields.insert(
+                "failed".to_owned(),
+                json!({
+                    "repo_id": failed.repo_id,
+                    "target": failed.target,
+                    "safety": failed.safety,
+                }),
+            );
+        }
+        self.audit_thread(actor, "workspace.restore.failed", thread_id, detail)
+    }
+
     /// Puts the files back. Refused while another live thread shares a folder it would move,
     /// since its work would be overwritten without its knowledge. The files as
-    /// they stood are kept in a checkpoint ref first, so this can be undone.
+    /// they stood are kept in a checkpoint ref first, so this can be undone. A folder whose
+    /// files changed after that snapshot is left as it is rather than overwritten, and one
+    /// restore runs at a time so a safety snapshot never records half of another's work
+    /// (docs/multi-repo.md).
     pub async fn restore_workspace(
         &self,
         thread_id: &str,
@@ -278,6 +365,9 @@ impl Core {
         actor: &str,
     ) -> Result<()> {
         let thread = self.idle_thread(thread_id)?;
+        // A second restore could otherwise snapshot the folders this one has already moved and not the rest,
+        // recording half a restore as the point to come back to.
+        let _one_restore_at_a_time = self.workspace_restores.lock().await;
         let roots = self.restore_roots(&thread)?;
         self.refuse_shared_roots(&thread, &roots)?;
         let mut restores = Vec::new();
@@ -290,7 +380,7 @@ impl Core {
                     .end
                     .ok_or_else(|| CoreError::Invalid("This turn never finished.".into()))?,
             };
-            let safety = checkpoint_ref(thread_id, &new_id(), "before-restore");
+            let safety = checkpoint_ref(thread_id, &new_id(), repo_id.as_deref(), "before-restore");
             let current = git::snapshot(&worktree, Some(&safety), &self.scratch_index()?).await?;
             restores.push(Restoring {
                 repo_id,
@@ -305,10 +395,21 @@ impl Core {
             thread_id,
             restore_detail(&restores),
         )?;
-        for one in &restores {
-            git::restore_worktree(&one.worktree, &one.safety, &one.target).await?;
+        match self.apply_restores(&restores).await {
+            Ok(()) => Ok(()),
+            Err((position, error)) => {
+                tracing::warn!(%error, thread = %thread_id, "restore could not move a folder back");
+                if let Err(audit) = self.audit_partial_restore(
+                    actor,
+                    thread_id,
+                    &restores[..position],
+                    &restores[position],
+                ) {
+                    tracing::warn!(%audit, thread = %thread_id, "could not record a partial restore");
+                }
+                Err(error)
+            }
         }
-        Ok(())
     }
 
     fn audit_record(
@@ -373,9 +474,13 @@ impl Core {
     }
 
     /// Restores the files a rewind asked for, before the thread is marked rewound. The
-    /// audit row is written only after the files are back, so a failed restore leaves no
-    /// record of one.
+    /// success row is written only after the files are back; a restore that stops part-way
+    /// writes the folders it did move and the one it could not, and names that one in the
+    /// error a person sees (docs/multi-repo.md).
     async fn restore_for_rewind(&self, thread: &Thread, run_id: &str, actor: &str) -> Result<()> {
+        // One restore at a time: a safety snapshot taken while another had moved only some folders would record
+        // half a restore as the point to come back to.
+        let _one_restore_at_a_time = self.workspace_restores.lock().await;
         let roots = self.restore_roots(thread)?;
         self.refuse_shared_roots(thread, &roots)?;
         let mut restores = Vec::new();
@@ -391,7 +496,8 @@ impl Core {
                     other => other,
                 })?;
             let target = checkpoint.start;
-            let safety = checkpoint_ref(&thread.id, &new_id(), "before-restore");
+            let safety =
+                checkpoint_ref(&thread.id, &new_id(), repo_id.as_deref(), "before-restore");
             let index = self.scratch_index().map_err(|error| {
                 tracing::warn!(%error, thread = %thread.id, "rewind could not prepare a checkpoint");
                 restore_failed_before_changes()
@@ -409,22 +515,26 @@ impl Core {
                 safety: current,
             });
         }
-        for one in &restores {
-            git::restore_worktree(&one.worktree, &one.safety, &one.target)
-                .await
-                .map_err(|error| {
-                    tracing::warn!(%error, thread = %thread.id, "rewind could not restore the workspace");
-                    CoreError::Git(
-                        "Your files may have changed. The thread was not rewound.".into(),
-                    )
-                })?;
+        match self.apply_restores(&restores).await {
+            Ok(()) => self.audit_thread(
+                actor,
+                "workspace.restore",
+                &thread.id,
+                restore_detail(&restores),
+            ),
+            Err((position, error)) => {
+                tracing::warn!(%error, thread = %thread.id, "rewind could not restore the workspace");
+                let (moved, failed) = restores.split_at(position);
+                let failed = &failed[0];
+                if let Err(audit) = self.audit_partial_restore(actor, &thread.id, moved, failed) {
+                    tracing::warn!(%audit, thread = %thread.id, "could not record a partial rewind restore");
+                }
+                Err(CoreError::Git(format!(
+                    "Your files may have changed. The thread was not rewound: {} could not be restored ({error}).",
+                    self.restore_root_name(&thread.id, failed.repo_id.as_deref())
+                )))
+            }
         }
-        self.audit_thread(
-            actor,
-            "workspace.restore",
-            &thread.id,
-            restore_detail(&restores),
-        )
     }
 
     /// Continues the conversation from before a run. The log stays whole, since
@@ -686,6 +796,7 @@ mod tests {
     use crate::agents::driver::claude::ClaudeDriver;
     use crate::agents::driver::host::{EnginePath, HostDriver, HostSpec, Pool, Timings};
     use crate::agents::driver::{EngineDescriptor, EngineEvent, EngineProbe, RunHandle, RunSpec};
+    use crate::store::thread_repos::ThreadRepoRecord;
     use crate::store::{Admission, NewProject, NewThread, Store};
     use crate::testing::{TempDir, run_git};
 
@@ -1005,5 +1116,221 @@ mod tests {
         );
         assert!(core.store.pending_handoff(&thread).unwrap().is_none());
         assert!(!has_rewind_audit(&core, &thread));
+    }
+
+    /// A thread over two repositories, each restored in its own worktree, with a task folder of its own.
+    struct TwoRepositories {
+        _dir: TempDir,
+        core: Arc<Core>,
+        thread: Thread,
+        primary: String,
+        other: String,
+        primary_worktree: PathBuf,
+        other_worktree: PathBuf,
+    }
+
+    async fn two_repositories() -> TwoRepositories {
+        let dir = TempDir::new();
+        let primary_worktree = dir.path().join("first");
+        seed(&primary_worktree);
+        let other_worktree = dir.path().join("second");
+        seed(&other_worktree);
+        let task = dir.path().join("task");
+        std::fs::create_dir_all(&task).unwrap();
+        let core = open_core(&dir);
+        let path = primary_worktree.to_string_lossy().into_owned();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: &path,
+                name: "first",
+                is_git: true,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        core.store.trust_project(&project.id, "tester").unwrap();
+        let thread = core
+            .store
+            .create_thread(NewThread {
+                project_id: project.id.clone(),
+                title: "t".into(),
+                engine: "codex".into(),
+                model: None,
+                cwd: task.to_string_lossy().into_owned(),
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+        let other = "repo-second".to_owned();
+        for (position, (repo_id, name, worktree)) in [
+            (project.id.clone(), "first", &primary_worktree),
+            (other.clone(), "second", &other_worktree),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            core.store
+                .thread_repo_insert(
+                    &ThreadRepoRecord {
+                        thread_id: thread.id.clone(),
+                        repo_id,
+                        position: position as u32,
+                        name: name.to_owned(),
+                        branch: "orbyn/thread".into(),
+                        worktree_path: worktree.to_string_lossy().into_owned(),
+                    },
+                    &crate::util::now(),
+                )
+                .unwrap();
+        }
+        TwoRepositories {
+            _dir: dir,
+            core,
+            thread,
+            primary: project.id,
+            other,
+            primary_worktree,
+            other_worktree,
+        }
+    }
+
+    /// A safety snapshot is taken before the restore writes, and a file can be saved in between. That edit is in no
+    /// snapshot, so the folder is left as it is rather than overwritten.
+    #[tokio::test]
+    async fn a_restore_leaves_alone_a_folder_whose_files_moved_after_its_safety_snapshot() {
+        let dir = TempDir::new();
+        let core = open_core(&dir);
+        let repo = dir.path().join("repo");
+        seed(&repo);
+        let target = git::snapshot(&repo, None, &core.scratch_index().unwrap())
+            .await
+            .unwrap();
+        std::fs::write(repo.join("base.txt"), "edited before the restore\n").unwrap();
+        let safety = git::snapshot(&repo, None, &core.scratch_index().unwrap())
+            .await
+            .unwrap();
+        std::fs::write(repo.join("base.txt"), "saved while the restore prepared\n").unwrap();
+
+        let restores = vec![Restoring {
+            repo_id: None,
+            worktree: repo.clone(),
+            target,
+            safety,
+        }];
+        core.apply_restores(&restores)
+            .await
+            .expect_err("the folder no longer holds what its safety snapshot recorded");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("base.txt")).unwrap(),
+            "saved while the restore prepared\n",
+            "the edit that no snapshot records is still there"
+        );
+    }
+
+    /// A folder that still holds what its safety snapshot recorded is moved back, so the refusal above is not a
+    /// blanket one.
+    #[tokio::test]
+    async fn a_restore_moves_a_folder_that_still_matches_its_safety_snapshot() {
+        let dir = TempDir::new();
+        let core = open_core(&dir);
+        let repo = dir.path().join("repo");
+        seed(&repo);
+        let target = git::snapshot(&repo, None, &core.scratch_index().unwrap())
+            .await
+            .unwrap();
+        std::fs::write(repo.join("base.txt"), "edited before the restore\n").unwrap();
+        let safety = git::snapshot(&repo, None, &core.scratch_index().unwrap())
+            .await
+            .unwrap();
+
+        let restores = vec![Restoring {
+            repo_id: None,
+            worktree: repo.clone(),
+            target,
+            safety,
+        }];
+        core.apply_restores(&restores).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.join("base.txt")).unwrap(),
+            "base\n",
+            "the folder holds the checkpoint's files again"
+        );
+    }
+
+    /// A rewind that restores one repository and then fails on another has already moved the first, so that move is
+    /// on the record together with the repository that could not be restored.
+    #[tokio::test]
+    async fn a_rewind_that_restores_one_repository_and_fails_another_records_both() {
+        let f = two_repositories().await;
+        let run = "run-partial";
+        let start = head(&f.primary_worktree);
+        f.core
+            .store
+            .add_repository_checkpoint(&f.thread.id, run, &f.primary, &start)
+            .unwrap();
+        // A commit Git does not have: its restore fails after the first repository has moved.
+        let missing = "0123456789012345678901234567890123456789";
+        f.core
+            .store
+            .add_repository_checkpoint(&f.thread.id, run, &f.other, missing)
+            .unwrap();
+        std::fs::write(f.primary_worktree.join("written.txt"), "written\n").unwrap();
+        std::fs::write(f.other_worktree.join("kept.txt"), "kept\n").unwrap();
+
+        let error = f
+            .core
+            .restore_for_rewind(&f.thread, run, "tester")
+            .await
+            .expect_err("the second repository has no commit to restore");
+
+        assert!(
+            !f.primary_worktree.join("written.txt").exists(),
+            "the first repository was restored before the second failed"
+        );
+        let audit = f
+            .core
+            .store
+            .list_audit(Some(f.thread.id.as_str()), 10)
+            .unwrap();
+        let row = audit
+            .iter()
+            .find(|row| row.action == "workspace.restore.failed")
+            .expect("the partial restore is on the record");
+        assert_eq!(
+            row.detail["repositories"][0]["repo_id"],
+            json!(f.primary),
+            "the repository that moved is named"
+        );
+        assert_eq!(
+            row.detail["failed"]["repo_id"],
+            json!(f.other),
+            "the repository that could not move is named"
+        );
+        assert!(
+            row.detail["failed"]["safety"].is_string(),
+            "the safety snapshot of the folder that did not move is kept"
+        );
+        assert!(
+            !audit.iter().any(|row| row.action == "workspace.restore"),
+            "a partial restore is never written as a whole one"
+        );
+        let message = error.to_string();
+        assert!(
+            message.contains("the repository \"second\""),
+            "the person is told which repository failed: {message}"
+        );
+        assert!(
+            message.contains("fatal:") || message.contains("unknown revision"),
+            "the underlying error is kept: {message}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(f.other_worktree.join("kept.txt")).unwrap(),
+            "kept\n",
+            "the repository that could not be restored was left as it was"
+        );
     }
 }

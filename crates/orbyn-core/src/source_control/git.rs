@@ -616,6 +616,18 @@ pub(crate) async fn snapshot(cwd: &Path, reference: Option<&str>, index: &Path) 
     Ok(sha)
 }
 
+/// Whether two snapshots hold the same files. Each take records the moment it was made, so only the trees compare.
+pub(crate) async fn same_tree(cwd: &Path, one: &str, other: &str) -> Result<bool> {
+    let mut trees = Vec::new();
+    for revision in [one, other] {
+        let wanted = format!("{revision}^{{tree}}");
+        trees.push(text(
+            &git(cwd, &["rev-parse", "--verify", "-q", &wanted]).await?,
+        ));
+    }
+    Ok(trees[0] == trees[1])
+}
+
 /// What changed between two commits.
 pub(crate) async fn diff_between(cwd: &Path, from: &str, to: &str) -> Result<Vec<FileDiff>> {
     tracked_diff(cwd, &[from, to]).await

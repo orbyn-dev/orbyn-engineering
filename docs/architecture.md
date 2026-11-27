@@ -587,7 +587,10 @@ or unusable report stays unknown. No credential file or SDK is needed by Orbyn.
 ## Checkpoints
 
 Each run snapshots the checkout before it starts and when it ends, through a
-temporary index, into `refs/orbyn/checkpoints/<thread>/<run>/{start,end}`. A multi-repository
+temporary index, into `refs/orbyn/checkpoints/<thread>/<run>/<folder>/{start,end}`, where `<folder>`
+is `repo-<repo_id>` for a repository and `checkout` for the engine's own folder: two linked
+worktrees of one repository share a Git common directory, so a ref that named only the point
+would keep only the last snapshot reachable. A multi-repository
 thread snapshots each trusted repository's worktree instead, since the task folder the
 engine works in is not a repository: the run's own row keeps the first repository's ends,
 so the turn picker lists it once, and each repository's ends are kept for its reads. The real
@@ -601,7 +604,11 @@ Restoring takes a safety snapshot first, then makes the files match, leaving HEA
 the index and ignored files alone. A multi-repository thread restores each trusted
 worktree to its own checkpoint, in that repository's Git objects; an ordinary
 thread restores the engine's own folder as before. It refuses while another live
-thread shares its own folder or any folder it would move. A fork and an engine switch cannot carry an engine session, so each ends it
+thread shares its own folder or any folder it would move. One restore runs at a time,
+so a safety snapshot never records half of another's work, and a folder whose files
+changed after its own safety snapshot is left as it is rather than overwritten. A rewind
+that moves one repository and then fails on another writes the folders that did move and
+names the one that could not, so a partial restore is never read as a whole one. A fork and an engine switch cannot carry an engine session, so each ends it
 and leaves a handoff of up to 16,000 characters, oldest text dropped first, for the
 next run. A rewind does the same unless the engine rolls its own session back. Dropping the session and writing the handoff share a transaction. It
 stays until a run that carried it completes, so a failed start, a stop or a restart

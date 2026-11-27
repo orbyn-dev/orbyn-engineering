@@ -28,7 +28,6 @@ impl RunManager {
         checkout: &Path,
         run_dir: &Path,
     ) {
-        let reference = checkpoint_ref(&scope.thread_id, &scope.run_id, "start");
         let index = run_dir.join("checkpoint-index");
         let roots = match self.checkpoint_roots(thread, checkout) {
             Ok(roots) => roots,
@@ -38,6 +37,10 @@ impl RunManager {
             }
         };
         for (position, (repo_id, root)) in roots.into_iter().enumerate() {
+            // Each repository's ref carries its own name: two worktrees of one repository share a Git common
+            // directory, so one ref per point would keep only the last snapshot reachable (docs/architecture.md).
+            let reference =
+                checkpoint_ref(&scope.thread_id, &scope.run_id, repo_id.as_deref(), "start");
             let sha = match snapshot(&root, Some(&reference), &index).await {
                 Ok(sha) => sha,
                 Err(error) => {
@@ -70,7 +73,6 @@ impl RunManager {
         if !matches!(self.store.run_has_checkpoint(&scope.run_id), Ok(true)) {
             return;
         }
-        let reference = checkpoint_ref(&scope.thread_id, &scope.run_id, "end");
         let index = run_dir.join("checkpoint-index");
         let roots = match self.checkpoint_roots(thread, Path::new(&thread.cwd)) {
             Ok(roots) => roots,
@@ -90,6 +92,30 @@ impl RunManager {
             .ok()
             .flatten();
         for (repo_id, root) in roots {
+            // A repository that took no start keeps no end either: the snapshot would only be thrown away, and its
+            // ref would name a checkpoint the run never had. The start is read first, so nothing is snapshotted for it.
+            let has_start = match &repo_id {
+                Some(repo_id) => {
+                    match self
+                        .store
+                        .repository_checkpoint(&scope.thread_id, &scope.run_id, repo_id)
+                    {
+                        Ok(found) => found.is_some(),
+                        Err(error) => {
+                            tracing::warn!(%error, "could not read a checkpoint");
+                            continue;
+                        }
+                    }
+                }
+                None => true,
+            };
+            if !has_start {
+                continue;
+            }
+            // Each repository's ref carries its own name: two worktrees of one repository share a Git common
+            // directory, so one ref per point would keep only the last snapshot reachable (docs/architecture.md).
+            let reference =
+                checkpoint_ref(&scope.thread_id, &scope.run_id, repo_id.as_deref(), "end");
             let sha = match snapshot(&root, Some(&reference), &index).await {
                 Ok(sha) => sha,
                 Err(error) => {
@@ -99,25 +125,16 @@ impl RunManager {
             };
             let recorded = match &repo_id {
                 Some(repo_id) => {
-                    match self
-                        .store
-                        .repository_checkpoint(&scope.thread_id, &scope.run_id, repo_id)
-                    {
-                        Ok(Some(_)) => {
-                            let owns_run = owner.as_deref() == Some(repo_id.as_str());
-                            self.store
-                                .finish_repository_checkpoint(&scope.run_id, repo_id, &sha)
-                                .and_then(|()| {
-                                    if owns_run {
-                                        self.store.finish_checkpoint(&scope.run_id, &sha)
-                                    } else {
-                                        Ok(())
-                                    }
-                                })
-                        }
-                        Ok(None) => Ok(()),
-                        Err(error) => Err(error),
-                    }
+                    let owns_run = owner.as_deref() == Some(repo_id.as_str());
+                    self.store
+                        .finish_repository_checkpoint(&scope.run_id, repo_id, &sha)
+                        .and_then(|()| {
+                            if owns_run {
+                                self.store.finish_checkpoint(&scope.run_id, &sha)
+                            } else {
+                                Ok(())
+                            }
+                        })
                 }
                 None => self.store.finish_checkpoint(&scope.run_id, &sha),
             };
@@ -423,6 +440,293 @@ mod tests {
         assert_eq!(
             owned.end, primary.end,
             "the run's own end belongs to the repository that owns the run, not to one that only shares its start"
+        );
+    }
+
+    /// A repository's checkpoint refs are its own. Two linked worktrees of one repository share a Git common
+    /// directory, so one ref per point would keep only the last snapshot reachable and leave the other recorded one
+    /// to be collected.
+    fn linked_worktrees() -> LinkedWorktrees {
+        let dir = TempDir::new();
+        let base = repo(&dir.path().join("base"));
+        let first_worktree = dir.path().join("first");
+        let second_worktree = dir.path().join("second");
+        run_git(
+            &base,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "wt-first",
+                "--",
+                &text_of(&first_worktree),
+            ],
+        );
+        run_git(
+            &base,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "wt-second",
+                "--",
+                &text_of(&second_worktree),
+            ],
+        );
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        let core = Arc::new(Core::open(config).unwrap());
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: &text_of(&base),
+                name: "base",
+                is_git: true,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        core.store.trust_project(&project.id, "tester").unwrap();
+        let folder = core.config.data_dir.join("threads").join("task");
+        std::fs::create_dir_all(&folder).unwrap();
+        let thread = core
+            .store
+            .create_thread(NewThread {
+                project_id: project.id.clone(),
+                title: "t".into(),
+                engine: "codex".into(),
+                model: None,
+                cwd: text_of(&folder),
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+        let second = "repo-second".to_owned();
+        for (position, (repo_id, name, worktree)) in [
+            (project.id.clone(), "first", &first_worktree),
+            (second.clone(), "second", &second_worktree),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            core.store
+                .thread_repo_insert(
+                    &ThreadRepoRecord {
+                        thread_id: thread.id.clone(),
+                        repo_id,
+                        position: position as u32,
+                        name: name.to_owned(),
+                        branch: "orbyn/thread".into(),
+                        worktree_path: text_of(worktree),
+                    },
+                    &crate::util::now(),
+                )
+                .unwrap();
+        }
+        LinkedWorktrees {
+            dir,
+            core,
+            thread,
+            first: project.id,
+            second,
+            first_worktree,
+            second_worktree,
+        }
+    }
+
+    struct LinkedWorktrees {
+        dir: TempDir,
+        core: Arc<Core>,
+        thread: Thread,
+        first: String,
+        second: String,
+        first_worktree: PathBuf,
+        second_worktree: PathBuf,
+    }
+
+    fn scope_of(thread: &Thread, run: &str) -> RunScope {
+        RunScope {
+            run_id: run.into(),
+            thread_id: thread.id.clone(),
+            engine: "codex".into(),
+            family: "codex".into(),
+            write_scope: None,
+            mode: PermissionMode::Supervised,
+            plan: false,
+        }
+    }
+
+    /// Every checkpoint ref in the repository, as the worktree sees it: a linked worktree's refs live in the common
+    /// directory both of them write to.
+    fn checkpoint_refs(worktree: &Path) -> Vec<String> {
+        let output = std::process::Command::new("git")
+            .args([
+                "for-each-ref",
+                "--format=%(objectname)",
+                "refs/orbyn/checkpoints",
+            ])
+            .current_dir(worktree)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The refs under one prefix, by name.
+    fn refs_under(worktree: &Path, prefix: &str) -> Vec<String> {
+        let output = std::process::Command::new("git")
+            .args(["for-each-ref", "--format=%(refname)", prefix])
+            .current_dir(worktree)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn two_worktrees_of_one_repository_keep_their_own_checkpoint_refs() {
+        let f = linked_worktrees();
+        let run = "run-linked";
+        let scope = scope_of(&f.thread, run);
+        let run_dir = f.dir.path().join("run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        // The two worktrees hold different files, so each snapshot is its own commit.
+        std::fs::write(f.first_worktree.join("first.txt"), "first\n").unwrap();
+        std::fs::write(f.second_worktree.join("second.txt"), "second\n").unwrap();
+
+        f.core
+            .runs
+            .checkpoint_start(&f.thread, &scope, Path::new(&f.thread.cwd), &run_dir)
+            .await;
+        let first = f
+            .core
+            .store
+            .repository_checkpoint(&f.thread.id, run, &f.first)
+            .unwrap()
+            .unwrap()
+            .start;
+        let second = f
+            .core
+            .store
+            .repository_checkpoint(&f.thread.id, run, &f.second)
+            .unwrap()
+            .unwrap()
+            .start;
+        assert_ne!(first, second, "each repository was snapshotted separately");
+        let listed = checkpoint_refs(&f.first_worktree);
+        assert!(
+            listed.contains(&first),
+            "the first repository's start stays reachable: {listed:?}"
+        );
+        assert!(
+            listed.contains(&second),
+            "the second repository's start stays reachable: {listed:?}"
+        );
+        assert_eq!(
+            f.core.store.checkpoint(run).unwrap().unwrap().start,
+            first,
+            "the run's own row keeps the owning repository's start"
+        );
+
+        std::fs::write(f.first_worktree.join("more.txt"), "more\n").unwrap();
+        std::fs::write(f.second_worktree.join("more.txt"), "more\n").unwrap();
+        let thread = f.core.store.thread(&f.thread.id).unwrap();
+        f.core.runs.checkpoint_end(&scope, &thread, &run_dir).await;
+        let first_end = f
+            .core
+            .store
+            .repository_checkpoint(&f.thread.id, run, &f.first)
+            .unwrap()
+            .unwrap()
+            .end
+            .expect("the first repository keeps an end");
+        let second_end = f
+            .core
+            .store
+            .repository_checkpoint(&f.thread.id, run, &f.second)
+            .unwrap()
+            .unwrap()
+            .end
+            .expect("the second repository keeps an end");
+        let listed = checkpoint_refs(&f.first_worktree);
+        assert!(
+            listed.contains(&first_end),
+            "the first repository's end stays reachable: {listed:?}"
+        );
+        assert!(
+            listed.contains(&second_end),
+            "the second repository's end stays reachable: {listed:?}"
+        );
+        assert_eq!(
+            f.core.store.checkpoint(run).unwrap().unwrap().end,
+            Some(first_end),
+            "the run's own row keeps the owning repository's end"
+        );
+    }
+
+    /// A repository trusted after the run began took no start, so it takes no end either: nothing is snapshotted for
+    /// it, and no end ref names a checkpoint the run never had.
+    #[tokio::test]
+    async fn a_repository_without_a_start_takes_no_end_snapshot() {
+        let f = linked_worktrees();
+        let run = "run-no-start";
+        let scope = scope_of(&f.thread, run);
+        let run_dir = f.dir.path().join("run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let start = head(&f.first_worktree);
+        f.core
+            .store
+            .add_repository_checkpoint(&f.thread.id, run, &f.first, &start)
+            .unwrap();
+        f.core
+            .store
+            .add_checkpoint(&f.thread.id, run, &start)
+            .unwrap();
+
+        let thread = f.core.store.thread(&f.thread.id).unwrap();
+        f.core.runs.checkpoint_end(&scope, &thread, &run_dir).await;
+
+        assert!(
+            f.core
+                .store
+                .repository_checkpoint(&f.thread.id, run, &f.first)
+                .unwrap()
+                .unwrap()
+                .end
+                .is_some(),
+            "the repository that took a start keeps its end"
+        );
+        assert!(
+            f.core
+                .store
+                .repository_checkpoint(&f.thread.id, run, &f.second)
+                .unwrap()
+                .is_none(),
+            "a repository with no start keeps no end"
+        );
+        let end_ref = crate::conversation::checkpoints::checkpoint_ref(
+            &f.thread.id,
+            run,
+            Some(&f.second),
+            "end",
+        );
+        let named = refs_under(&f.second_worktree, &end_ref);
+        assert!(
+            named.is_empty(),
+            "no end ref names a checkpoint the run never had: {named:?}"
         );
     }
 }

@@ -402,10 +402,11 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
-- **Known limit: Jujutsu status is the primary project's.** `GET /api/threads/{id}/jj` takes no `repo_id`. A Jujutsu checkout Orbyn
+- **Known limit: Jujutsu status is the primary project's.** `GET /api/threads/{id}/jj` reads no `repo_id`, and sending
+  one is ignored rather than refused: the answer is the thread's own checkout's status, or `null`. A Jujutsu checkout Orbyn
   reads is a `.jj` folder with no `.git` of its own, so it is not a Git repository and cannot be a repository of a
   multi-repository thread (`409 not_git`), and the thread's other repositories are Git ones with no jj state to ask for:
-  the primary project is the whole answer, and a `repo_id` here would always be `404`.
+  the primary project is the whole answer.
 - **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `added`, `deleted`, `trusted`, `files` at most
   200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary thread.
 - **Pull requests per repository.** See "As built: pull requests and removal" below.
@@ -504,7 +505,10 @@ stored repository) when it is absent, and run Git in that repository's worktree 
 folder; a run keeps a checkpoint in every trusted repository's worktree, so its turn and thread diffs read there
 instead of answering `404` from the task folder, and a restore moves every trusted worktree while an ordinary
 thread's restore stays in the engine's own folder. A restore is refused while another live thread works in the
-thread's own folder or in any worktree it would move, not only in the task folder; navigation coordinates
+thread's own folder or in any worktree it would move, not only in the task folder; one restore runs at a time, and
+a worktree whose files changed after its own safety snapshot is left as it is rather than overwritten; a rewind
+that restores one repository and then fails on another writes what did move and names the repository it could not
+(`workspace.restore.failed`, keeping the success row `workspace.restore` as it was); navigation coordinates
 resolve in the repository their `repo_id` names too, the primary when absent, so a repository's file is found in
 its own worktree and the task folder is never the checkout, and a thread that moved answers `409 stale_owner`;
 an unknown repository is `404` and an untrusted one is refused.
