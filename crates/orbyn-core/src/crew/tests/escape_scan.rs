@@ -492,10 +492,10 @@ async fn a_damaged_cursor_reads_as_none_and_is_overwritten() {
 #[tokio::test]
 async fn a_merge_whose_work_never_fits_the_time_does_not_pin_the_scan() {
     let mut s = scan_rig().await;
-    let mut merges = Vec::new();
-    for (i, line) in [3, 8, 13].into_iter().enumerate() {
-        merges.push(s.merge(line, 3 - i as i64).await);
-    }
+    // The merges are named by age, not by their place in the fixture: the scan walks newest first.
+    let oldest = s.merge(3, 3).await;
+    let middle = s.merge(8, 2).await;
+    let newest = s.merge(13, 1).await;
     // No time at all: every git call is past the deadline.
     let limits = Limits {
         merges: 50,
@@ -515,8 +515,8 @@ async fn a_merge_whose_work_never_fits_the_time_does_not_pin_the_scan() {
         let m = s.rig.w.core.store.crew_merge(task).unwrap().unwrap();
         format!("{}:{}", m.merged_unix, m.id)
     };
-    // Order is the contract here: the fixture pushed the merges oldest first, so the newest-first scan reads
-    // merges[2], then merges[1], then merges[0], and each scan counts the first unread merge and moves past it.
+    // Order is the contract here: the scan walks newest first, so each scan counts the first unread merge and
+    // moves past it, and the cursor names the newest, then the middle, then the oldest.
     let first = s
         .rig
         .w
@@ -529,24 +529,23 @@ async fn a_merge_whose_work_never_fits_the_time_does_not_pin_the_scan() {
         (1, 1, 0, true),
         "{first:?}"
     );
-    assert_eq!(cursor(&s), key(&s, &merges[2].0));
+    assert_eq!(cursor(&s), key(&s, &newest.0));
     s.rig
         .w
         .core
         .crew_escape_scan_within(unix_now(), limits)
         .await
         .unwrap();
-    assert_eq!(cursor(&s), key(&s, &merges[1].0));
+    assert_eq!(cursor(&s), key(&s, &middle.0));
     s.rig
         .w
         .core
         .crew_escape_scan_within(unix_now(), limits)
         .await
         .unwrap();
-    assert_eq!(cursor(&s), key(&s, &merges[0].0));
-    // With time again the later merges are reached: a revert of the oldest is found on the next scan.
-    s.repo
-        .git(&["revert", "-m", "1", "--no-edit", &merges[0].1]);
+    assert_eq!(cursor(&s), key(&s, &oldest.0));
+    // With time again the oldest is reached: a revert of it is found on the next scan.
+    s.repo.git(&["revert", "-m", "1", "--no-edit", &oldest.1]);
     let after = s.scan().await;
     assert_eq!(after.found, 1, "{after:?}");
 }
@@ -566,12 +565,12 @@ async fn a_tag_named_like_the_branch_does_not_stand_in_for_it() {
 #[tokio::test]
 async fn a_scan_that_is_cut_short_resumes_so_every_merge_is_looked_at_over_successive_scans() {
     let mut s = scan_rig().await;
-    let mut merges = Vec::new();
-    for (i, line) in [3, 6, 9, 12, 15].into_iter().enumerate() {
-        merges.push(s.merge(line, 5 - i as i64).await);
+    // The oldest merge is named once, and the four newer ones are made after it: the newest-first scan
+    // reaches it last.
+    let (oldest_task, oldest_merge) = s.merge(3, 5).await;
+    for (i, line) in [6, 9, 12, 15].into_iter().enumerate() {
+        s.merge(line, 4 - i as i64).await;
     }
-    // The fixture pushes oldest first, so the first entry is the merge the newest-first scan reaches last.
-    let (oldest_task, oldest_merge) = merges.first().expect("the oldest merge");
     let limits = Limits {
         merges: 2,
         calls: 200,
@@ -593,7 +592,7 @@ async fn a_scan_that_is_cut_short_resumes_so_every_merge_is_looked_at_over_succe
     );
     // The oldest merge is reverted later. A scan that kept re-reading the newest two would never see it.
     s.repo
-        .git(&["revert", "-m", "1", "--no-edit", oldest_merge]);
+        .git(&["revert", "-m", "1", "--no-edit", &oldest_merge]);
     let second = scan(&s, limits).await.unwrap();
     assert_eq!((second.scanned, second.found), (2, 0), "{second:?}");
     let third = scan(&s, limits).await.unwrap();
@@ -603,7 +602,7 @@ async fn a_scan_that_is_cut_short_resumes_so_every_merge_is_looked_at_over_succe
             .w
             .core
             .store
-            .crew_escape_of_merge(oldest_task)
+            .crew_escape_of_merge(&oldest_task)
             .unwrap()
             .is_some()
     );
@@ -889,13 +888,10 @@ async fn a_full_log_refuses_the_scan_whole_with_nothing_written() {
 #[tokio::test]
 async fn a_batch_the_writer_refuses_does_not_pin_the_cursor() {
     let mut s = scan_rig().await;
-    let mut merges = Vec::new();
-    for (i, line) in [3, 8, 13].into_iter().enumerate() {
-        merges.push(
-            s.merge_with(line, 3 - i as i64, |m| m.watch = "broken".into())
-                .await,
-        );
-    }
+    // The merges are named by age, not by their place in the fixture: the batch reads newest first.
+    let (oldest_task, _) = s.merge_with(3, 3, |m| m.watch = "broken".into()).await;
+    let (middle_task, _) = s.merge_with(8, 2, |m| m.watch = "broken".into()).await;
+    s.merge_with(13, 1, |m| m.watch = "broken".into()).await;
     // One short of the limit: not full before git runs, but a batch of two does not fit.
     s.rig
         .w
@@ -921,21 +917,21 @@ async fn a_batch_the_writer_refuses_does_not_pin_the_cursor() {
         "{first:?}"
     );
     assert_eq!(s.counts(), before, "a refused batch wrote");
-    // The batch reads newest first, so it passed merges[2] and then merges[1]: the cursor names the merge the batch
-    // ended on, which is merges[1]. Order is the contract here.
+    // The batch reads newest first, so it passed the newest merge and then the middle one: the cursor names
+    // the merge the batch ended on, the middle one. Order is the contract here.
     let mid = s
         .rig
         .w
         .core
         .store
-        .crew_merge(&merges[1].0)
+        .crew_merge(&middle_task)
         .unwrap()
         .unwrap();
     assert_eq!(
         s.rig.w.core.store.setting(CURSOR_KEY).unwrap().as_deref(),
         Some(format!("{}:{}", mid.merged_unix, mid.id).as_str())
     );
-    // The cursor passed the refused merges, so the older one is reached and fits.
+    // The cursor passed the refused merges, so the oldest one is reached and fits.
     let one = Limits {
         merges: 1,
         ..Limits::default()
@@ -957,7 +953,7 @@ async fn a_batch_the_writer_refuses_does_not_pin_the_cursor() {
             .w
             .core
             .store
-            .crew_escape_of_merge(&merges[0].0)
+            .crew_escape_of_merge(&oldest_task)
             .unwrap()
             .is_some()
     );

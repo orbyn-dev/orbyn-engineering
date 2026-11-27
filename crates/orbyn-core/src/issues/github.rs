@@ -13,10 +13,10 @@ use crate::source_control::forge::{Forge, call, call_input, github_checks};
 use async_trait::async_trait;
 use base64::Engine as _;
 use orbyn_contracts::{
-    IssueActor, IssueAssigneeCandidate, IssueCandidateLabel, IssueCandidates, IssueCloseReason,
-    IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueLinkedPull, IssueReaction,
-    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, IssueTemplate,
-    LinkedPullState, PullChecks, TrackerKind,
+    IssueActivity, IssueActivityKind, IssueActor, IssueAssigneeCandidate, IssueCandidateLabel,
+    IssueCandidates, IssueCloseReason, IssueComment, IssueCounts, IssueDetail, IssueLabel,
+    IssueLinkedPull, IssueReaction, IssueReactionCount, IssueState, IssueStateCategory,
+    IssueSummary, IssueTemplate, LinkedPullState, PullChecks, TrackerKind,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -385,6 +385,83 @@ async fn linked_checks(cwd: &std::path::Path, repository: &str, number: u32) -> 
     github_checks(&answer)
 }
 
+/// How many events one issue read keeps. The timeline read asks for one bounded page (the state changes, newest last),
+/// and a hostile answer is cut here again (docs/issues.md).
+const MAX_ACTIVITY: usize = 50;
+/// The state changes on one issue's own timeline: the closed event the activity shows and a reopen after it. `last:`
+/// keeps the newest page, so an issue with a long history still answers its state changes in one bounded read, and the
+/// item types are named so the answer is these events only — never the labels, assignments and comments GitHub keeps on
+/// the same timeline.
+const ISSUE_ACTIVITY_QUERY: &str = "query OrbynIssueActivity($owner:String!,$name:String!,$number:Int!,$last:Int!){repository(owner:$owner,name:$name){issue(number:$number){timelineItems(last:$last,itemTypes:[CLOSED_EVENT,REOPENED_EVENT]){nodes{__typename ... on ClosedEvent{createdAt actor{login} stateReason} ... on ReopenedEvent{createdAt actor{login}}}}}}}";
+
+/// The events in a GraphQL timeline answer, oldest first. A node that is not a state change, or that the tracker did not
+/// date, is not an event. A close whose reason this GitHub does not have keeps the event and leaves the reason off, and a
+/// reopen never carries one (docs/issues.md).
+fn activity(value: &Value) -> Vec<IssueActivity> {
+    value
+        .pointer("/data/repository/issue/timelineItems/nodes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            let kind = match node.get("__typename").and_then(Value::as_str) {
+                Some("ClosedEvent") => IssueActivityKind::Closed,
+                Some("ReopenedEvent") => IssueActivityKind::Reopened,
+                _ => return None,
+            };
+            let at = text(node, "createdAt");
+            // An event nothing dates could not be placed in the activity, so it is not shown.
+            if at.is_empty() {
+                return None;
+            }
+            let reason = match node.get("stateReason").and_then(Value::as_str) {
+                Some("COMPLETED") => Some(IssueCloseReason::Completed),
+                Some("NOT_PLANNED") => Some(IssueCloseReason::NotPlanned),
+                _ => None,
+            };
+            Some(IssueActivity {
+                kind,
+                actor: node.get("actor").and_then(actor),
+                at,
+                close_reason: match kind {
+                    IssueActivityKind::Closed => reason,
+                    IssueActivityKind::Reopened => None,
+                },
+            })
+        })
+        .take(MAX_ACTIVITY)
+        .collect()
+}
+
+/// The state changes on an issue's own timeline, read beside the detail: one bounded GraphQL page through the person's
+/// own `gh`, best effort. A timeline the account cannot read, a `gh` that does not answer and an issue that is gone all
+/// leave no event known — never "nothing happened" — and none of them fails the detail read (docs/issues.md).
+async fn activity_events(cwd: &std::path::Path, scope: &str, key: &str) -> Vec<IssueActivity> {
+    // The scope is checked like every other one before it becomes a GraphQL argument; a scope that is not owner/repo
+    // names no repository, so there is no timeline to read.
+    let Some((owner, name)) = scope.split_once('/') else {
+        return Vec::new();
+    };
+    let args = vec![
+        "api".to_owned(),
+        "graphql".to_owned(),
+        "-f".to_owned(),
+        format!("query={ISSUE_ACTIVITY_QUERY}"),
+        "-f".to_owned(),
+        format!("owner={owner}"),
+        "-f".to_owned(),
+        format!("name={name}"),
+        "-F".to_owned(),
+        format!("number={key}"),
+        "-F".to_owned(),
+        format!("last={MAX_ACTIVITY}"),
+    ];
+    match graphql(cwd, &args).await {
+        Ok(answer) => activity(&answer),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// A failure of `gh`, in the service's own words. Raw output is never passed on.
 pub(crate) fn classify(error: CoreError) -> CoreError {
     let message = match &error {
@@ -587,6 +664,7 @@ fn created_detail(scope: &str, value: &Value) -> Result<IssueDetail> {
         summary,
         body: text(value, "body"),
         comments: Vec::new(),
+        activity: Vec::new(),
         linked_pull_requests: Vec::new(),
         linked_threads: Vec::new(),
         reactions: None,
@@ -1310,10 +1388,14 @@ impl IssueSource for GitHub {
         for (pull, checks) in linked.iter_mut().zip(checks) {
             pull.checks = checks;
         }
+        // The state changes on the issue's own timeline come with the detail (docs/issues.md), best effort: an
+        // unreadable timeline leaves the issue shown with no events rather than failing the read.
+        let activity = activity_events(&self.cwd, scope, key).await;
         Ok(IssueDetail {
             summary,
             body: text(&value, "body"),
             comments: comments(&value),
+            activity,
             linked_pull_requests: linked,
             linked_threads: Vec::new(),
             // Counts are the react answer's alone: a detail read keeps them absent (docs/issues.md, "As built").
@@ -1708,6 +1790,10 @@ mod tests {
 #[cfg(test)]
 #[path = "github_linked_checks_tests.rs"]
 mod linked_checks_tests;
+
+#[cfg(test)]
+#[path = "github_activity_tests.rs"]
+mod activity_tests;
 
 #[cfg(test)]
 #[path = "github_write_tests.rs"]

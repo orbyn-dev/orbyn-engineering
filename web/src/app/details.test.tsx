@@ -8,6 +8,7 @@ import { useUi } from "../product/state/ui";
 import { useThreadLogs } from "../product/state/threadLogs";
 import { runShellCommand } from "./shell/commands";
 import { parseRoute } from "../product/state/route";
+import "./routeScreens.test-support";
 import { App } from "./App";
 import * as threadApi from "../features/thread/api";
 

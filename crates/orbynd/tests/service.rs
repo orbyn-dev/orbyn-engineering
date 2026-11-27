@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use serde_json::{Value, json};
-use support::{Options, Service, TempDir, setup, text_of, types_of};
+use support::{Options, Service, TempDir, setup, setup_adopted, text_of, types_of};
 
 #[tokio::test]
 async fn token_is_required_on_api_agui_and_ws() {
@@ -631,10 +631,12 @@ async fn a_crash_while_an_approval_is_open_closes_the_tool_call_and_interrupts_t
         )],
         ..Options::default()
     };
-    let (service, thread) = setup(&dir, options(), "codex").await;
-    // The interrupted thread must not continue by itself, or the recovered state is a new run.
+    let (service, thread) = setup_adopted(&dir, options(), "codex").await;
+    // The interrupted thread must not continue by itself, or the recovered state is a new run. The
+    // PUT is checked, not fired and forgotten: a preference that silently failed to save would
+    // surface later as "recovery must not start an engine turn" and hide the real cause.
     let off = json!({ "values": { "continue_threads_after_update": false } });
-    service
+    let response = service
         .client
         .put(format!("{}/api/preferences", service.url))
         .bearer_auth(&service.token)
@@ -642,6 +644,19 @@ async fn a_crash_while_an_approval_is_open_closes_the_tool_call_and_interrupts_t
         .send()
         .await
         .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "the preference is saved before the crash"
+    );
+    let saved: Value = response.json().await.unwrap();
+    let stored = saved
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["key"] == "continue_threads_after_update")
+        .unwrap_or_else(|| panic!("the preference was not written: {saved}"));
+    assert_eq!(stored["value"], false, "{saved}");
     service.admit(&thread, "[approve]").await;
     // The kill point is the fake engine's own record that it started the turn, not a sleep: the
     // approval then proves the tool call is open and the service has written it down.

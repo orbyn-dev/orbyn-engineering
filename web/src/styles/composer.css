@@ -482,9 +482,13 @@
   min-width: 0;
 }
 
+/* Target size (WCAG 2.2 AA 2.5.8): the checkout, repositories and permission links in the context row were 18 px tall.
+   The crew links' 24 px box, with the negative block margin that leaves the line, clears the minimum. */
 .context-action {
   display: inline-flex;
   align-items: center;
+  min-height: 24px;
+  margin-block: -3px;
   gap: 4px;
   padding: 0;
   border: 0;

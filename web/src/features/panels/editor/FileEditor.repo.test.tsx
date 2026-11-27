@@ -253,3 +253,24 @@ it("moves a repository's file comment with its line on save, and leaves another 
   expect(chips.find((chip) => chip.id === "mine")).toMatchObject({ line: 2, endLine: 2, sourceRevision: "r2", comment: "here" });
   expect(chips.find((chip) => chip.id === "primary")).toMatchObject({ line: 1, sourceRevision: "r-planner", comment: "primary" });
 });
+
+it("leaves a comment the Changes panel made on the primary repository's file to the diff it was made on", async () => {
+  const served = serve();
+  const key = fileKey("t", "/repo", "notes.txt");
+  render(<><EditorTitleExtras threadId="t" tabId="main" onSave={() => void saveSession(key)} /><Viewer threadId="t" tabId="main" path="notes.txt" line={null} /></>);
+  const box = await planner();
+  await waitFor(() => expect(box).toHaveValue("primary text\n"));
+  act(() => {
+    // The Changes panel's own shape for the primary repository: it names the repository, carries no repo_id because the
+    // primary is the thread's own checkout, and is tied to the diff it was made on (`origin`), not to a file revision. A
+    // save from this tab is therefore not its edit to follow: the diff snapshot owns its line, and an editor comment's
+    // line is the one a save moves (the test above).
+    useComposerChips.getState().add("t", { id: "changes", kind: "review", path: "notes.txt", line: 1, endLine: 1, comment: "from changes", excerpt: "primary text", sourceRevision: "diff:worktree", sourceCwd: "/repo", repoName: "app" });
+  });
+  act(() => useEditorSessions.getState().patch(key, { text: `// header\nprimary text\n` }));
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(served.puts).toHaveLength(1));
+  const chip = useComposerChips.getState().chips.t?.find((one) => one.id === "changes");
+  expect(chip).toMatchObject({ line: 1, endLine: 1, sourceRevision: "diff:worktree", repoName: "app", comment: "from changes" });
+  expect("repoId" in chip!).toBe(false);
+});
