@@ -67,15 +67,20 @@ export function useRouteFocus(
   const opener = useRef<{ element: Element | null; key: string } | null>(null);
   // The route of the last commit, ready or not: `previous` follows settled pages only, so a Settings
   // session that never became ready leaves no trace there.
-  const last = useRef(routeName);
+  const last = useRef({ key: routeKey, name: routeName });
+  // A page still owed its handoff. The page a route comes back to reports itself a commit late, once it
+  // has painted again, so the departure cannot be read off the commit that becomes ready alone.
+  const owed = useRef(false);
   useEffect(() => {
     const before = previous.current;
     // A route that differs from the last commit is a departure, even when it is also the last page focus
     // completed on: leaving a page while its screen was still arriving never reached `previous`, so
-    // coming back to it looked like the page that never changed.
-    const departed = last.current !== routeName;
-    const entering = routeName === "settings" && departed;
-    last.current = routeName;
+    // coming back to it looked like the page that never changed. The address is what moves, not the page
+    // name: two threads share a name and are still two pages.
+    if (last.current.key !== routeKey) owed.current = true;
+    const departed = owed.current;
+    const entering = routeName === "settings" && last.current.name !== "settings";
+    last.current = { key: routeKey, name: routeName };
     // What opened Settings is recorded the moment the route enters it, never when its screen arrives:
     // the wait for a first chunk is exactly when tabbing moves the keyboard, and closing Settings must
     // return to the control that opened it rather than to whatever the tab reached meanwhile. A new
@@ -111,20 +116,22 @@ export function useRouteFocus(
       // screen: the destination after it takes its own title, like every later page, instead of being
       // skipped as the page the app opened on.
       first.current = false;
+      owed.current = false;
       back.element.focus({ preventScroll: true });
       return;
     }
     if (!root) return;
     // The screen only became ready: the phone's sheet closed over the same page, so nothing moved and
     // focus stays where it was given (the title bar button, or the sheet's own Close). A page that
-    // changed is followed below, and a page the route left and came back to counts as changed even
-    // though it is the last page focus completed on too: its screen mounted again.
+    // changed is followed below, and one the route left and came back to counts as changed even though
+    // it is the last page focus completed on too: its screen mounted again and was still owed the handoff.
     if (!first.current && !departed && before.key === routeKey && before.name === routeName) return;
     previous.current = { key: routeKey, name: routeName };
     // A page kept mounted behind settings is hidden, so it never takes the focus.
     const visible = (selector: string) => [...root.querySelectorAll<HTMLElement>(selector)].find((element) => !element.closest("[hidden]")) ?? null;
     const target = visible("[data-autofocus]") ?? (first.current ? null : visible("[data-page-title]"));
     first.current = false;
+    owed.current = false;
     (target ?? root).focus({ preventScroll: true });
     root.scrollTop = 0;
   }, [routeKey, routeName, ready, main, coveredKey]);

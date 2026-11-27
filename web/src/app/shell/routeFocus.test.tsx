@@ -216,12 +216,39 @@ it("hands focus to a page the route left and returned to while it was loading", 
   view.rerender({ key: "#/skills", name: "skills", ready: false, covered: "#/skills" });
   expect(document.activeElement).toBe(nav);
 
-  // Back to Usage, which was already loaded: its screen mounts again, so the page follows the route a
-  // second time and takes the focus, rather than the return being read as the page that never changed.
+  // Back to Usage, whose screen mounts again and reports itself one commit after the route moved, as a
+  // re-mounted screen does. The departure has to outlive that wait, so the page still follows the route
+  // the second time instead of the return being read as the page that never changed.
   const remounted = screen("Screen title");
   usage.remove();
   ref.current = remounted;
+  view.rerender({ key: "#/usage", name: "usage", ready: false, covered: "#/usage" });
+  expect(document.activeElement).toBe(nav);
   view.rerender({ key: "#/usage", name: "usage", ready: true, covered: "#/usage" });
+  expect(document.activeElement).toBe(remounted.querySelector("[data-page-title]"));
+});
+
+it("hands focus to a page the route left that shares its name", () => {
+  const thread = screen("Screen title");
+  const ref = { current: thread };
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/threads/t-1", name: "thread", ready: true, covered: "#/threads/t-1" } },
+  );
+  const nav = control("Another thread");
+  act(() => nav.focus());
+
+  // Another thread is chosen before its data arrives: the page name is unchanged, the address is not.
+  view.rerender({ key: "#/threads/t-2", name: "thread", ready: false, covered: "#/threads/t-2" });
+  expect(document.activeElement).toBe(nav);
+
+  // Back to the first thread: the name never changed, so only the address says the page moved.
+  const remounted = screen("Screen title");
+  thread.remove();
+  ref.current = remounted;
+  view.rerender({ key: "#/threads/t-1", name: "thread", ready: false, covered: "#/threads/t-1" });
+  view.rerender({ key: "#/threads/t-1", name: "thread", ready: true, covered: "#/threads/t-1" });
   expect(document.activeElement).toBe(remounted.querySelector("[data-page-title]"));
 });
 
