@@ -239,6 +239,44 @@ describe("useAsync", () => {
     });
   });
 
+  describe("a cancellation this screen did not cause", () => {
+    type Read = { signal: AbortSignal; resolve: (value: string) => void; reject: (error: unknown) => void };
+    const deferred = () => {
+      const reads: Read[] = [];
+      const load = (signal: AbortSignal) =>
+        new Promise<string>((resolve, reject) => {
+          reads.push({ signal, resolve, reject });
+        });
+      return { reads, load };
+    };
+    const cancelled = () => new DOMException("The request was aborted.", "AbortError");
+
+    it("releases the lane so a parked background refresh starts a read", async () => {
+      const { reads, load } = deferred();
+      const { result } = renderHook(() => useAsync("joined", load, { fresh: true }));
+      await waitFor(() => expect(reads).toHaveLength(1));
+      act(() => { void result.current.refreshQuietly(); });
+      expect(reads).toHaveLength(1);
+      // The request this read joined belonged to a screen that went away, so its abort arrives while this
+      // read's own signal is still live. Nothing answers it, but an event parked behind it can now run.
+      await act(async () => { reads[0]?.reject(cancelled()); });
+      await waitFor(() => expect(reads).toHaveLength(2));
+      await act(async () => { reads[1]?.resolve("answer"); });
+      expect(result.current).toMatchObject({ status: "ready", data: "answer", refreshing: false });
+    });
+
+    it("starts no new work when the screen unmounts with a read in flight", async () => {
+      const { reads, load } = deferred();
+      const { unmount } = renderHook(() => useAsync("joined", load, { fresh: true }));
+      await waitFor(() => expect(reads).toHaveLength(1));
+      unmount();
+      await act(async () => { reads[0]?.reject(cancelled()); });
+      // A real turn lets a wrongly started follow-up run and be counted.
+      await new Promise((resolve) => setTimeout(resolve));
+      expect(reads).toHaveLength(1);
+    });
+  });
+
   describe("keepOnManual", () => {
     type Read = { context: LoadContext; resolve: (value: string) => void; reject: (error: unknown) => void };
     const gated = () => {
