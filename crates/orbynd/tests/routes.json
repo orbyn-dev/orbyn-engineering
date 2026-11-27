@@ -79,6 +79,7 @@
     ["GET","/api/crew/flow/facts","local"],
     ["GET","/api/crew/flow/map","local"],
     ["GET","/api/crew/flow/messages","local"],
+    ["GET","/api/crew/flow/run-link","local"],
     ["GET","/api/crew/flow/tasks","local"],
     ["GET","/api/crew/flow/tasks/{id}","local"],
     ["GET","/api/crew/flow/tasks/{id}/artifacts","local"],
