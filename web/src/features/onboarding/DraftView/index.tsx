@@ -28,7 +28,7 @@ import { DRAFT_KEY, SCRATCH, useDraftStore, worktreePurpose } from "../../../pro
 import { DraftModelControls } from "./DraftModelControls";
 import { SnapshotCapturingChip, SnapshotDraftChip, isSnapShotSource, sourceBodyToSend, useSnapshot, useSnapshotDraftFlow, withoutAccessibleText, type SnapShotSource } from "../../snapshot";
 import { RepoStart } from "./RepoStart";
-import { MAX_PREVIOUS_WORKTREES, uniquePurpose, useThreadList, type ModelChoice, type OpenMenu } from "./draftHelpers";
+import { MAX_PREVIOUS_WORKTREES, branchNameSeed, uniquePurpose, useThreadList, type ModelChoice, type OpenMenu } from "./draftHelpers";
 import { SUGGESTIONS } from "./suggestions";
 
 export { SCRATCH } from "../../../product/state/draftStore";
@@ -159,13 +159,15 @@ export function DraftView({ projectId }: { projectId: string | null }) {
 
   /** Creates and starts one thread, leaving the draft and the route alone. */
   const launch = async (choice: ModelChoice, purpose: string | null, text: string) => {
+    const newWorktree = purpose !== null && purpose !== reused;
     const thread = await api.createThread({
       ...(project ? { project_id: project.id } : {}),
       engine: choice.engine,
       model: choice.model,
       title: null,
       worktree: purpose,
-      ...(purpose !== null && purpose !== reused && baseBranch.trim() ? { base_branch: baseBranch.trim() } : {}),
+      ...(newWorktree ? { branch_name_seed: branchNameSeed(text) } : {}),
+      ...(newWorktree && baseBranch.trim() ? { base_branch: baseBranch.trim() } : {}),
       skill_profile: null,
     });
     putThread(thread);
