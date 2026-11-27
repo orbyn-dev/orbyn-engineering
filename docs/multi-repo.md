@@ -247,7 +247,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   repository. The service answers ONE repository's files per read (`?repo_id=`, absent is the primary) and `FileDiff` has no repository
   field. The panel now reads once per trusted repository of `GET .../repos` and marks each file itself; a thread with no repositories
   reads once, as before. An untrusted repository reports no changes (`files: null`) and its reads are `409 repo_untrusted`, so it is not
-  read; if every read fails the Changes show the error.
+  read; if every read fails the Changes show the error. A line comment made on one of those files names the repository the
+  file came from and carries its `repo_id` when that is another repository, so it is drawn only under that repository's file
+  and the message the agent receives says `<repo name>/<path>`; two repositories' files of one path keep their own comments.
+  The primary repository is the thread's own checkout, which carries no `repo_id` anywhere else either, so a comment on its
+  file names it without one and stays the same file as that tab's comments. An ordinary thread's comments name no repository.
 - **`ThreadRepo.files` is `string[] | null`** (null for an untrusted repository); `pull_request` does not exist. The menu on a
   repository's group therefore offers Commit, Push and Create pull request only (`POST .../git/action` with `repo_id`). Open, Merge
   and Review pull request are gone until the pull request routes take `repo_id`; they would have acted on the primary repository's
@@ -343,7 +347,8 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab, which draws it
   by what it holds; it is not dragged into the message, because the thread's composer chips name a checkout's path (its Open in editor,
   Open in browser, Reveal and line comments carry the `repo_id`, and a comment on another repository's file is context for the next
-  message, never a service write; the Changes panel's comments do not name a repository yet). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
+  message, never a service write; a line comment made in the Changes panel names its file's repository as well, so two repositories'
+  files of one path keep their own comments and the engine is told which repository the comment is about). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
   chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
   carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the

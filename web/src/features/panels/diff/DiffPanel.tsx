@@ -349,6 +349,10 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       full={shownFully.has(fileKey(selected))}
       repoName={repoNameOf(selected)}
       repoId={selected.repo_id !== undefined && selected.repo_id !== projectId ? selected.repo_id : undefined}
+      // The primary repository is the thread's own checkout, which carries no repository anywhere else either: stamped with
+      // the project id, its comments would never match the ones a file tab makes on that same file, and a save from that tab
+      // would leave them unmoved and unmarked.
+      fileRepoId={selected.repo_id === projectId ? undefined : selected.repo_id}
       split={wide}
       onShowAll={() => setShownFully(new Set(shownFully).add(fileKey(selected)))}
       canRender={source === "worktree" || source === "thread"}
