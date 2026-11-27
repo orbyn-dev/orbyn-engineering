@@ -544,8 +544,11 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   write reads the stored description first and is `400 invalid` with nothing written when GitLab holds more than 64 KiB
   of it, because then every copy of the description the app can hold is the cut form, so an edit anywhere in the text
   it shows would drop what lies past the cut; the length check above runs before that read, and a description no longer
-  than the cut is written as before. The answer is the issue read back, so it carries the comments and the states a
-  detail read does.
+  than the cut is written as before. The read also keeps only the first 100 labels and the first 50 assignees of an
+  issue, so a write that replaces either set reads the stored issue the same way and is `400 invalid` with nothing
+  written when it holds more: the set the app can show is only the first page of it, so a replacement built from that
+  read — however many entries were removed first — would drop the entries past the cut. The answer is the issue read
+  back, so it carries the comments and the states a detail read does.
 - **`state`** is one `PUT` of `state_event` (`close` or `reopen`). GitLab has one closed state and stores no reason
   for it, so the detail offers `Open` and `Closed`; a close reason the person sends is not stored, and the answer's
   `IssueState.close_reason` is `null`, which is what GitLab has. The detail is read before the write, so a name the
@@ -555,7 +558,10 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   page may have more. A label carries its colour. A label whose name is 200 characters or more is left out rather than
   cut, because the read cuts at that length and a write refuses a name that long (GitLab itself allows up to 255), so
   `truncated` says the answer is partial. An assignee's `id` is the numeric member id, which is what the write
-  sends, and its `name` is the person's own when GitLab reports one.
+  sends, and its `name` is the person's own when GitLab reports one. A login is kept at the 80 characters the app
+  keeps (`web/src/features/issues/edit.ts`), because the picker keys a person by that login and sends the id it looks
+  up by it: two members whose kept login is the same cannot be told apart, so neither is offered and `truncated` says
+  the answer is partial, rather than one of them standing for both and a write reassigning the issue to the other.
 - **`states`** is `Some` for every GitLab detail, its create answer and both write answers: `Open` and `Closed`. The
   other three trackers answer `None` and keep their State row as Planned.
 

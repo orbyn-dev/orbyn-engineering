@@ -32,7 +32,10 @@ const MAX_REDIRECTS: usize = 3;
 const MAX_PAGE: u32 = 1000;
 const MAX_TITLE: usize = 256;
 const MAX_LABEL: usize = 200;
-const MAX_LOGIN: usize = 100;
+/// A login kept as the app keeps it (`web/src/features/issues/edit.ts`, 80 characters): the picker keys an assignee row
+/// by this login and looks the id a write sends up by it, so a login this long or longer is the form the app shows, and
+/// a second member sharing it could never be told apart from the first.
+const MAX_LOGIN: usize = 80;
 const MAX_URL: usize = 2048;
 const MAX_LABELS: usize = 100;
 const MAX_ASSIGNEES: usize = 50;
@@ -208,14 +211,25 @@ impl GitLab {
         Ok(())
     }
 
-    /// Whether the description GitLab holds is longer than one read returns, which is what makes every copy of it the
-    /// app can hold the cut form (docs/issues.md, "Issue writes and list controls"). A detail read carries the text
-    /// but not that answer, so a write that would replace the description reads the stored one first.
-    async fn description_is_clipped(&self, project: &str, key: &str) -> Result<bool> {
+    /// The sets of the issue GitLab holds that are longer than one read returns, which is what makes every copy of it
+    /// the app can hold the cut form (docs/issues.md, "Issue writes and list controls"). A detail read carries the
+    /// description but not these answers, so a write that would replace the description, the labels or the assignees
+    /// reads the stored issue first.
+    async fn stored_clipped(&self, project: &str, key: &str) -> Result<StoredClipped> {
         let path = format!("/api/v4/projects/{project}/issues/{key}");
         let got = self.fetch(&path, &[], "issue").await?;
         let value = parse(&got.body)?;
-        Ok(text(&value, "description").len() > MAX_BODY_BYTES)
+        let count = |name: &str| {
+            value
+                .get(name)
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        };
+        Ok(StoredClipped {
+            description: text(&value, "description").len() > MAX_BODY_BYTES,
+            labels: count("labels") > MAX_LABELS,
+            assignees: count("assignees") > MAX_ASSIGNEES,
+        })
     }
 
     /// The tracker's totals, before any filter. Best effort: no answer means no totals, never a failed list.
@@ -667,6 +681,18 @@ fn note_id_ok(comment: &str) -> Result<()> {
     Ok(())
 }
 
+/// The sets of a stored issue that one read returns only in part, so a write that replaces one of them would drop what
+/// lies past the cut.
+#[derive(Default)]
+struct StoredClipped {
+    /// The description is longer than [`MAX_BODY_BYTES`].
+    description: bool,
+    /// The issue carries more than [`MAX_LABELS`] labels.
+    labels: bool,
+    /// The issue carries more than [`MAX_ASSIGNEES`] assignees.
+    assignees: bool,
+}
+
 /// The assignee ids a create sends: a candidate id is the numeric user id on GitLab, never a login typed by hand.
 fn assignee_ids(assignees: &[String]) -> Result<Vec<u64>> {
     assignees
@@ -819,31 +845,18 @@ impl IssueSource for GitLab {
     async fn update(&self, scope: &str, key: &str, edit: &IssueEdit<'_>) -> Result<IssueDetail> {
         let project = project_segment(scope)?;
         key_ok(key)?;
-        let mut payload = serde_json::Map::new();
-        if let Some(title) = edit.title {
-            payload.insert("title".into(), json!(title));
-        }
-        if let Some(body) = edit.body {
-            // The read cuts a description at 64 KiB, so a body this close to that cap may be the cut form: writing it
-            // back would drop what GitLab holds past the cut, which cannot be recovered from here. Refused loudly
-            // instead; the description can be edited in GitLab.
-            if body.len() + 4 > super::MAX_BODY_BYTES {
-                return Err(CoreError::Invalid(
-                    "A GitLab description of about 64 KiB cannot be written: the read may have cut it. Edit it in GitLab."
-                        .into(),
-                ));
-            }
-            // A shorter body is no proof the read did not cut it: the person only ever saw the read's first 64 KiB, so
-            // whatever they send was derived from it, and an edit anywhere in that text would replace the whole
-            // description and drop the rest. The description GitLab holds is read before anything is written, and a
-            // stored one past the cut refuses the write whatever the body says or however much of it was edited.
-            if self.description_is_clipped(&project, key).await? {
-                return Err(CoreError::Invalid(
-                    "This GitLab description is longer than one read, so Orbyn only has its first 64 KiB: writing it back would drop the rest. Edit it in GitLab."
-                        .into(),
-                ));
-            }
-            payload.insert("description".into(), json!(body));
+        // A write replaces a whole set, and every one of those sets is cut by the read: the description at 64 KiB, the
+        // labels at 100 and the assignees at 50. The checks that need no request run first, so a write refused on the
+        // text alone is refused before anything is read.
+        if let Some(body) = edit.body
+            && body.len() + 4 > super::MAX_BODY_BYTES
+        {
+            // A body this close to the cap may be the cut form: writing it back would drop what GitLab holds past the
+            // cut, which cannot be recovered from here. Refused loudly; the description can be edited in GitLab.
+            return Err(CoreError::Invalid(
+                "A GitLab description of about 64 KiB cannot be written: the read may have cut it. Edit it in GitLab."
+                    .into(),
+            ));
         }
         if let Some(labels) = edit.labels {
             // GitLab takes labels as one comma-separated value, so a name with a comma would silently become two.
@@ -863,10 +876,45 @@ impl IssueSource for GitLab {
                         .into(),
                 ));
             }
+        }
+        let assignees = edit.assignees.map(assignee_ids).transpose()?;
+        // A set shorter than the cap is no proof the read did not cut it: the person only ever saw what the read
+        // returned, so whatever they send was derived from it, and replacing the set would drop the entries past the
+        // cut. What GitLab holds is read before anything is written, and a stored set past the cut refuses the write
+        // whatever the values say or however much of them was edited.
+        if edit.body.is_some() || edit.labels.is_some() || edit.assignees.is_some() {
+            let stored = self.stored_clipped(&project, key).await?;
+            if stored.description && edit.body.is_some() {
+                return Err(CoreError::Invalid(
+                    "This GitLab description is longer than one read, so Orbyn only has its first 64 KiB: writing it back would drop the rest. Edit it in GitLab."
+                        .into(),
+                ));
+            }
+            if stored.labels && edit.labels.is_some() {
+                return Err(CoreError::Invalid(
+                    "This GitLab issue has more labels than one read, so Orbyn only has the first 100: writing the set back would drop the rest. Change them in GitLab."
+                        .into(),
+                ));
+            }
+            if stored.assignees && edit.assignees.is_some() {
+                return Err(CoreError::Invalid(
+                    "This GitLab issue has more assignees than one read, so Orbyn only has the first 50: writing the set back would drop the rest. Change them in GitLab."
+                        .into(),
+                ));
+            }
+        }
+        let mut payload = serde_json::Map::new();
+        if let Some(title) = edit.title {
+            payload.insert("title".into(), json!(title));
+        }
+        if let Some(body) = edit.body {
+            payload.insert("description".into(), json!(body));
+        }
+        if let Some(labels) = edit.labels {
             payload.insert("labels".into(), json!(labels.join(",")));
         }
-        if let Some(assignees) = edit.assignees {
-            payload.insert("assignee_ids".into(), json!(assignee_ids(assignees)?));
+        if let Some(assignees) = assignees {
+            payload.insert("assignee_ids".into(), json!(assignees));
         }
         self.put_issue(&project, key, &Value::Object(payload))
             .await?;
@@ -980,9 +1028,26 @@ impl IssueSource for GitLab {
                 truncated = true;
             }
         }
+        // The picker keys an assignee by the login the read shows and sends the id it looks up by that login. Two members
+        // whose kept login is the same word cannot be told apart by it, and the issue's own assignee read is that same
+        // word, so offering either would let Apply reassign the issue to the wrong person. Neither is offered and the
+        // answer says it is partial, as a label name the read would cut is left out rather than cut.
+        let mut distinct: Vec<IssueAssigneeCandidate> = Vec::with_capacity(assignees.len());
+        let mut shared: Vec<String> = Vec::new();
+        for who in assignees {
+            if shared.contains(&who.login) {
+                continue;
+            }
+            if let Some(index) = distinct.iter().position(|kept| kept.login == who.login) {
+                shared.push(distinct.remove(index).login);
+                truncated = true;
+                continue;
+            }
+            distinct.push(who);
+        }
         Ok(IssueCandidates {
             labels,
-            assignees,
+            assignees: distinct,
             truncated,
         })
     }

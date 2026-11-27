@@ -1746,6 +1746,101 @@ mod writes {
         );
     }
 
+    /// The read keeps the first 50 assignees of an issue, so a picker seeded from it never sees the rest: replacing the
+    /// set with what the read showed, however many entries were removed, would drop the assignees past the cut. The
+    /// stored issue is read before the write, so the set is only replaced when the read returned it whole.
+    #[tokio::test]
+    async fn a_clipped_assignee_read_is_refused_instead_of_replacing_the_stored_set() {
+        let stored = |count: usize| {
+            (1..=count)
+                .map(|id| json!({ "id": id, "username": format!("person{id}") }))
+                .collect::<Vec<_>>()
+        };
+        let clipped = stored(super::MAX_ASSIGNEES + 1);
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            row["assignees"] = json!(clipped.clone());
+            Reply::json(&row)
+        })
+        .await;
+        let gitlab = reader(&server);
+        // The picker shows the read's first 50, so the person removes 26 of them and sends the 24 that are left.
+        let sent: Vec<String> = (1..=24).map(|id| id.to_string()).collect();
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: None,
+                    assignees: Some(&sent),
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::Invalid(message) if message.contains("assignees than one read")),
+            "a set the read cut is refused: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was written, so the assignee the read never saw survives"
+        );
+    }
+
+    /// A stored issue with more labels than one read keeps them all; a replacement built from the read's first 100
+    /// would drop the rest, so it is refused before anything is written.
+    #[tokio::test]
+    async fn a_clipped_label_read_is_refused_instead_of_replacing_the_stored_set() {
+        let clipped = (1..=super::MAX_LABELS + 1)
+            .map(|n| json!(format!("label-{n}")))
+            .collect::<Vec<_>>();
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.line.starts_with("PUT") {
+                return Reply::json(&issue(&base, 21));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            let mut row = issue(&base, 21);
+            row["labels"] = json!(clipped.clone());
+            Reply::json(&row)
+        })
+        .await;
+        let gitlab = reader(&server);
+        let sent = vec!["label-1".to_owned()];
+        let error = gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&sent),
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::Invalid(message) if message.contains("labels than one read")),
+            "a set the read cut is refused: {error:?}"
+        );
+        assert!(
+            !server.seen().iter().any(|r| r.line.starts_with("PUT")),
+            "nothing was written, so the labels the read never saw survive"
+        );
+    }
+
     #[tokio::test]
     async fn an_edit_writes_labels_and_assignees_as_the_whole_new_set() {
         let server = Server::start(|req| {
@@ -1994,6 +2089,40 @@ mod writes {
         assert!(
             candidates.truncated,
             "a label left out makes the answer partial"
+        );
+    }
+
+    /// GitLab allows logins longer than the 80 characters a read keeps, so two members can reach the picker as one login,
+    /// and the picker sends the id it looks up by that login: offering both would make Apply reassign the issue to
+    /// whichever id was kept last. Neither is offered, and the answer says it is partial.
+    #[tokio::test]
+    async fn assignee_candidates_whose_kept_logins_match_are_left_out_rather_than_merged() {
+        let prefix = "u".repeat(MAX_LOGIN);
+        let first = format!("{prefix}alpha");
+        let second = format!("{prefix}beta");
+        let server = Server::start(move |req| match req.path() {
+            "/api/v4/projects/grp%2Fproj/labels" => Reply::json(&json!([])),
+            "/api/v4/projects/grp%2Fproj/members/all" => Reply::json(&json!([
+                { "id": 12, "username": &first, "name": "A" },
+                { "id": 13, "username": &second, "name": "B" },
+                { "id": 14, "username": "cy" },
+            ])),
+            other => panic!("a candidates read asked for {other}"),
+        })
+        .await;
+        let candidates = reader(&server).candidates("grp/proj").await.unwrap();
+        assert_eq!(
+            candidates
+                .assignees
+                .iter()
+                .map(|who| who.login.as_str())
+                .collect::<Vec<_>>(),
+            ["cy"],
+            "the two members the read cannot tell apart are not offered, and the other one is"
+        );
+        assert!(
+            candidates.truncated,
+            "a member left out makes the answer partial"
         );
     }
 
