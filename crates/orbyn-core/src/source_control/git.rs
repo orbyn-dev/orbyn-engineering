@@ -906,6 +906,9 @@ mod tests {
         for args in [
             &["init", "-q"][..],
             &["config", "core.autocrlf", "true"][..],
+            // An inherited `core.safecrlf=true` refuses the LF-only fixture written below, so pin
+            // it: this repository's settings decide the test, not the machine's.
+            &["config", "core.safecrlf", "false"][..],
             &["config", "user.email", "review@example.invalid"][..],
             &["config", "user.name", "Review"][..],
         ] {
