@@ -1580,9 +1580,11 @@ async fn a_restore_moves_no_worktree_another_live_thread_is_working_in() {
     let run = "run-shared-root";
     let index = dir.path().join("restore-index");
     seed_restore_checkpoints(&core, &thread, &project, &other_id, &folder, run, &index).await;
-    // Another live thread works in the second repository's worktree, with a file of its own there.
+    // Another live thread works in the second repository's worktree, with a file of its own there. A file only the
+    // first worktree has makes a partial restore observable: the refusal must come before either worktree moves.
     let _neighbor = neighbor(&core, &project, &folder.join("other"));
     std::fs::write(folder.join("other/theirs.txt"), "theirs\n").unwrap();
+    std::fs::write(folder.join("main/kept.txt"), "kept\n").unwrap();
     let error = core
         .restore_workspace(
             &thread,
@@ -1599,6 +1601,11 @@ async fn a_restore_moves_no_worktree_another_live_thread_is_working_in() {
         std::fs::read_to_string(folder.join("other/theirs.txt")).unwrap(),
         "theirs\n",
         "no worktree was moved"
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("main/kept.txt")).unwrap(),
+        "kept\n",
+        "the first worktree was not moved before the refusal"
     );
 }
 
@@ -1619,6 +1626,8 @@ async fn a_restore_is_refused_while_another_live_thread_works_in_the_threads_fol
     let stored = core.store.thread(&thread).unwrap();
     let _neighbor = neighbor(&core, &project, Path::new(&stored.cwd));
     std::fs::write(folder.join("theirs.txt"), "theirs\n").unwrap();
+    // A file only the first worktree has shows the refusal came before any worktree moved.
+    std::fs::write(folder.join("main/kept.txt"), "kept\n").unwrap();
     let error = core
         .restore_workspace(
             &thread,
@@ -1637,6 +1646,11 @@ async fn a_restore_is_refused_while_another_live_thread_works_in_the_threads_fol
         std::fs::read_to_string(folder.join("theirs.txt")).unwrap(),
         "theirs\n",
         "no worktree was moved"
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("main/kept.txt")).unwrap(),
+        "kept\n",
+        "the first worktree was not moved before the refusal"
     );
 }
 
