@@ -50,7 +50,16 @@ export function escape(selector: string) {
   // \w does not match a backslash, so this class still loses one: a finding.
   // ruleid: orbyn-js-regex-escape-skips-backslash
   const k = selector.replace(/[\w.]/g, "\\$&");
-  return [a, b, c, d, e, f, g, h, i, j, k];
+  // A code-point escape for a backslash escapes it the same way, alone or beside an escaped "]".
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const l = selector.replace(/[\x5c]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const m = selector.replace(/[\u005c]/g, "\\$&");
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const n = selector.replace(/[\134]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const o = selector.replace(/[.*+?^${}()|[\]\x5c]/g, '\\$&');
+  return [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o];
 }
 
 export function names(name: string, text: string) {

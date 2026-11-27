@@ -19,7 +19,8 @@ finding, and **does not replace CodeQL**.
     another value; `redact`, `redacted_tail` and length-only reads are sanitizers.
   - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")`, in either
     quote style, whose character class matches no backslash of its own — not negated, and without a `\W`, `\S` or `\D`
-    shorthand (`web/src/styles/tokens.test.ts:165` was the known case; it is fixed).
+    shorthand, a `\x5c` or `\u005c` escape, or an octal `\134` (`web/src/styles/tokens.test.ts:165` was the known case;
+    it is fixed). A `\p{…}` property escape is outside the rule.
 - `tests/`: a matching case and a safe look-alike for every rule. A rule is unproven without both. The workflow runs
   them first.
 
