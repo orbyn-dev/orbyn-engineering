@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { KeybindingRule } from "../../api/types";
-import { isTerminalShortcut, commandShortcut, formatShortcut, matchesKey, runHandlers, setTerminalRules, shortcutForEvent, useCommand } from "./shortcuts";
+import { FALLBACK_RULES, isTerminalShortcut, commandShortcut, formatShortcut, matchesKey, runHandlers, setTerminalRules, shortcutForEvent, useCommand } from "./shortcuts";
 
 const command = "script.fixture-action.run";
 const rule = (key: string, when: string | null = null): KeybindingRule => ({ key, command, when, remove: false });
@@ -98,6 +98,12 @@ it("reads and matches mod+f from Ctrl on the Windows user agent when navigator.p
   const ctrlF = key("f", { ctrlKey: true });
   expect(shortcutForEvent(ctrlF)).toBe("mod+f");
   expect(matchesKey("mod+f", ctrlF)).toBe(true);
+});
+
+it("keeps the right panel's built-in chords in the fallback list", () => {
+  const fallback = (command: string) => FALLBACK_RULES.find((entry) => entry.command === command);
+  expect(fallback("rightPanel.new")).toMatchObject({ key: "mod+t", when: "rightPanelOpen && !terminalFocus" });
+  expect(fallback("rightPanel.maximize")).toMatchObject({ key: "mod+alt+shift+b", when: "rightPanelOpen && !terminalFocus" });
 });
 
 it("reads a command's key from the service, the fallback, or a removed rule", () => {
