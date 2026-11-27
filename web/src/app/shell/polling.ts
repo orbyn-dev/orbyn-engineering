@@ -12,6 +12,12 @@ export const shouldPoll = (hidden: boolean, running: boolean): boolean => !hidde
  * The shell's poll: projects, the one thread list and approvals every tick, and the Git-backed
  * status far less often (see `pollSchedule`). A window that becomes visible reads once at once —
  * what it could not see while hidden — and a window that hides stops reading entirely.
+ *
+ * A hidden window therefore does not look in for work another client started: it learns of such a
+ * run at that one read when it is shown, and then reads on while the run lasts, because a run it
+ * knows is running keeps this poll going. The notices that must fire while hidden keep their own
+ * polls and are not this one's: a scheduled task's run (`useTaskRunNotifications`) and a Crew item
+ * that needs the person (`useCrewNotifications`).
  */
 export function startShellPolling(): () => void {
   let ticks = 0;

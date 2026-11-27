@@ -93,6 +93,36 @@ describe("the shell poll", () => {
     expect(count("/api/projects")).toBe(TICKS);
   });
 
+  it("does not look for work another client started while hidden, and finds it on the read when shown", async () => {
+    // What this poll gives up (issue #1118 asks for polling only what is visible): a hidden window sends nothing, so a
+    // run started elsewhere is unknown to it and no alert of its can fire until it reads again. The notices that must
+    // fire while hidden keep their own polls, `useTaskRunNotifications` and `useCrewNotifications`, which are not this one.
+    useWorkspace.setState({ threads: {}, threadIds: {} });
+    const startedElsewhere = { id: "t", project_id: projects[0]!.id, title: "Elsewhere", active_run: { id: "r" } };
+    vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
+      const path = String(input);
+      sent.push(`${init?.method ?? "GET"} ${path}`);
+      const body = path === "/api/projects" ? [projects[0]]
+        : path === "/api/threads" ? [startedElsewhere]
+          : path.startsWith("/api/approvals") || path === "/api/updates" ? [] : {};
+      return new Response(JSON.stringify(body), { status: 200 });
+    }));
+    setHidden(true);
+    await pollFor(IDLE_MS);
+    expect(sent).toEqual([]);
+    expect(useWorkspace.getState().threads.t).toBeUndefined();
+
+    // Shown again: its one read finds the run, and from there a hidden window that is running work keeps reading, or
+    // the alert for that run's end would never fire.
+    setHidden(false);
+    await flush();
+    expect(count("/api/threads")).toBe(1);
+    expect(useWorkspace.getState().threads.t?.active_run ?? null).not.toBeNull();
+    setHidden(true);
+    await pollFor(POLL_MS);
+    expect(count("/api/threads")).toBeGreaterThan(1);
+  });
+
   it("reads once at once when the window is shown again, and stops reading when it hides", async () => {
     setHidden(true);
     await pollFor(IDLE_MS);
