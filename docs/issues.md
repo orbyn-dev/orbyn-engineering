@@ -105,9 +105,11 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   soon as the tracker answers, so the next listing shows the write without waiting out the window; a listing that was
   still asking the tracker when the write landed is not cached, so it cannot put the page it read back. It is that
   whole scope and no more: the tracker applies the filters, so which cached pages the changed issue belongs to cannot be
-  known here, while nothing outside the tracker and scope of the write can have changed. A write whose tracker never
-  answered may have been applied, so it drops the same pages; a reaction changes no field a page carries and no order
-  it sorts by, so it drops none.
+  known here, while nothing outside the tracker and scope of the write can have changed. A scope is matched by its
+  whole name, so a write to `org/Project` leaves `org/Project Two` cached. A write whose answer does not prove it
+  failed may have been applied, so it drops the same pages: that is a tracker that never answered, and one that
+  answered a read of a write it had already stored (a rate limit, a refusal, a `404` or an unreadable reply on that
+  read). A reaction changes no field a page carries and no order it sorts by, so it drops none.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
   report them gives `[]`. A link carries `checks` when the tracker reports CI for it: the same `PullChecks`
   counts the pull request list carries. GitHub reads them with one `gh pr view --json statusCheckRollup` per

@@ -29,6 +29,7 @@ use crate::app::Core;
 use crate::credentials::{CredentialError, Credentials};
 use crate::error::{CoreError, Result};
 use crate::store::{AuditRecord, TrackerConnection, tracker_name, tracker_of};
+use crate::util::swr;
 use async_trait::async_trait;
 use orbyn_contracts::{
     CommentIssue, ConnectTracker, CreateIssue, CreateThread, IssueCandidates, IssueCloseReason,
@@ -134,10 +135,17 @@ pub(crate) fn possibly_created(tracker: &str, error: CoreError) -> CoreError {
 }
 
 /// Whether a write's answer leaves one scope's cached listings unable to describe the tracker: the tracker accepted
-/// the write, or it never answered, so it may have applied it. A refusal that came back changed nothing, and the
-/// checks before any request return early.
+/// the write, or its answer does not prove the write failed, so it may have applied it. Only an answer decided from
+/// the request alone proves nothing was stored: every reader checks its fields before it sends anything, so `Invalid`
+/// came back without a request, and `Unsupported` is a reader with no write path at all. A rate limit, a forbidden
+/// answer, a `NotFound`, a broken connection, a timeout or an unreadable reply can each come back from the read that
+/// answers a write the tracker already stored (GitHub patches the issue and then reads it back), so none of them
+/// proves the edit was dropped, and each drops the scope's pages too.
 fn write_may_have_changed<T>(written: &Result<T>) -> bool {
-    matches!(written, Ok(_) | Err(CoreError::TrackerUnavailable(_)))
+    !matches!(
+        written,
+        Err(CoreError::Invalid(_) | CoreError::Unsupported(_))
+    )
 }
 
 /// A new issue as the owning tracker receives it: the person's validated text and the choices that name labels and
@@ -312,7 +320,9 @@ impl Listings {
         self.dropped += 1;
     }
 
-    /// Drops every entry whose key starts with `prefix`, bumping [`Self::dropped`] like [`Self::drop_all`].
+    /// Drops every entry whose key starts with `prefix`, bumping [`Self::dropped`] like [`Self::drop_all`]. A prefix
+    /// ends at a [`swr::key`] separator, so it always names a whole scope and never the start of a longer name
+    /// (see [`IssueDesk::scope_prefix`]).
     fn drop_prefixed(&mut self, prefix: &str) {
         self.entries.retain(|key, _| !key.starts_with(prefix));
         self.dropped += 1;
@@ -458,11 +468,12 @@ impl IssueDesk {
         format!("{}{query:?}", Self::scope_prefix(kind, scope))
     }
 
-    /// What every cached listing of one connection's scope starts with: the tracker, a space, the scope, a space.
-    /// A tracker name holds no space and the query's `Debug` starts with `IssueQuery {`, so one scope's prefix
-    /// never matches another scope's key.
+    /// What every cached listing of one connection's scope starts with: the tracker and the scope, each ending at a
+    /// [`swr::key`] separator, then the query's `Debug`. The separator is a control character and a scope with a
+    /// control character is refused, so a scope's prefix ends exactly where its name ends: the prefix of
+    /// `org/Project` matches no page of `org/Project Two`, whose name only starts with the written one.
     fn scope_prefix(kind: TrackerKind, scope: &str) -> String {
-        format!("{} {scope} ", tracker_name(kind))
+        swr::key(&[tracker_name(kind), scope])
     }
 
     /// Drops every cached listing of one connection's scope, whatever its filter, sort or page, after a write whose

@@ -2316,6 +2316,9 @@ mod listing_cache {
         scope: String,
         issues: Mutex<Vec<IssueSummary>>,
         readings: AtomicUsize,
+        /// The answer the next write gives once it has stored its change, standing in for a tracker that kept the
+        /// write and then failed the read it answers with (a rate limit, a `404`, a dropped connection).
+        after_write: Mutex<Option<CoreError>>,
     }
 
     impl Tracker {
@@ -2329,7 +2332,25 @@ mod listing_cache {
                         .collect(),
                 ),
                 readings: AtomicUsize::new(0),
+                after_write: Mutex::new(None),
             })
+        }
+
+        /// Answers the next write with `error` after storing it: the write landed and the tracker's own answer did
+        /// not come back, so the answer cannot prove the tracker kept nothing.
+        fn fail_the_next_answer(&self, error: CoreError) {
+            *self
+                .after_write
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(error);
+        }
+
+        /// The answer one write gives instead of its stored issue, when a test armed one.
+        fn answer_failure(&self) -> Option<CoreError> {
+            self.after_write
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take()
         }
 
         /// How many listings this tracker answered.
@@ -2491,7 +2512,10 @@ mod listing_cache {
                     summary.title = title.to_owned();
                 }
             });
-            Ok(self.detail(summary))
+            match self.answer_failure() {
+                Some(error) => Err(error),
+                None => Ok(self.detail(summary)),
+            }
         }
 
         async fn set_state(
@@ -2513,7 +2537,10 @@ mod listing_cache {
                     close_reason,
                 };
             });
-            Ok(self.detail(summary))
+            match self.answer_failure() {
+                Some(error) => Err(error),
+                None => Ok(self.detail(summary)),
+            }
         }
     }
 
@@ -2652,6 +2679,22 @@ mod listing_cache {
         );
         assert_eq!(gitlab.readings(), 5);
 
+        // Both pages of the scope are cached again before the state change, so a state change that drops one of them
+        // and keeps the other leaves an old page cached and this test sees it: the closed page here is empty, and a
+        // stale one would keep it empty instead of showing the issue the write moves into it.
+        let none_closed = w.core.list_issues(&closed).await.unwrap();
+        assert!(keys(&none_closed).is_empty(), "no issue is closed yet");
+        assert_eq!(gitlab.readings(), 6, "the closed page is read once");
+        let sure_closed = w.core.list_issues(&closed).await.unwrap();
+        assert!(keys(&sure_closed).is_empty());
+        let warm = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(keys(&warm), ["2", "1"]);
+        assert_eq!(
+            gitlab.readings(),
+            6,
+            "both pages are cached before the write, so neither is read again yet"
+        );
+
         // A state change moves the issue to the closed page, and the counts follow.
         w.core
             .set_state_issue(IssueSetStateInput {
@@ -2670,14 +2713,59 @@ mod listing_cache {
         assert_eq!(
             keys(&closed_page),
             ["2"],
-            "the closed page holds it at once, not the page cached before the write"
+            "the closed page holds it at once, not the empty page cached before the write"
         );
         assert_eq!(
             (gitlab.readings(), forgejo.readings()),
-            (7, 2),
+            (8, 2),
             "both pages of the written connection's scope are read again, whatever their state filter; the other \
              connection's pages were cached before the write and stay"
         );
+    }
+
+    #[tokio::test]
+    async fn a_write_that_landed_but_whose_answer_failed_still_shows_in_the_very_next_listing() {
+        let (w, gitlab, forgejo) = connected_pair().await;
+        let open = IssueQuery::default();
+        let first = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(keys(&first), ["1"]);
+        assert_eq!(
+            (gitlab.readings(), forgejo.readings()),
+            (1, 1),
+            "one page of each connection is cached"
+        );
+
+        // The write is stored, and the read that answers it fails: nothing in that answer proves the tracker kept
+        // nothing, so the page cached before it must not answer the next listing.
+        gitlab.fail_the_next_answer(CoreError::NotFound("issue 1".into()));
+        let written = w
+            .core
+            .update_issue(IssueUpdateInput {
+                tracker: TrackerKind::Gitlab,
+                scope: "team/app".into(),
+                key: "1".into(),
+                title: Some("Crash on start, renamed".into()),
+                body: None,
+                labels: None,
+                assignees: None,
+            })
+            .await;
+        assert!(
+            written.is_err(),
+            "an answer that does not prove the write failed is still reported"
+        );
+        let next = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(
+            next.issues.first().map(|issue| issue.title.as_str()),
+            Some("Crash on start, renamed"),
+            "a write that landed shows in the very next listing even when its own answer failed"
+        );
+        assert_eq!(
+            gitlab.readings(),
+            2,
+            "the written scope's page is read again, not served from the cache"
+        );
+        assert_eq!(forgejo.readings(), 1, "the other connection keeps its page");
     }
 }
 
