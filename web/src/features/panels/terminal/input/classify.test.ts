@@ -51,7 +51,10 @@ describe("looksSecret", () => {
     // bash: `unset TOKEN OTHER; API_TOKEN=${TOKEN:-${OTHER-hunter2}}` prints `hunter2`, and `${OTHER=hunter2}` assigns the
     // same — `-` and `=` with no colon are the unset-only default and assignment operators.
     "API_TOKEN=${TOKEN:-${OTHER-hunter2}}",
-    "API_TOKEN=${TOKEN:-${OTHER=hunter2}}"])("flags %j", (text) => expect(looksSecret(text)).toBe(true));
+    "API_TOKEN=${TOKEN:-${OTHER=hunter2}}",
+    // bash: `unset TOKEN OTHER COPY X; API_TOKEN=${TOKEN:-${OTHER-hunter2${COPY:-$X}}}` prints `hunter2` — the outer
+    // unset-only default is the whole word, so the `:-` inside it must not hide the `-` that carries `hunter2`.
+    "API_TOKEN=${TOKEN:-${OTHER-hunter2${COPY:-$X}}}"])("flags %j", (text) => expect(looksSecret(text)).toBe(true));
   it.each(["ls -la", "why is the build failing?", "git log --oneline", "export PATH=$PATH:/x", "echo $API_KEY", "how do I set an api key", "TOKEN=$(gh auth token)", "TOKEN=${VAR}", "TOKEN=${VAR:-$OTHER}", "TOKEN=${VAR:-}", "API_TOKEN=${TOKEN:-$(gh auth token)}", "PATH=${PATH:-/usr/local/bin}", "BYPASS=${BYPASS:-1}", "API_TOKEN=${TOKEN:-`gh auth token`}", "API_TOKEN=\"${TOKEN:-`gh auth token`}\"", "TOKEN=\"${VAR}\"", "TOKEN=\"$VAR\"", "TOKEN=\"$(gh auth token)\"", "API_TOKEN=${TOKEN:-${OTHER}}", "API_TOKEN=${TOKEN:-$OTHER}", "API_TOKEN=${TOKEN:- }", "TOKEN=\"\"", "TOKEN=\"`gh auth token`\"", "API_TOKEN=${TOKEN:-${OTHER:-$ANOTHER}}", "API_TOKEN=${TOKEN:-${OTHER:-${THIRD}}}", "API_TOKEN=${TOKEN:-${OTHER:- }}", "PASSPHRASE=$(op read op://vault/item)", "PASSPHRASE=${PASSPHRASE:-$OTHER}", "API_TOKEN=\"${TOKEN:-$OTHER}\"",
     // bash: `API_TOKEN="${TOKEN:-$(echo })}"` prints `}` — the `}` belongs to the command substitution, so the expansion
     // closes at the last `}` and the value is that command's output, never text someone typed.
@@ -71,5 +74,8 @@ describe("looksSecret", () => {
     // bash: `API_TOKEN=${TOKEN:-${OTHER-$COPY}}` and `API_TOKEN=${OTHER-$COPY}` print `COPY`'s value — an unset-only default
     // that only copies a variable is not typed text.
     "API_TOKEN=${TOKEN:-${OTHER-$COPY}}",
-    "API_TOKEN=${OTHER-$COPY}"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
+    "API_TOKEN=${OTHER-$COPY}",
+    // bash: `unset TOKEN OTHER; API_TOKEN=${TOKEN:-$OTHER}}` prints only `}` — a `}` that closes nothing is a literal
+    // character of the word, and on its own it is no typed secret.
+    "API_TOKEN=${TOKEN:-$OTHER}}"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
 });

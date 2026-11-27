@@ -296,14 +296,18 @@ function referenceEnd(text: string, at: number): number {
 /**
  * The word a `${...}` substitutes instead of the parameter's own value: the default or assignment in `${NAME:-word}` and
  * `${NAME:=word}`, and the unset-only `${NAME-word}` and `${NAME=word}`. `null` when the expansion only reads its
- * parameter. The unset-only operator sits right after the name, which is why `${MY-VAR}` is the parameter `MY` with the
- * default `VAR` and not a subtraction, while `${NAME%%word}`, `${NAME:1}` and `${NAME/word/x}` substitute no word.
+ * parameter. The operator is read at the parameter's own position, which is why `${MY-VAR}` is the parameter `MY` with
+ * the default `VAR` and not a subtraction, and why the `:-` inside the default of `${OTHER-hunter2${COPY:-$X}}` does not
+ * hide the `-` that carries `hunter2`. A subscript moves the operator off that position (`${arr[0]:-word}`), so the
+ * colons are searched for as well; `${NAME%%word}`, `${NAME:1}` and `${NAME/word/x}` substitute no word.
  */
 function defaultWord(body: string): string | null {
+  const parameter = /^(?:#|!)?(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[-@*#?$!])/.exec(body);
+  const operator = body.slice(parameter?.[0].length ?? 0);
+  if (operator.startsWith(":-") || operator.startsWith(":=")) return operator.slice(2);
+  if (operator.startsWith("-") || operator.startsWith("=")) return operator.slice(1);
   const colon = body.search(/:-|:=/);
-  if (colon >= 0) return body.slice(colon + 2);
-  const unsetOnly = /^(?:#|!)?(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[-@*#?$!])[-=]/.exec(body);
-  return unsetOnly === null ? null : body.slice(unsetOnly[0].length);
+  return colon >= 0 ? body.slice(colon + 2) : null;
 }
 
 /**
