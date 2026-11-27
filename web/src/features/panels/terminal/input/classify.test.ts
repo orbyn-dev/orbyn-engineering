@@ -40,7 +40,18 @@ describe("looksSecret", () => {
     "API_TOKEN=${TOKEN:-${OTHER:-''hunter2}}",
     "API_TOKEN=${TOKEN:-${OTHER:-$''hunter2}}",
     "API_TOKEN=${TOKEN:-${OTHER:-$(whoami)hunter2}}",
-    "API_TOKEN=${TOKEN:-${OTHER:-`whoami`hunter2}}"])("flags %j", (text) => expect(looksSecret(text)).toBe(true));
+    "API_TOKEN=${TOKEN:-${OTHER:-`whoami`hunter2}}",
+    // bash: `API_TOKEN=${TOKEN:-"hunter2$(whoami # don't log` then a new line `)"}` prints `hunter2` followed by the user
+    // name — the `#` starts a comment, so the apostrophe is text and the substitution closes on the next line.
+    "API_TOKEN=${TOKEN:-\"hunter2$(whoami # don't log\n)\"}",
+    "API_TOKEN=${TOKEN:-\"hunter2$(printf X # it's fine\n)\"}",
+    // bash: `API_TOKEN=${TOKEN:-$OTHER}}hunter2` prints `}hunter2` — the second `}` is part of the assignment word, and
+    // `hunter2` after it is typed.
+    "API_TOKEN=${TOKEN:-$OTHER}}hunter2",
+    // bash: `unset TOKEN OTHER; API_TOKEN=${TOKEN:-${OTHER-hunter2}}` prints `hunter2`, and `${OTHER=hunter2}` assigns the
+    // same — `-` and `=` with no colon are the unset-only default and assignment operators.
+    "API_TOKEN=${TOKEN:-${OTHER-hunter2}}",
+    "API_TOKEN=${TOKEN:-${OTHER=hunter2}}"])("flags %j", (text) => expect(looksSecret(text)).toBe(true));
   it.each(["ls -la", "why is the build failing?", "git log --oneline", "export PATH=$PATH:/x", "echo $API_KEY", "how do I set an api key", "TOKEN=$(gh auth token)", "TOKEN=${VAR}", "TOKEN=${VAR:-$OTHER}", "TOKEN=${VAR:-}", "API_TOKEN=${TOKEN:-$(gh auth token)}", "PATH=${PATH:-/usr/local/bin}", "BYPASS=${BYPASS:-1}", "API_TOKEN=${TOKEN:-`gh auth token`}", "API_TOKEN=\"${TOKEN:-`gh auth token`}\"", "TOKEN=\"${VAR}\"", "TOKEN=\"$VAR\"", "TOKEN=\"$(gh auth token)\"", "API_TOKEN=${TOKEN:-${OTHER}}", "API_TOKEN=${TOKEN:-$OTHER}", "API_TOKEN=${TOKEN:- }", "TOKEN=\"\"", "TOKEN=\"`gh auth token`\"", "API_TOKEN=${TOKEN:-${OTHER:-$ANOTHER}}", "API_TOKEN=${TOKEN:-${OTHER:-${THIRD}}}", "API_TOKEN=${TOKEN:-${OTHER:- }}", "PASSPHRASE=$(op read op://vault/item)", "PASSPHRASE=${PASSPHRASE:-$OTHER}", "API_TOKEN=\"${TOKEN:-$OTHER}\"",
     // bash: `API_TOKEN="${TOKEN:-$(echo })}"` prints `}` — the `}` belongs to the command substitution, so the expansion
     // closes at the last `}` and the value is that command's output, never text someone typed.
@@ -51,5 +62,14 @@ describe("looksSecret", () => {
     // bash: `OTHER=x; TOKEN=$OTHER;true` leaves `x` in `TOKEN` — `;`, `&` and `|` end the assignment word.
     "TOKEN=$OTHER;true",
     "TOKEN=$OTHER&&true",
-    "TOKEN=$OTHER|cat"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
+    "TOKEN=$OTHER|cat",
+    // bash: `PASSPHRASE=$"`id`"` prints the output of `id`, and `PASSPHRASE=$" ${VAR}"` prints `VAR`'s value — a `$"..."`
+    // value that starts with a command or a copy holds no text someone typed.
+    "PASSPHRASE=$\"`id`\"",
+    "PASSPHRASE=$\" `id`\"",
+    "PASSPHRASE=$\" ${VAR}\"",
+    // bash: `API_TOKEN=${TOKEN:-${OTHER-$COPY}}` and `API_TOKEN=${OTHER-$COPY}` print `COPY`'s value — an unset-only default
+    // that only copies a variable is not typed text.
+    "API_TOKEN=${TOKEN:-${OTHER-$COPY}}",
+    "API_TOKEN=${OTHER-$COPY}"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
 });
