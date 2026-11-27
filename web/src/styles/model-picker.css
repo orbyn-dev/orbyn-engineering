@@ -59,7 +59,12 @@ button.composer-control:hover:not(:disabled) {
   font-size: var(--text-body);
   font-weight: 500;
 }
+/* Target size (WCAG 2.2 AA 2.5.8): the home heading's way out of a project was a 20 px inline box. The crew links' 24 px
+   box, with its label centred, clears the minimum; .hero-sub already draws the 24 px line, so nothing moves. */
 .hero-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-md);
