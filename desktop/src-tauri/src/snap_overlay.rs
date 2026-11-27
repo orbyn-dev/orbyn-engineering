@@ -18,7 +18,9 @@
 //! after the window last changed size or scale: any window size or DPI change hides it, and the
 //! next report from the page puts it back. So a wrong or stale rectangle never leaves a window
 //! covering part of the page: while there is no such report, the page keeps the pointer and its own
-//! button is the one that answers.
+//! button is the one that answers. The shell replaces the page's document on its own at times
+//! (restarting, failed): it clears the overlay as it navigates, because a page's own cleanup does
+//! not run then and the next document may draw no button where the last one drew.
 
 // Only the Windows shell creates the window; the geometry and page state are plain Rust, tested on
 // every OS, so on other systems they are exercised by the tests alone.
@@ -98,14 +100,29 @@ pub fn zoom(maximized: bool) -> Zoom {
 }
 
 /// Where the pointer is over the overlay, as the page's styles name it.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
 pub enum Pointer {
     /// Not over the button.
+    #[default]
     Idle,
     /// Over the button, not pressed.
     Hover,
     /// Pressed on the button.
     Press,
+}
+
+/// What the overlay knows about the pointer: the state the page draws, and whether the press that
+/// is down began on the button.
+///
+/// The two part ways when a press drags off the button and comes back still held: the page draws
+/// the button unpressed in between, while the release still ends the press that began on the
+/// button, as it does on the system's own caption button.
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+pub struct PointerState {
+    /// The state the page draws.
+    pub state: Pointer,
+    /// Whether the press now down began on the button.
+    pub owns_press: bool,
 }
 
 /// The script that tells the page which state its controls are in. The page cannot see the pointer
@@ -141,32 +158,78 @@ pub enum PointerEvent {
 pub struct Reaction {
     /// The state the page draws.
     pub state: Pointer,
+    /// Whether the press now down began on the button, after this event.
+    pub owns_press: bool,
     /// Whether the bar's Maximize button acts. As on the system's own caption button, a release
     /// only presses it when the press started on it: a drag that happens to end over the button is
     /// not a click.
     pub press: bool,
 }
 
-pub fn react(pointer: Pointer, event: PointerEvent) -> Reaction {
-    let state = match (event, pointer) {
-        // A pointer that comes back while the button is still held is still held.
-        (PointerEvent::Enter, Pointer::Press) => Pointer::Press,
-        (PointerEvent::Enter, _) => Pointer::Hover,
-        (PointerEvent::Press, _) => Pointer::Press,
-        (PointerEvent::Release, _) => Pointer::Hover,
-        (PointerEvent::Leave, _) => Pointer::Idle,
+impl Reaction {
+    /// What the overlay knows about the pointer after this event.
+    pub fn next(self) -> PointerState {
+        PointerState {
+            state: self.state,
+            owns_press: self.owns_press,
+        }
+    }
+}
+
+/// What one pointer event does to what the overlay knows.
+///
+/// `button_down` says whether the pointer's left button is down at this event. A press that drags
+/// off the button ends where the overlay receives no message at all, so the next message it does
+/// receive is where that end becomes known: an arrival with the button up is no longer that press.
+pub fn react(pointer: PointerState, button_down: bool, event: PointerEvent) -> Reaction {
+    // The press that began on the button is still down, so the pointer is still pressing it, even
+    // where it left the button and came back while held.
+    let pressing = pointer.owns_press && button_down;
+    let state = match event {
+        PointerEvent::Enter if pressing => Pointer::Press,
+        PointerEvent::Enter => Pointer::Hover,
+        PointerEvent::Press => Pointer::Press,
+        PointerEvent::Release => Pointer::Hover,
+        PointerEvent::Leave => Pointer::Idle,
+    };
+    let owns_press = match event {
+        // The press began on the button.
+        PointerEvent::Press => true,
+        // Off the button and back again while still held is the same press; seen with the button
+        // up, it is a press that ended where the overlay could not see, and it holds nothing.
+        PointerEvent::Enter | PointerEvent::Leave => pressing,
+        // The release ends the press wherever it landed.
+        PointerEvent::Release => false,
     };
     Reaction {
         state,
-        press: pointer == Pointer::Press && event == PointerEvent::Release,
+        owns_press,
+        press: pointer.owns_press && event == PointerEvent::Release,
     }
 }
 
 #[cfg(windows)]
 pub use self::win::{install, set_bounds};
+
+/// Takes the overlay off the window until the page reports its button again.
+///
+/// The shell calls this before it navigates the window to another document. A page's own cleanup
+/// does not run when the shell replaces its document, and the next document may draw no Maximize
+/// button where the last one drew: an overlay left there would answer the hit test over a place
+/// with no button, where a hover would offer the Snap Layouts flyout and a click would maximize.
+pub fn clear(window: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    win::set_bounds(window, None);
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
 #[cfg(windows)]
 mod win {
-    use super::{Bounds, Pointer, PointerEvent, Zoom, bounds, fits, pointer_script, react, zoom};
+    use super::{
+        Bounds, Pointer, PointerEvent, PointerState, Zoom, bounds, fits, pointer_script, react,
+        zoom,
+    };
     use crate::window_frame::Rect;
     use std::sync::Mutex;
     use std::sync::mpsc::{Sender, channel};
@@ -175,7 +238,9 @@ mod win {
         Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
         System::LibraryLoader::GetModuleHandleW,
         UI::{
-            Input::KeyboardAndMouse::{TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT, TrackMouseEvent},
+            Input::KeyboardAndMouse::{
+                GetKeyState, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT, TrackMouseEvent, VK_LBUTTON,
+            },
             Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
             WindowsAndMessaging::{
                 CREATESTRUCTW, CreateWindowExW, DefWindowProcW, FindWindowExW, GWLP_USERDATA,
@@ -232,14 +297,14 @@ mod win {
         unsafe { DefSubclassProc(frame, message, wparam, lparam) }
     }
 
-    /// What the overlay window keeps for its life: the channel it reports the pointer on, and where
-    /// the pointer is.
+    /// What the overlay window keeps for its life: the channel it reports the pointer on, and what
+    /// it knows about the pointer.
     ///
     /// The scripts run on a thread of their own so that the state reaches the page in the order the
     /// pointer made it, and so that no script runs inside a window procedure.
     struct Context {
         states: Sender<Pointer>,
-        pointer: Mutex<Pointer>,
+        pointer: Mutex<PointerState>,
     }
 
     /// Covers the page's Maximize button with a window that answers `HTMAXBUTTON`.
@@ -271,7 +336,7 @@ mod win {
 
         let context = Box::into_raw(Box::new(Context {
             states,
-            pointer: Mutex::new(Pointer::Idle),
+            pointer: Mutex::new(PointerState::default()),
         }));
         // Hidden until the page says where its button is: an overlay with no rectangle must not
         // take a pixel of the window.
@@ -351,6 +416,9 @@ mod win {
         // SAFETY: `overlay` is this window's own child and it is the one being hidden.
         unsafe { ShowWindow(overlay, SW_HIDE) };
         apply(overlay, PointerEvent::Leave);
+        // A hidden overlay never receives the release that would end a press it watched, so it
+        // holds none of it: whatever ends over it after it comes back is not that press's click.
+        update(overlay, |pointer| pointer.owns_press = false);
     }
 
     fn place_over(overlay: HWND, place: Bounds) {
@@ -476,13 +544,34 @@ mod win {
         let Ok(mut pointer) = context.pointer.lock() else {
             return false;
         };
-        let reaction = react(*pointer, event);
-        if *pointer != reaction.state {
-            *pointer = reaction.state;
+        let before = *pointer;
+        let reaction = react(before, button_down(), event);
+        *pointer = reaction.next();
+        if reaction.state != before.state {
             // A closed channel only means the window is going away.
             let _ = context.states.send(reaction.state);
         }
         reaction.press
+    }
+
+    /// Changes what this window knows about the pointer, if `overlay` is this module's window.
+    fn update(overlay: HWND, change: impl FnOnce(&mut PointerState)) {
+        // SAFETY: `overlay` is the window this call is about; its box lives until WM_NCDESTROY.
+        let context = unsafe { window_context(overlay) };
+        if context.is_null() {
+            return;
+        }
+        // SAFETY: `context` is the box `install` made, valid until WM_NCDESTROY.
+        let context = unsafe { &*context };
+        if let Ok(mut pointer) = context.pointer.lock() {
+            change(&mut pointer);
+        }
+    }
+
+    /// Whether the pointer's left button is down for the message being handled.
+    fn button_down() -> bool {
+        // SAFETY: `GetKeyState` only reads this thread's own key state.
+        (unsafe { GetKeyState(i32::from(VK_LBUTTON)) }) < 0
     }
 
     /// The box `install` made. Null before WM_CREATE stored it.
@@ -691,34 +780,81 @@ mod tests {
     fn the_pointer_state_follows_the_messages_and_only_a_press_on_the_button_acts() {
         use Pointer::{Hover, Idle, Press};
         use PointerEvent::{Enter, Leave, Release};
-        // Coming onto the button hovers it; leaving clears it, from any state.
-        for from in [Idle, Hover, Press] {
-            let entered = react(from, Enter);
-            assert_eq!(
-                entered.state,
-                if from == Press { Press } else { Hover },
-                "{from:?}"
-            );
+        let idle = PointerState::default();
+        // Coming onto the button hovers it; leaving clears it, from any state. Nothing the pointer
+        // does without a press that began on the button ever acts.
+        for from in [idle, known(Hover, false), known(Press, true)] {
+            let entered = react(from, false, Enter);
+            assert_eq!(entered.state, Hover, "{from:?}");
             assert!(!entered.press, "{from:?}");
-            assert_eq!(react(from, Leave).state, Idle, "{from:?}");
-            assert!(!react(from, Leave).press, "{from:?}");
+            let left = react(from, false, Leave);
+            assert_eq!(left.state, Idle, "{from:?}");
+            assert!(!left.press, "{from:?}");
+            assert!(!left.owns_press, "{from:?}");
         }
-        // A pointer that comes back while the button is held is still holding it.
-        assert_eq!(react(Press, Enter).state, Press);
-        // Pressing shows the pressed state and does nothing on its own.
-        assert_eq!(react(Idle, PointerEvent::Press).state, Press);
-        assert_eq!(react(Hover, PointerEvent::Press).state, Press);
-        assert!(!react(Hover, PointerEvent::Press).press);
-        // The release acts only when the press started on the button, and the button then hovers
-        // again: the pointer is still over it.
-        let click = react(Press, Release);
+        // Pressing shows the pressed state, and the press does nothing on its own.
+        let pressed = react(known(Hover, false), true, PointerEvent::Press);
+        assert_eq!(pressed.state, Press);
+        assert!(pressed.owns_press);
+        assert!(!pressed.press);
+        // The release acts when the press began on the button, and the button then hovers again:
+        // the pointer is still over it.
+        let click = react(known(Press, true), false, Release);
         assert_eq!(click.state, Hover);
+        assert!(!click.owns_press);
         assert!(click.press);
-        for from in [Idle, Hover] {
-            let drag = react(from, Release);
+        // A press that started anywhere else ends over the button without a click.
+        for from in [idle, known(Hover, false)] {
+            let drag = react(from, false, Release);
             assert_eq!(drag.state, Hover, "{from:?}");
             assert!(!drag.press, "{from:?}");
         }
+        // Moving over the button with its own press still down keeps it pressed.
+        let moved = react(known(Press, true), true, Enter);
+        assert_eq!(moved.state, Press);
+        assert!(moved.owns_press);
+        assert!(!moved.press);
+    }
+
+    #[test]
+    fn a_press_that_leaves_the_button_and_comes_back_still_acts() {
+        use Pointer::{Hover, Idle, Press};
+        use PointerEvent::{Enter, Leave, Release};
+        // A press drags off the button: the page stops drawing it pressed, and the release that
+        // ends it is no longer over the button.
+        let off = react(known(Press, true), true, Leave);
+        assert_eq!(off.state, Idle);
+        assert!(!off.press);
+        assert!(off.owns_press);
+        // Back over the button while still held: the same press, and the page draws it pressed.
+        let back = react(off.next(), true, Enter);
+        assert_eq!(back.state, Press);
+        assert!(back.owns_press);
+        // The release over the button is that press's click, as on the system's caption button.
+        let click = react(back.next(), false, Release);
+        assert_eq!(click.state, Hover);
+        assert!(click.press);
+    }
+
+    #[test]
+    fn a_press_released_outside_the_overlay_is_forgotten() {
+        use Pointer::{Hover, Idle, Press};
+        use PointerEvent::{Enter, Leave, Release};
+        // The overlay receives no release for a press that dragged away and ended elsewhere, so
+        // the next arrival is where its end shows: the button is up, and nothing is held any more.
+        let off = react(known(Press, true), true, Leave);
+        let ended = react(off.next(), false, Enter);
+        assert_eq!(ended.state, Hover);
+        assert!(!ended.owns_press);
+        // A release over the button after that is not the click of a press it ever watched.
+        assert!(!react(ended.next(), false, Release).press);
+        // A leave seen with the button up holds nothing either.
+        assert!(!react(known(Idle, true), false, Leave).owns_press);
+    }
+
+    /// What the overlay knows about the pointer before one of the tests above.
+    fn known(state: Pointer, owns_press: bool) -> PointerState {
+        PointerState { state, owns_press }
     }
 
     #[test]

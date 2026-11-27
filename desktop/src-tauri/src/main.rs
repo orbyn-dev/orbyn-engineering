@@ -54,9 +54,18 @@ pub(crate) fn reveal(app: &AppHandle) {
     }
 }
 
+/// Replaces the window's document. The page's own cleanup does not run for that: React never
+/// unmounts, so the Maximize button's overlay window is cleared here rather than from the page. The
+/// next document may draw no button where the last one drew, and an overlay left over that place
+/// would offer the Snap Layouts flyout and maximize on a click over nothing.
+fn navigate(window: &WebviewWindow, url: url::Url) {
+    snap_overlay::clear(window);
+    let _ = window.navigate(url);
+}
+
 fn show_restarting(app: &AppHandle) {
     if let Some(window) = main_window(app) {
-        let _ = window.navigate(desktop_origin::restarting());
+        navigate(&window, desktop_origin::restarting());
     }
 }
 
@@ -105,7 +114,7 @@ fn show_failure(app: &AppHandle, reason: &str, repeated: bool) {
     let Some(window) = main_window(app) else {
         return;
     };
-    let _ = window.navigate(desktop_origin::failed(reason, repeated));
+    navigate(&window, desktop_origin::failed(reason, repeated));
 }
 
 /// Replaces any running core, then supplies its address to the stable asset page.
@@ -250,7 +259,7 @@ fn launch_core(app: &AppHandle) {
             *slot = Some(core);
             drop(slot);
             if let Some(window) = main_window(app) {
-                let _ = window.navigate(desktop_origin::application(&target));
+                navigate(&window, desktop_origin::application(&target));
             }
             let waiting =
                 std::mem::take(&mut *app.state::<WaitingLinks>().0.lock().expect("link queue"));
