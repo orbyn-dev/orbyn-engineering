@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { installMockFetch } from "../../test-support";
-import { SkillsPage } from "../skills/SkillsPage";
+import { SkillsPage } from "../skills";
 import { SettingsPage } from "./SettingsPage";
 
 /**
