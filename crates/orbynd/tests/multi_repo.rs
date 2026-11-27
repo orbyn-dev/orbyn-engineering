@@ -419,6 +419,8 @@ async fn a_multi_repository_run_keeps_a_checkpoint_in_each_repository() {
         "the write was in the primary repository's worktree only"
     );
     // A restore moves each worktree to the run's start, in that repository's own Git objects.
+    // A file only the second worktree has makes its own restore observable: skipping that worktree would leave it.
+    std::fs::write(other_dir.join("later.txt"), "later\n").unwrap();
     let (status, body) = service
         .send(
             &format!("/api/threads/{thread_id}/restore"),
@@ -429,6 +431,10 @@ async fn a_multi_repository_run_keeps_a_checkpoint_in_each_repository() {
     assert!(
         !written.exists(),
         "the restore removed the file the run added"
+    );
+    assert!(
+        !other_dir.join("later.txt").exists(),
+        "the restore moved the second repository's worktree to the run's start too"
     );
     assert!(
         primary_dir.join("base.txt").exists() && other_dir.join("base.txt").exists(),

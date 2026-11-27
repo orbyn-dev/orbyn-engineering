@@ -184,7 +184,7 @@ impl Core {
             // A repository's ends are commits in its own Git objects, so its row is the one to read.
             Some(repo_id) => self
                 .store
-                .repository_checkpoint(run_id, repo_id)?
+                .repository_checkpoint(thread_id, run_id, repo_id)?
                 .map(|ends| orbyn_contracts::Checkpoint {
                     run_id: run_id.to_owned(),
                     start: ends.start,

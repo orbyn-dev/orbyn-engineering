@@ -79,7 +79,16 @@ impl RunManager {
                 return;
             }
         };
-        for (position, (repo_id, root)) in roots.into_iter().enumerate() {
+        // The run's own start/end pair belongs to the repository that supplied its start, so only that one fills
+        // the run-level end. A repository trusted after the run began has no start row and never does, and a
+        // repository that took a start but is not the run-level one keeps its own pair only (docs/multi-repo.md).
+        let owned_start = self
+            .store
+            .checkpoint(&scope.run_id)
+            .ok()
+            .flatten()
+            .map(|checkpoint| checkpoint.start);
+        for (repo_id, root) in roots {
             let sha = match snapshot(&root, Some(&reference), &index).await {
                 Ok(sha) => sha,
                 Err(error) => {
@@ -88,13 +97,27 @@ impl RunManager {
                 }
             };
             let recorded = match &repo_id {
-                Some(repo_id) => self
-                    .store
-                    .finish_repository_checkpoint(&scope.run_id, repo_id, &sha)
-                    .and_then(|()| match position {
-                        0 => self.store.finish_checkpoint(&scope.run_id, &sha),
-                        _ => Ok(()),
-                    }),
+                Some(repo_id) => {
+                    match self
+                        .store
+                        .repository_checkpoint(&scope.thread_id, &scope.run_id, repo_id)
+                    {
+                        Ok(Some(starts)) => {
+                            let owner = owned_start.as_deref() == Some(starts.start.as_str());
+                            self.store
+                                .finish_repository_checkpoint(&scope.run_id, repo_id, &sha)
+                                .and_then(|()| {
+                                    if owner {
+                                        self.store.finish_checkpoint(&scope.run_id, &sha)
+                                    } else {
+                                        Ok(())
+                                    }
+                                })
+                        }
+                        Ok(None) => Ok(()),
+                        Err(error) => Err(error),
+                    }
+                }
                 None => self.store.finish_checkpoint(&scope.run_id, &sha),
             };
             if let Err(error) = recorded {

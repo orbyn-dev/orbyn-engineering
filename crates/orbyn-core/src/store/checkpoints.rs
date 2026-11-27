@@ -114,17 +114,19 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// One repository's ends for a run of a multi-repository thread.
+    /// One repository's ends for a run of a multi-repository thread. A run of another thread is no checkpoint
+    /// of this one, even when both work in the same repository.
     pub(crate) fn repository_checkpoint(
         &self,
+        thread_id: &str,
         run_id: &str,
         repo_id: &str,
     ) -> Result<Option<RepositoryCheckpoint>> {
         Ok(self
             .reader()
             .query_row(
-                "SELECT * FROM checkpoint_repositories WHERE run_id = ?1 AND repo_id = ?2",
-                [run_id, repo_id],
+                "SELECT * FROM checkpoint_repositories WHERE thread_id = ?1 AND run_id = ?2 AND repo_id = ?3",
+                [thread_id, run_id, repo_id],
                 repository_checkpoint_row,
             )
             .optional()?)
