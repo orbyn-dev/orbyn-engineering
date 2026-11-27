@@ -207,6 +207,20 @@ describe("surface tabs", () => {
     expect(useUi.getState().panelTab).toBeNull();
   });
 
+  it("draws the entries shell 1a left out, in the launcher, with the Files tab the explorer replaced gone", async () => {
+    const user = userEvent.setup();
+    panel();
+    await user.click(screen.getByRole("button", { name: "Open a tab" }));
+    const labels = screen.getAllByRole("menuitem").map((item) => item.getAttribute("data-label"));
+    // The three the frame adds after the tabs: Review and comments, Crew views, then Open file….
+    expect(labels.filter((label) => label === "Review and comments" || label === "Crew views" || label === "Open file…")).toEqual([
+      "Review and comments",
+      "Crew views",
+      "Open file…",
+    ]);
+    expect(labels).not.toContain("Files");
+  });
+
   it("always draws the plus; it lists everything that can be opened, and Reset tab order only once the order has changed", async () => {
     const user = userEvent.setup();
     panel();
@@ -332,6 +346,8 @@ describe("surface tabs", () => {
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Tab menu" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open a tab" })).toBeInTheDocument();
+    // The line the frame draws, which came back when the left-bar explorer replaced the Files tab.
+    expect(screen.getByText("Add a tab with +, or open a file from the left bar.")).toBeInTheDocument();
     const choices = screen.getByText("Nothing open").parentElement!;
     expect([...choices.querySelectorAll("button")].map((button) => button.textContent)).toEqual(["Changes", "Browser", "Tools"]);
     await user.click(screen.getByRole("button", { name: "Browser" }));
