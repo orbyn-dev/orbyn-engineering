@@ -199,6 +199,7 @@ pub const ENFORCED: &[(&str, &str)] = &[
     ),
     ("POST", "/api/projects/{id}/pulls/{number}/merge"),
     ("POST", "/api/projects/{id}/pulls/{number}/review"),
+    ("POST", "/api/projects/{id}/pulls/{number}/viewed"),
     ("POST", "/api/projects/{id}/trust"),
     ("POST", "/api/projects/{id}/workflows/{run}/approve"),
     ("DELETE", "/api/projects/{id}/worktrees/{worktree}"),
@@ -928,6 +929,11 @@ pub const PERSON: &[(&str, &str, &str)] = &[
         "POST",
         "/api/projects/{id}/pulls/{number}/review",
         "submits a review, which can approve, as the person",
+    ),
+    (
+        "POST",
+        "/api/projects/{id}/pulls/{number}/viewed",
+        "marks a file viewed or unviewed on the forge as the person",
     ),
     (
         "POST",
