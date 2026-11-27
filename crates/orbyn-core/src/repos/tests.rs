@@ -1,5 +1,6 @@
+use crate::store::NewThread;
 use crate::store::thread_repos::ThreadRepoRecord;
-use orbyn_contracts::{GitAction, OpenInEditor, WriteFile};
+use orbyn_contracts::{GitAction, OpenInEditor, RestorePoint, RestoreWorkspace, WriteFile};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -1520,6 +1521,68 @@ async fn a_turn_diff_reads_the_checkpoint_in_the_repository_its_scope_names() {
         .await
         .unwrap();
     assert_eq!(diff_paths(&files), ["second.txt"]);
+}
+
+/// A restore moves every trusted worktree of a multi-repository thread, so it is refused while another live thread
+/// works in any one of them. The thread's own folder is the task folder here, so checking only that folder would
+/// move a repository another thread is working in.
+#[tokio::test]
+async fn a_restore_moves_no_worktree_another_live_thread_is_working_in() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let (thread, folder) = repo_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&other_id, "other", &other)],
+    );
+    // A run with a checkpoint in each repository, taken before either worktree changed.
+    let index = dir.path().join("restore-index");
+    let run = "run-shared-root";
+    for (repo_id, worktree) in [
+        (&project, folder.join("main")),
+        (&other_id, folder.join("other")),
+    ] {
+        let start = crate::source_control::git::snapshot(&worktree, None, &index)
+            .await
+            .unwrap();
+        core.store
+            .add_repository_checkpoint(&thread, run, repo_id, &start)
+            .unwrap();
+    }
+    // Another live thread works in the second repository's worktree, with a file of its own there.
+    let _neighbor = core
+        .store
+        .create_thread(NewThread {
+            project_id: project.clone(),
+            title: "neighbor".into(),
+            engine: "codex".into(),
+            model: None,
+            cwd: path_text(&folder.join("other")),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap();
+    std::fs::write(folder.join("other/theirs.txt"), "theirs\n").unwrap();
+    let error = core
+        .restore_workspace(
+            &thread,
+            &RestoreWorkspace {
+                run_id: run.into(),
+                point: RestorePoint::Start,
+            },
+            "tester",
+        )
+        .await
+        .expect_err("a restore must not move a worktree another live thread is working in");
+    assert!(matches!(error, CoreError::SharedDirectory(_)), "{error:?}");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("other/theirs.txt")).unwrap(),
+        "theirs\n",
+        "no worktree was moved"
+    );
 }
 
 #[tokio::test]

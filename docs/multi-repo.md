@@ -498,7 +498,8 @@ comparison and a turn's checkpoint read the repository their `repo_id` names, th
 stored repository) when it is absent, and run Git in that repository's worktree rather than the task
 folder; a run keeps a checkpoint in every trusted repository's worktree, so its turn and thread diffs read there
 instead of answering `404` from the task folder, and a restore moves every trusted worktree while an ordinary
-thread's restore stays in the engine's own folder; navigation coordinates
+thread's restore stays in the engine's own folder. A restore is refused while another live thread works in any
+worktree it would move, not only in the task folder; navigation coordinates
 resolve in the repository their `repo_id` names too, the primary when absent, so a repository's file is found in
 its own worktree and the task folder is never the checkout, and a thread that moved answers `409 stale_owner`;
 an unknown repository is `404` and an untrusted one is refused.

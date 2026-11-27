@@ -149,6 +149,25 @@ impl Store {
             .optional()?)
     }
 
+    /// The repository that owns a run's own start/end pair: the first one the run was snapshotted in, whose start
+    /// the run-level `checkpoints` row keeps. Identity is the repository's and never the start commit, because two
+    /// repositories can share a commit and only one of them may fill the run-level end.
+    pub(crate) fn run_checkpoint_owner(
+        &self,
+        thread_id: &str,
+        run_id: &str,
+    ) -> Result<Option<String>> {
+        Ok(self
+            .reader()
+            .query_row(
+                "SELECT repo_id FROM checkpoint_repositories WHERE thread_id = ?1 AND run_id = ?2
+                 ORDER BY rowid LIMIT 1",
+                [thread_id, run_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     /// Whether a run kept any checkpoint at all, in the engine's folder or in a repository's worktree.
     pub(crate) fn run_has_checkpoint(&self, run_id: &str) -> Result<bool> {
         let row: Option<i64> = self
@@ -163,13 +182,14 @@ impl Store {
         Ok(row.is_some())
     }
 
-    /// Other live threads working in the same folder as `thread`.
-    pub fn threads_sharing_checkout(&self, thread: &Thread) -> Result<Vec<String>> {
+    /// Other live threads working in the folder at `path`. A restore asks this of every folder it would move, which
+    /// in a multi-repository thread is each repository's worktree and may be another thread's own folder.
+    pub fn threads_sharing_path(&self, path: &str, thread_id: &str) -> Result<Vec<String>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT id FROM threads WHERE cwd = ?1 AND id <> ?2 AND archived_at IS NULL",
         )?;
-        let rows = statement.query_map([&thread.cwd, &thread.id], |row| row.get(0))?;
+        let rows = statement.query_map([path, thread_id], |row| row.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

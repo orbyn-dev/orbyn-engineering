@@ -161,6 +161,25 @@ impl Core {
         })
     }
 
+    /// Refuses a restore while another live thread works in a folder it would move, since that thread's work would
+    /// be overwritten without its knowledge. Every root is checked: a multi-repository thread moves each trusted
+    /// worktree, and one of them can be another thread's own folder (docs/multi-repo.md).
+    fn refuse_shared_roots(
+        &self,
+        thread_id: &str,
+        roots: &[(Option<String>, PathBuf)],
+    ) -> Result<()> {
+        for (_, worktree) in roots {
+            let shared = self
+                .store
+                .threads_sharing_path(&worktree.to_string_lossy(), thread_id)?;
+            if !shared.is_empty() {
+                return Err(CoreError::SharedDirectory(shared.len()));
+            }
+        }
+        Ok(())
+    }
+
     /// The repository a checkpoint read of this thread is in: the one its stored `cwd` names, because a read
     /// resolves the thread to a worktree and a task folder is not a checkout. `None` for an ordinary thread, whose
     /// checkpoint is its own folder (docs/multi-repo.md).
@@ -249,7 +268,7 @@ impl Core {
         git::recent_commits(Path::new(&thread.cwd), 100).await
     }
 
-    /// Puts the files back. Refused while another live thread shares the folder,
+    /// Puts the files back. Refused while another live thread shares a folder it would move,
     /// since its work would be overwritten without its knowledge. The files as
     /// they stood are kept in a checkpoint ref first, so this can be undone.
     pub async fn restore_workspace(
@@ -259,12 +278,10 @@ impl Core {
         actor: &str,
     ) -> Result<()> {
         let thread = self.idle_thread(thread_id)?;
-        let shared = self.store.threads_sharing_checkout(&thread)?;
-        if !shared.is_empty() {
-            return Err(CoreError::SharedDirectory(shared.len()));
-        }
+        let roots = self.restore_roots(&thread)?;
+        self.refuse_shared_roots(&thread.id, &roots)?;
         let mut restores = Vec::new();
-        for (repo_id, worktree) in self.restore_roots(&thread)? {
+        for (repo_id, worktree) in roots {
             let checkpoint =
                 self.thread_checkpoint(thread_id, &request.run_id, repo_id.as_deref())?;
             let target = match request.point {
@@ -359,12 +376,10 @@ impl Core {
     /// audit row is written only after the files are back, so a failed restore leaves no
     /// record of one.
     async fn restore_for_rewind(&self, thread: &Thread, run_id: &str, actor: &str) -> Result<()> {
-        let shared = self.store.threads_sharing_checkout(thread)?;
-        if !shared.is_empty() {
-            return Err(CoreError::SharedDirectory(shared.len()));
-        }
+        let roots = self.restore_roots(thread)?;
+        self.refuse_shared_roots(&thread.id, &roots)?;
         let mut restores = Vec::new();
-        for (repo_id, worktree) in self.restore_roots(thread)? {
+        for (repo_id, worktree) in roots {
             let checkpoint = self
                 .thread_checkpoint(&thread.id, run_id, repo_id.as_deref())
                 .map_err(|error| match error {

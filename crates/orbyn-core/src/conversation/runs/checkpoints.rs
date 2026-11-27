@@ -79,15 +79,16 @@ impl RunManager {
                 return;
             }
         };
-        // The run's own start/end pair belongs to the repository that supplied its start, so only that one fills
-        // the run-level end. A repository trusted after the run began has no start row and never does, and a
-        // repository that took a start but is not the run-level one keeps its own pair only (docs/multi-repo.md).
-        let owned_start = self
+        // The run's own start/end pair belongs to the repository that owns the run: the first one it was
+        // snapshotted in, whose start the run-level row keeps. The pairing is by repository and never by the start
+        // commit, because two repositories can share one. A repository that took a start but is not the run-level one
+        // keeps its own pair only, and a repository trusted after the run began has no start row and never does
+        // (docs/multi-repo.md).
+        let owner = self
             .store
-            .checkpoint(&scope.run_id)
+            .run_checkpoint_owner(&scope.thread_id, &scope.run_id)
             .ok()
-            .flatten()
-            .map(|checkpoint| checkpoint.start);
+            .flatten();
         for (repo_id, root) in roots {
             let sha = match snapshot(&root, Some(&reference), &index).await {
                 Ok(sha) => sha,
@@ -102,12 +103,12 @@ impl RunManager {
                         .store
                         .repository_checkpoint(&scope.thread_id, &scope.run_id, repo_id)
                     {
-                        Ok(Some(starts)) => {
-                            let owner = owned_start.as_deref() == Some(starts.start.as_str());
+                        Ok(Some(_)) => {
+                            let owns_run = owner.as_deref() == Some(repo_id.as_str());
                             self.store
                                 .finish_repository_checkpoint(&scope.run_id, repo_id, &sha)
                                 .and_then(|()| {
-                                    if owner {
+                                    if owns_run {
                                         self.store.finish_checkpoint(&scope.run_id, &sha)
                                     } else {
                                         Ok(())
@@ -192,5 +193,236 @@ impl RunManager {
         self.store.set_run_handoff(run, &handoff)?;
         self.store
             .note_thread_event(&thread.id, "engine.session_lost", json!({}))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use orbyn_contracts::{AddRepoFolder, PermissionMode, WorkspaceSetup};
+
+    use super::*;
+    use crate::app::{Core, CoreConfig};
+    use crate::governance::approvals::RunScope;
+    use crate::store::thread_repos::ThreadRepoRecord;
+    use crate::store::{NewProject, NewThread};
+    use crate::testing::{TempDir, library, run_git};
+
+    /// A repository with one commit on `main`, so HEAD exists.
+    fn repo(path: &Path) -> PathBuf {
+        std::fs::create_dir_all(path).unwrap();
+        run_git(path, &["init", "-q", "-b", "main"]);
+        run_git(path, &["config", "user.email", "t@example.com"]);
+        run_git(path, &["config", "user.name", "T"]);
+        std::fs::write(path.join("base.txt"), "base\n").unwrap();
+        run_git(path, &["add", "."]);
+        run_git(path, &["commit", "-q", "-m", "first"]);
+        crate::util::canonicalize(path).unwrap()
+    }
+
+    fn text_of(path: &Path) -> String {
+        crate::util::strip_verbatim(&path.to_string_lossy())
+    }
+
+    fn head(worktree: &Path) -> String {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(worktree)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A thread over two repositories that share every commit: the second is a clone of the first, so both
+    /// worktrees start at the same commit and the same start SHA. What a start over both makes, without an engine.
+    struct SharedHistory {
+        dir: TempDir,
+        core: Arc<Core>,
+        thread: Thread,
+        primary: String,
+        other: String,
+        primary_worktree: PathBuf,
+        other_worktree: PathBuf,
+    }
+
+    async fn shared_history() -> SharedHistory {
+        let dir = TempDir::new();
+        let first = repo(&dir.path().join("first"));
+        let second = dir.path().join("second");
+        run_git(
+            dir.path(),
+            &["clone", "-q", &text_of(&first), &text_of(&second)],
+        );
+        let mut config = CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+        config.engines.lookup_latest = false;
+        config.multi_repo = true;
+        let core = Arc::new(Core::open(config).unwrap());
+        let root = library(&dir.path().join("library"));
+        core.workspace
+            .setup(WorkspaceSetup {
+                url: None,
+                adopt_path: Some(text_of(&root)),
+            })
+            .await
+            .unwrap();
+        let project = core
+            .store
+            .add_project(NewProject {
+                path: &text_of(&first),
+                name: "first",
+                is_git: true,
+                managed: false,
+                scratch: false,
+            })
+            .unwrap();
+        core.store.trust_project(&project.id, "tester").unwrap();
+        let other = core
+            .add_repo_folder(
+                &project.id,
+                AddRepoFolder {
+                    path: text_of(&second),
+                },
+            )
+            .await
+            .unwrap();
+        core.trust_repo(&project.id, &other.id).await.unwrap();
+        // A task folder outside both repositories, with one worktree of each, on one branch.
+        let folder = core.config.data_dir.join("threads").join("task");
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut worktrees = Vec::new();
+        for (repo_id, name, source) in [
+            (&project.id, "first", &first),
+            (&other.id, "second", &second),
+        ] {
+            let worktree = folder.join(name);
+            run_git(
+                source,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    "orbyn/thread",
+                    "--",
+                    &text_of(&worktree),
+                ],
+            );
+            worktrees.push((repo_id.clone(), name.to_owned(), worktree));
+        }
+        let thread = core
+            .store
+            .create_thread(NewThread {
+                project_id: project.id.clone(),
+                title: "t".into(),
+                engine: "codex".into(),
+                model: None,
+                cwd: text_of(&folder),
+                worktree: None,
+                skill_profile: None,
+                parent_thread_id: None,
+                relation: None,
+                scratch: false,
+            })
+            .unwrap();
+        for (position, (repo_id, name, worktree)) in worktrees.iter().enumerate() {
+            core.store
+                .thread_repo_insert(
+                    &ThreadRepoRecord {
+                        thread_id: thread.id.clone(),
+                        repo_id: repo_id.clone(),
+                        position: position as u32,
+                        name: name.clone(),
+                        branch: "orbyn/thread".into(),
+                        worktree_path: text_of(worktree),
+                    },
+                    &crate::util::now(),
+                )
+                .unwrap();
+        }
+        SharedHistory {
+            primary_worktree: worktrees[0].2.clone(),
+            other_worktree: worktrees[1].2.clone(),
+            dir,
+            core,
+            thread,
+            primary: project.id,
+            other: other.id,
+        }
+    }
+
+    /// Two repositories can share a start commit: one is a clone of the other, or both were snapshotted from the
+    /// same bytes in the same second. The run's own end still belongs to the repository that owns the run, which is
+    /// the one the run was first snapshotted in; pairing by the start SHA would let the other one fill it instead.
+    #[tokio::test]
+    async fn only_the_repository_that_owns_the_run_fills_its_end_when_two_share_a_start() {
+        let f = shared_history().await;
+        let run = "run-shared-start";
+        let start = head(&f.primary_worktree);
+        assert_eq!(
+            head(&f.other_worktree),
+            start,
+            "the two repositories start at the same commit"
+        );
+        // Both repositories keep that same commit as the run's start, as a snapshot of each would.
+        f.core
+            .store
+            .add_repository_checkpoint(&f.thread.id, run, &f.primary, &start)
+            .unwrap();
+        f.core
+            .store
+            .add_repository_checkpoint(&f.thread.id, run, &f.other, &start)
+            .unwrap();
+        f.core
+            .store
+            .add_checkpoint(&f.thread.id, run, &start)
+            .unwrap();
+        // The run wrote in the first repository only, so the two repositories end in different commits.
+        std::fs::write(f.primary_worktree.join("written.txt"), "written\n").unwrap();
+        let scope = RunScope {
+            run_id: run.into(),
+            thread_id: f.thread.id.clone(),
+            engine: "codex".into(),
+            family: "codex".into(),
+            write_scope: None,
+            mode: PermissionMode::Supervised,
+            plan: false,
+        };
+        let run_dir = f.dir.path().join("run");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let thread = f.core.store.thread(&f.thread.id).unwrap();
+        f.core.runs.checkpoint_end(&scope, &thread, &run_dir).await;
+
+        let owned = f
+            .core
+            .store
+            .checkpoint(run)
+            .unwrap()
+            .expect("the run keeps its own row");
+        let primary = f
+            .core
+            .store
+            .repository_checkpoint(&f.thread.id, run, &f.primary)
+            .unwrap()
+            .unwrap();
+        let other = f
+            .core
+            .store
+            .repository_checkpoint(&f.thread.id, run, &f.other)
+            .unwrap()
+            .unwrap();
+        assert!(
+            primary.end.is_some() && other.end.is_some(),
+            "each repository kept its own end"
+        );
+        assert_ne!(
+            primary.end, other.end,
+            "the run ended in a different commit in each repository"
+        );
+        assert_eq!(
+            owned.end, primary.end,
+            "the run's own end belongs to the repository that owns the run, not to one that only shares its start"
+        );
     }
 }
