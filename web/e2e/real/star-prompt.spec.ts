@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { send, settled, startService } from "./service";
 
+// Six delivered runs and two reloads, each waiting for its run to settle; the prompt only shows after the sixth.
+test.setTimeout(90_000);
+
 for (const { starred, close } of [{ starred: false, close: "button" }, { starred: false, close: "swipe" }, { starred: true, close: "none" }]) {
   test(`six real-service sends: ${starred ? "existing star" : close + " dismissal"}`, async ({ page }, info) => {
     const service = await startService({ fakeEngines: true, forge: true, starred });
