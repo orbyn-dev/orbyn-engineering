@@ -2302,6 +2302,477 @@ mod writes {
     }
 }
 
+mod listing_cache {
+    //! A listing kept for 30 seconds is dropped by a write in its own tracker and scope at once (docs/issues.md,
+    //! "Cache"): the next listing shows the write, and a listing of another connection keeps what it cached. Each
+    //! fake counts the listings it answered, so a page served from the cache is told from a page read again.
+
+    use super::*;
+    use crate::issues::{IssueEdit, NewIssue, StateFilter};
+    use orbyn_contracts::{
+        CommentIssue, CreateIssue, IssueCloseReason, IssueComment, IssueSetStateInput,
+        IssueUpdateInput,
+    };
+
+    /// A tracker whose issues are what its own writes left there.
+    struct Tracker {
+        kind: TrackerKind,
+        scope: String,
+        issues: Mutex<Vec<IssueSummary>>,
+        readings: AtomicUsize,
+        /// The answer the next write gives once it has stored its change, standing in for a tracker that kept the
+        /// write and then failed the read it answers with (a rate limit, a `404`, a dropped connection).
+        after_write: Mutex<Option<CoreError>>,
+    }
+
+    impl Tracker {
+        fn new(kind: TrackerKind, scope: &str, keys: &[&str]) -> Arc<Self> {
+            Arc::new(Self {
+                kind,
+                scope: scope.to_owned(),
+                issues: Mutex::new(
+                    keys.iter()
+                        .map(|key| issue(kind, key, "2026-11-01T00:00:00Z"))
+                        .collect(),
+                ),
+                readings: AtomicUsize::new(0),
+                after_write: Mutex::new(None),
+            })
+        }
+
+        /// Answers the next write with `error` after storing it: the write landed and the tracker's own answer did
+        /// not come back, so the answer cannot prove the tracker kept nothing.
+        fn fail_the_next_answer(&self, error: CoreError) {
+            *self
+                .after_write
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(error);
+        }
+
+        /// The answer one write gives instead of its stored issue, when a test armed one.
+        fn answer_failure(&self) -> Option<CoreError> {
+            self.after_write
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take()
+        }
+
+        /// How many listings this tracker answered.
+        fn readings(&self) -> usize {
+            self.readings.load(Ordering::SeqCst)
+        }
+
+        fn summary(&self, key: &str) -> IssueSummary {
+            self.issues
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .iter()
+                .find(|issue| issue.key == key)
+                .unwrap_or_else(|| panic!("issue {key} is stored"))
+                .clone()
+        }
+
+        /// What the tracker holds once a write lands: one issue changed, updated at `updated`.
+        fn changed(
+            &self,
+            key: &str,
+            updated: &str,
+            change: impl FnOnce(&mut IssueSummary),
+        ) -> IssueSummary {
+            let mut issues = self
+                .issues
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let at = issues
+                .iter()
+                .position(|issue| issue.key == key)
+                .unwrap_or_else(|| panic!("issue {key} is stored"));
+            let mut summary = issues[at].clone();
+            summary.updated_at = updated.to_owned();
+            change(&mut summary);
+            issues[at] = summary.clone();
+            summary
+        }
+
+        fn detail(&self, summary: IssueSummary) -> IssueDetail {
+            IssueDetail {
+                summary,
+                body: String::new(),
+                comments: vec![],
+                linked_pull_requests: vec![],
+                linked_threads: vec![],
+                reactions: None,
+                states: Some(vec![
+                    IssueState {
+                        category: IssueStateCategory::Open,
+                        name: "Open".into(),
+                        close_reason: None,
+                    },
+                    IssueState {
+                        category: IssueStateCategory::Closed,
+                        name: "Closed".into(),
+                        close_reason: Some(IssueCloseReason::Completed),
+                    },
+                ]),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl IssueSource for Tracker {
+        async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
+            self.readings.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(
+                scope, self.scope,
+                "a listing is read in its connection's scope"
+            );
+            let stored = self
+                .issues
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let counts = IssueCounts {
+                open: stored
+                    .iter()
+                    .filter(|issue| issue.state.category == IssueStateCategory::Open)
+                    .count() as u32,
+                closed: stored
+                    .iter()
+                    .filter(|issue| issue.state.category == IssueStateCategory::Closed)
+                    .count() as u32,
+            };
+            let mut issues: Vec<IssueSummary> = stored
+                .iter()
+                .filter(|issue| match query.state {
+                    StateFilter::All => true,
+                    StateFilter::Open => issue.state.category == IssueStateCategory::Open,
+                    StateFilter::Closed => issue.state.category == IssueStateCategory::Closed,
+                })
+                .cloned()
+                .collect();
+            issues.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            Ok(ScopeList {
+                issues,
+                counts: Some(counts),
+                next: None,
+            })
+        }
+
+        async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
+            assert_eq!(scope, self.scope);
+            if !self
+                .issues
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .iter()
+                .any(|issue| issue.key == key)
+            {
+                return Err(CoreError::NotFound(format!("issue {key}")));
+            }
+            Ok(self.detail(self.summary(key)))
+        }
+
+        fn can_write(&self) -> bool {
+            true
+        }
+
+        fn can_edit(&self) -> bool {
+            true
+        }
+
+        async fn create(&self, scope: &str, new: &NewIssue<'_>) -> Result<IssueDetail> {
+            assert_eq!(scope, self.scope);
+            let mut summary = issue(self.kind, "2", "2026-11-24T00:00:00Z");
+            summary.scope = self.scope.clone();
+            summary.title = new.title.to_owned();
+            self.issues
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(summary.clone());
+            Ok(self.detail(summary))
+        }
+
+        async fn comment(&self, scope: &str, key: &str, body: &str) -> Result<IssueComment> {
+            assert_eq!(scope, self.scope);
+            let summary = self.changed(key, "2026-11-25T00:00:00Z", |summary| {
+                summary.comment_count += 1;
+            });
+            Ok(IssueComment {
+                id: "c1".to_owned(),
+                author: None,
+                body: body.to_owned(),
+                created_at: summary.updated_at,
+            })
+        }
+
+        async fn update(
+            &self,
+            scope: &str,
+            key: &str,
+            edit: &IssueEdit<'_>,
+        ) -> Result<IssueDetail> {
+            assert_eq!(scope, self.scope);
+            let summary = self.changed(key, "2026-11-26T00:00:00Z", |summary| {
+                if let Some(title) = edit.title {
+                    summary.title = title.to_owned();
+                }
+            });
+            match self.answer_failure() {
+                Some(error) => Err(error),
+                None => Ok(self.detail(summary)),
+            }
+        }
+
+        async fn set_state(
+            &self,
+            scope: &str,
+            key: &str,
+            state: &str,
+            close_reason: Option<IssueCloseReason>,
+        ) -> Result<IssueDetail> {
+            assert_eq!(scope, self.scope);
+            let summary = self.changed(key, "2026-11-27T00:00:00Z", |summary| {
+                summary.state = IssueState {
+                    category: if state == "Closed" {
+                        IssueStateCategory::Closed
+                    } else {
+                        IssueStateCategory::Open
+                    },
+                    name: state.to_owned(),
+                    close_reason,
+                };
+            });
+            match self.answer_failure() {
+                Some(error) => Err(error),
+                None => Ok(self.detail(summary)),
+            }
+        }
+    }
+
+    /// A world with GitLab and Forgejo connected in one scope each, both behind fakes that keep what a write leaves.
+    async fn connected_pair() -> (super::super::harness::World, Arc<Tracker>, Arc<Tracker>) {
+        let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
+        w.core
+            .issues
+            .set_credentials(Credentials::new(Arc::new(Memory::default()), "test"));
+        for (kind, host) in [
+            (TrackerKind::Gitlab, "https://gitlab.example.test"),
+            (TrackerKind::Forgejo, "https://forgejo.example.test"),
+        ] {
+            w.core
+                .connect_issue_tracker(
+                    kind,
+                    ConnectTracker {
+                        host: Some(host.into()),
+                        scope: Some("team/app".into()),
+                        token: Some("token-test".into()),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        let gitlab = Tracker::new(TrackerKind::Gitlab, "team/app", &["1"]);
+        let forgejo = Tracker::new(TrackerKind::Forgejo, "team/app", &[]);
+        w.core
+            .issues
+            .set_source(TrackerKind::Gitlab, gitlab.clone());
+        w.core
+            .issues
+            .set_source(TrackerKind::Forgejo, forgejo.clone());
+        (w, gitlab, forgejo)
+    }
+
+    fn keys(list: &IssueList) -> Vec<String> {
+        let mut keys = Vec::new();
+        for issue in &list.issues {
+            keys.push(issue.key.clone());
+        }
+        keys
+    }
+
+    #[tokio::test]
+    async fn a_write_is_in_the_very_next_listing_and_only_its_own_scope_is_read_again() {
+        let (w, gitlab, forgejo) = connected_pair().await;
+        let open = IssueQuery::default();
+        let closed = IssueQuery {
+            state: StateFilter::Closed,
+            ..IssueQuery::default()
+        };
+        let first = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(keys(&first), ["1"]);
+        assert_eq!(first.counts, Some(IssueCounts { open: 1, closed: 0 }));
+        // Both pages of the scope are cached before the writes, so a write that drops one of them and not the other
+        // leaves an old page cached and this test sees it.
+        let none_closed = w.core.list_issues(&closed).await.unwrap();
+        assert!(keys(&none_closed).is_empty(), "the closed page is empty");
+        assert_eq!(
+            (gitlab.readings(), forgejo.readings()),
+            (2, 2),
+            "each connection's open and closed pages are read once"
+        );
+
+        // A create is listed at once, first because it is the newest update.
+        w.core
+            .create_issue(CreateIssue {
+                tracker: TrackerKind::Gitlab,
+                scope: "team/app".into(),
+                title: "Crash on start".into(),
+                body: Some("It breaks.".into()),
+                labels: vec![],
+                assignees: vec![],
+                template: None,
+            })
+            .await
+            .unwrap();
+        let created = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(
+            keys(&created),
+            ["2", "1"],
+            "the new issue is listed at once"
+        );
+        assert_eq!(
+            created.issues.first().map(|issue| issue.title.as_str()),
+            Some("Crash on start")
+        );
+        assert_eq!(created.counts, Some(IssueCounts { open: 2, closed: 0 }));
+        assert_eq!(
+            (gitlab.readings(), forgejo.readings()),
+            (3, 2),
+            "only the written connection was read again"
+        );
+
+        // A comment changes the comment count and the update, which reorders the page.
+        w.core
+            .comment_issue(CommentIssue {
+                tracker: TrackerKind::Gitlab,
+                scope: "team/app".into(),
+                key: "1".into(),
+                body: "Looks good.".into(),
+            })
+            .await
+            .unwrap();
+        let commented = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(
+            keys(&commented),
+            ["1", "2"],
+            "the commented issue is the newest update"
+        );
+        assert_eq!(
+            commented.issues.first().map(|issue| issue.comment_count),
+            Some(1)
+        );
+        assert_eq!(gitlab.readings(), 4);
+
+        // An edit changes a field a page carries.
+        w.core
+            .update_issue(IssueUpdateInput {
+                tracker: TrackerKind::Gitlab,
+                scope: "team/app".into(),
+                key: "2".into(),
+                title: Some("Crash on start, again".into()),
+                body: None,
+                labels: None,
+                assignees: None,
+            })
+            .await
+            .unwrap();
+        let edited = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(keys(&edited), ["2", "1"]);
+        assert_eq!(
+            edited.issues.first().map(|issue| issue.title.as_str()),
+            Some("Crash on start, again")
+        );
+        assert_eq!(gitlab.readings(), 5);
+
+        // Both pages of the scope are cached again before the state change, so a state change that drops one of them
+        // and keeps the other leaves an old page cached and this test sees it: the closed page here is empty, and a
+        // stale one would keep it empty instead of showing the issue the write moves into it.
+        let none_closed = w.core.list_issues(&closed).await.unwrap();
+        assert!(keys(&none_closed).is_empty(), "no issue is closed yet");
+        assert_eq!(gitlab.readings(), 6, "the closed page is read once");
+        let sure_closed = w.core.list_issues(&closed).await.unwrap();
+        assert!(keys(&sure_closed).is_empty());
+        let warm = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(keys(&warm), ["2", "1"]);
+        assert_eq!(
+            gitlab.readings(),
+            6,
+            "both pages are cached before the write, so neither is read again yet"
+        );
+
+        // A state change moves the issue to the closed page, and the counts follow.
+        w.core
+            .set_state_issue(IssueSetStateInput {
+                tracker: TrackerKind::Gitlab,
+                scope: "team/app".into(),
+                key: "2".into(),
+                state: "Closed".into(),
+                close_reason: None,
+            })
+            .await
+            .unwrap();
+        let open = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(keys(&open), ["1"], "a closed issue leaves the open page");
+        assert_eq!(open.counts, Some(IssueCounts { open: 1, closed: 1 }));
+        let closed_page = w.core.list_issues(&closed).await.unwrap();
+        assert_eq!(
+            keys(&closed_page),
+            ["2"],
+            "the closed page holds it at once, not the empty page cached before the write"
+        );
+        assert_eq!(
+            (gitlab.readings(), forgejo.readings()),
+            (8, 2),
+            "both pages of the written connection's scope are read again, whatever their state filter; the other \
+             connection's pages were cached before the write and stay"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_write_that_landed_but_whose_answer_failed_still_shows_in_the_very_next_listing() {
+        let (w, gitlab, forgejo) = connected_pair().await;
+        let open = IssueQuery::default();
+        let first = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(keys(&first), ["1"]);
+        assert_eq!(
+            (gitlab.readings(), forgejo.readings()),
+            (1, 1),
+            "one page of each connection is cached"
+        );
+
+        // The write is stored, and the read that answers it fails: nothing in that answer proves the tracker kept
+        // nothing, so the page cached before it must not answer the next listing.
+        gitlab.fail_the_next_answer(CoreError::NotFound("issue 1".into()));
+        let written = w
+            .core
+            .update_issue(IssueUpdateInput {
+                tracker: TrackerKind::Gitlab,
+                scope: "team/app".into(),
+                key: "1".into(),
+                title: Some("Crash on start, renamed".into()),
+                body: None,
+                labels: None,
+                assignees: None,
+            })
+            .await;
+        assert!(
+            written.is_err(),
+            "an answer that does not prove the write failed is still reported"
+        );
+        let next = w.core.list_issues(&open).await.unwrap();
+        assert_eq!(
+            next.issues.first().map(|issue| issue.title.as_str()),
+            Some("Crash on start, renamed"),
+            "a write that landed shows in the very next listing even when its own answer failed"
+        );
+        assert_eq!(
+            gitlab.readings(),
+            2,
+            "the written scope's page is read again, not served from the cache"
+        );
+        assert_eq!(forgejo.readings(), 1, "the other connection keeps its page");
+    }
+}
+
 mod binding {
     //! The project-to-tracker binding through a real core: two names stored, one audit row with ids and names only,
     //! an idempotent unbind, and the connection and scope checks (docs/issues.md, "… bindProject").
