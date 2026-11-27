@@ -172,16 +172,19 @@ test("the composer picks model and effort and sets access", async ({ page }) => 
   await expect(trigger).toBeVisible();
   await trigger.click();
   const picker = page.getByRole("dialog", { name: "Choose a model" });
-  await expect(picker.getByRole("option").first()).toBeVisible({ timeout: 15_000 });
-  const choice = picker.getByRole("option").nth(1);
-  const label = (await choice.locator(".model-row-text b").first().innerText()).trim();
+  // Read the label from the Claude (SDK) group's own first option: a global index can land in another engine's group.
+  const claudeSdkFirst = picker.getByRole("group", { name: "Claude (SDK)" }).getByRole("option").first();
+  await expect(claudeSdkFirst).toBeVisible({ timeout: 15_000 });
+  const label = (await claudeSdkFirst.locator(".model-row-text b").first().innerText()).trim();
   // The thread.jump shortcuts are listed in Keybindings and belong to the page: the open picker keeps them off it.
   await picker.getByRole("combobox", { name: "Search models" }).press("ControlOrMeta+2");
   await expect(picker).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`#/threads/${id}$`));
-  const exact = picker.getByRole("option").filter({ has: page.locator("b", { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) });
-  await expect(exact).toHaveCount(1);
-  await exact.click();
+  // The one installed Claude's catalog is drawn under both of its paths, so each group carries one row for the model.
+  const optionsIn = (group: string) => picker.getByRole("group", { name: group }).getByRole("option").filter({ has: page.locator("b", { hasText: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) }) });
+  await expect(optionsIn("Claude (SDK)")).toHaveCount(1);
+  await expect(optionsIn("Claude (CLI)")).toHaveCount(1);
+  await optionsIn("Claude (SDK)").click();
   await expect.poll(async () => (await thread(id) as unknown as { model: string | null }).model).not.toBeNull();
   await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
 
@@ -284,6 +287,8 @@ test("every settings section loads from the real service", async ({ page }) => {
   page.on("response", (response) => {
     // Crew Preview answers 404 while it is off: that is how the app learns to draw nothing of Crew.
     if (response.url().includes("/api/crew/preview") && response.status() === 404) return;
+    // Issues off answers 404 to the tracker read the same way: that is how the app learns to draw nothing of Issues.
+    if (new URL(response.url()).pathname === "/api/issues/trackers" && response.status() === 404) return;
     if (response.url().includes("/api/") && response.status() >= 400) failures.push(`${response.status()} ${response.url()}`);
   });
   await page.goto(`${service.page}#/settings/general`);
