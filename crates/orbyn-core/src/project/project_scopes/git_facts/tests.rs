@@ -234,6 +234,49 @@ async fn a_folder_that_becomes_a_bare_repository_is_observed_again() {
     );
 }
 
+/// Git exits 128 both for a folder with no repository above it and for one whose enclosing
+/// configuration cannot be read. Only the first is a folder without a work tree: the second is a
+/// repository Orbyn cannot read, so the checkout is left unobserved instead of called standalone.
+#[tokio::test]
+async fn a_folder_inside_an_unreadable_repository_is_not_completed_as_standalone() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let root = dir.path().join("repo");
+    let plain = root.join("plain");
+    std::fs::create_dir_all(&plain).unwrap();
+    core.add_project(plain.to_str().unwrap()).await.unwrap();
+    let first = read(&core).await;
+    let member = only_member(&first);
+    assert!(
+        member.metadata_complete && member.repository_key.is_none(),
+        "the folder is a plain folder, read as one"
+    );
+    // A repository appears above the folder, and its configuration cannot be read: Git exits 128
+    // for the folder too, and the repository above it is not one it found no work tree for.
+    repository(&root);
+    std::fs::write(
+        root.join(".git").join("config"),
+        "[core]\n\trepositoryformatversion = 0\n[broken\n",
+    )
+    .unwrap();
+    let watched = std::slice::from_ref(&plain);
+    let before = spawns(watched);
+    let second = read(&core).await;
+    assert!(
+        since(&before, watched)[0] > 0,
+        "the folder is observed again"
+    );
+    let member = only_member(&second);
+    assert!(
+        !member.metadata_complete,
+        "a repository Orbyn cannot read is not a folder without one"
+    );
+    assert_eq!(
+        member.repository_key, None,
+        "and no identity is invented for it"
+    );
+}
+
 #[tokio::test]
 async fn a_missing_folder_is_unavailable_and_starts_nothing() {
     let dir = TempDir::new();

@@ -260,6 +260,16 @@ async fn metadata(path: &Path, args: &[&str], deadline: Instant) -> Option<(i32,
     result
 }
 
+/// The configuration an observation reads: the remote a repository is named by, and nothing a link
+/// in it could point at. Global and system configuration stay off in [`metadata`].
+const CONFIGURATION: [&str; 5] = [
+    "config",
+    "--no-includes",
+    "--null",
+    "--get-regexp",
+    r"^(remote\..*\.url|include\..*|includeif\..*|url\..*\.(insteadof|pushinsteadof))$",
+];
+
 /// Observes one folder's Git identity: the two commands that read it, and what their
 /// answer rests on. `None` leaves the checkout unobserved, as a failed or partial read
 /// always did, and nothing is kept for it.
@@ -273,7 +283,14 @@ async fn observe(path: &Path, real: &Path, is_git: bool, deadline: Instant) -> O
     {
         Some((0, output)) => output,
         Some((128, _)) if !is_git && !path.join(".git").exists() => {
-            return Some(GitFacts::no_work_tree(real));
+            // Git also exits 128 when the configuration above the folder cannot be read, and a
+            // folder inside a repository Orbyn cannot read is not a folder without one: it is
+            // answered as complete only when the configuration read says there is none.
+            return matches!(
+                metadata(path, &CONFIGURATION, deadline).await,
+                Some((0 | 1, _))
+            )
+            .then(|| GitFacts::no_work_tree(real));
         }
         _ => return None,
     };
@@ -296,19 +313,7 @@ async fn observe(path: &Path, real: &Path, is_git: bool, deadline: Instant) -> O
     // Inspect configuration without includes: the identity comes from the files the answer rests
     // on, never from what a link in them points at. Global/system configuration and
     // caller-provided config are disabled in metadata.
-    let repository = match metadata(
-        path,
-        &[
-            "config",
-            "--no-includes",
-            "--null",
-            "--get-regexp",
-            r"^(remote\..*\.url|include\..*|includeif\..*|url\..*\.(insteadof|pushinsteadof))$",
-        ],
-        deadline,
-    )
-    .await
-    {
+    let repository = match metadata(path, &CONFIGURATION, deadline).await {
         Some((0, bytes)) => repository_from_config(&bytes).ok()?,
         Some((1, _)) => None,
         _ => return None,
