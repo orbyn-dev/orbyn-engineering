@@ -740,6 +740,30 @@ async fn node_id(cwd: &std::path::Path, scope: &str, key: &str) -> Result<String
 /// The folder a GitHub repository keeps its issue templates in, one file each (docs/issues.md, "As built"): the
 /// contents API lists it and answers one file's body per markdown template.
 const TEMPLATE_DIR: &str = ".github/ISSUE_TEMPLATE";
+
+/// The contents endpoint for one file of that listing, with every `/`-separated segment percent-encoded.
+///
+/// A template's file name is whatever the repository called it, and one may hold a `%`, a `#`, a `?`, a space or a
+/// character outside ASCII. `gh api` joins the endpoint into the request URL as it is given, so `#` would start a
+/// fragment, `?` a query and a lone `%` an escape the URL parser refuses: the read would go to another path or fail
+/// before it is sent, and one such file would fail the whole template read. A segment keeps its `/` separators and
+/// every unreserved character, so `bug_report.md` is unchanged.
+fn contents_endpoint(scope: &str, path: &str) -> String {
+    let mut endpoint = format!("repos/{scope}/contents");
+    for segment in path.split('/') {
+        endpoint.push('/');
+        for byte in segment.bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                    endpoint.push(char::from(byte));
+                }
+                _ => endpoint.push_str(&format!("%{byte:02X}")),
+            }
+        }
+    }
+    endpoint
+}
+
 /// The most characters of a template's name and of its description that are kept, the most label names it carries,
 /// and the most characters of each. All of it is the tracker's text and is cut, never trusted to be short.
 const MAX_TEMPLATE_NAME_CHARS: usize = 256;
@@ -1197,25 +1221,19 @@ impl IssueSource for GitHub {
         let Some(entries) = listing.as_array() else {
             return Ok(Vec::new());
         };
+        // Only a `.md` file is a template this reader can carry: a folder, a submodule, `config.yml` and an issue form
+        // (`.yml`/`.yaml`) are not read at all. The 50 places are for templates, so a form, the config or a folder
+        // above a markdown file may not take one of them; one read per markdown file keeps the read count bounded.
+        let readable = entries.iter().filter_map(|entry| {
+            let name = entry.get("name").and_then(Value::as_str)?;
+            let path = entry.get("path").and_then(Value::as_str)?;
+            let file = entry.get("type").and_then(Value::as_str) == Some("file");
+            (file && name.to_ascii_lowercase().ends_with(".md") && !path.is_empty())
+                .then_some((name, path))
+        });
         let mut templates = Vec::new();
-        for entry in entries.iter().take(MAX_TEMPLATES) {
-            let name = entry
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let path = entry
-                .get("path")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            // Only a `.md` file is a template this reader can carry: a folder, a submodule, `config.yml` and an
-            // issue form (`.yml`/`.yaml`) are not read at all.
-            if entry.get("type").and_then(Value::as_str) != Some("file")
-                || !name.to_ascii_lowercase().ends_with(".md")
-                || path.is_empty()
-            {
-                continue;
-            }
-            let args = vec!["api".to_owned(), format!("repos/{scope}/contents/{path}")];
+        for (name, path) in readable.take(MAX_TEMPLATES) {
+            let args = vec!["api".to_owned(), contents_endpoint(scope, path)];
             let file = run(&self.cwd, &args).await?;
             // A body GitHub did not send as base64 (a file over 1 MB, `encoding: "none"`) is skipped: the list keeps
             // the templates it can read rather than failing on the one it cannot.
@@ -1665,6 +1683,25 @@ mod tests {
             );
             assert_eq!(body, file, "the whole file is the template's body");
         }
+    }
+
+    #[test]
+    fn a_contents_endpoint_escapes_one_segments_url_syntax_and_keeps_its_separators() {
+        assert_eq!(
+            contents_endpoint("acme/app", ".github/ISSUE_TEMPLATE/bug_report.md"),
+            "repos/acme/app/contents/.github/ISSUE_TEMPLATE/bug_report.md",
+            "an ordinary path is unchanged"
+        );
+        assert_eq!(
+            contents_endpoint("acme/app", "a b/100% #?.md"),
+            "repos/acme/app/contents/a%20b/100%25%20%23%3F.md",
+            "a space, a `%`, a `#` and a `?` are escaped and the `/` separators are not"
+        );
+        assert_eq!(
+            contents_endpoint("acme/app", "é/x"),
+            "repos/acme/app/contents/%C3%A9/x",
+            "a character outside ASCII is escaped by its bytes"
+        );
     }
 }
 

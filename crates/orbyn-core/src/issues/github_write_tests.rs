@@ -832,6 +832,95 @@ async fn a_markdown_template_carries_its_front_matter_and_its_body() {
 }
 
 #[tokio::test]
+async fn a_markdown_template_below_fifty_forms_and_the_config_is_still_read() {
+    // The 50 places are for templates, not for listed entries: a folder that starts with its forms, its config and a
+    // folder still answers the markdown templates below them, and one file is read per markdown template (#1548).
+    let calls = calls();
+    let record = calls.clone();
+    let fixture = Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
+            let args = strings(args);
+            record.lock().unwrap().push((args.clone(), None));
+            if args == strings(&TEMPLATE_DIR_ARGS) {
+                let mut entries: Vec<(String, String)> = (0..50)
+                    .map(|n| (format!("form_{n}.yml"), "file".to_owned()))
+                    .collect();
+                entries.push(("config.yml".to_owned(), "file".to_owned()));
+                entries.push(("idle".to_owned(), "dir".to_owned()));
+                entries.push(("bug_report.md".to_owned(), "file".to_owned()));
+                let listed: Vec<(&str, &str)> = entries
+                    .iter()
+                    .map(|(name, kind)| (name.as_str(), kind.as_str()))
+                    .collect();
+                return Ok(contents_listing(&listed).to_string());
+            }
+            assert_eq!(
+                args.get(1).map(String::as_str),
+                Some("repos/acme/app/contents/.github/ISSUE_TEMPLATE/bug_report.md"),
+                "only the markdown file is read"
+            );
+            Ok(contents_file(
+                ".github/ISSUE_TEMPLATE/bug_report.md",
+                "---\nname: Bug report\n---\n\nThe body\n",
+            )
+            .to_string())
+        },
+    );
+    let templates =
+        with_crew_input_fixture(fixture, async { github().templates("acme/app").await })
+            .await
+            .unwrap();
+    assert_eq!(
+        templates.len(),
+        1,
+        "forms, the config and a folder above the markdown template do not hide it"
+    );
+    assert_eq!(templates[0].id, "bug_report.md");
+    assert_eq!(
+        seen(&calls).len(),
+        2,
+        "one listing and one body per template, never one per listed entry"
+    );
+}
+
+#[tokio::test]
+async fn a_template_file_whose_name_is_url_syntax_is_percent_encoded_in_its_read() {
+    // `gh api` joins the endpoint into the request URL as given, so a name holding a space, a `%`, a `#` or a `?`
+    // would read another path or fail before the request. Each `/`-separated segment is escaped and the id stays the
+    // file's own name, which is what a create names.
+    let calls = calls();
+    let record = calls.clone();
+    let fixture = Arc::new(
+        move |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
+            let args = strings(args);
+            record.lock().unwrap().push((args.clone(), None));
+            if args == strings(&TEMPLATE_DIR_ARGS) {
+                return Ok(contents_listing(&[("100% #1 bug?.md", "file")]).to_string());
+            }
+            assert_eq!(
+                args.get(1).map(String::as_str),
+                Some("repos/acme/app/contents/.github/ISSUE_TEMPLATE/100%25%20%231%20bug%3F.md"),
+                "the one segment's URL syntax is escaped and no `/` is added or dropped"
+            );
+            Ok(contents_file(
+                ".github/ISSUE_TEMPLATE/100% #1 bug?.md",
+                "---\nname: Bug\n---\n\nBody\n",
+            )
+            .to_string())
+        },
+    );
+    let templates =
+        with_crew_input_fixture(fixture, async { github().templates("acme/app").await })
+            .await
+            .unwrap();
+    assert_eq!(templates.len(), 1, "the file is still a template");
+    assert_eq!(
+        templates[0].id, "100% #1 bug?.md",
+        "the id is the file's own name"
+    );
+}
+
+#[tokio::test]
 async fn a_repository_without_a_templates_folder_answers_none() {
     // A repository that never made templates is the common case: GitHub answers 404 for the path it does not have,
     // and that is "no templates", never an error.
