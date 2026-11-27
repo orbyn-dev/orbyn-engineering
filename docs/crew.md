@@ -2052,7 +2052,10 @@ token is read from an owner-only file in the lead's run folder, never from argum
 A worker's environment carries no route to that folder either, whatever the platform: the core removes every
 inherited name whose value is the data folder (`ORBYN_DATA_DIR` and any other), and the search path it is given
 keeps only absolute folders outside the data folder that offer no `orbyn` program, so the environment a worker is
-handed names neither the folder nor the CLI. A folder that offers `orbyn` loses its other programs for the worker too,
+handed names neither the folder nor the CLI. The value the rules gave the worker themselves stays: a Codex worker
+keeps the private `CODEX_HOME` the core assigned it inside the data folder, and a name the run sets for that run
+alone is judged by that value, not by the inherited one it replaces. A sibling folder whose name merely starts the
+same way (`/…/orbyn-tools` beside `/…/orbyn`) is not inside the data folder and stays. A folder that offers `orbyn` loses its other programs for the worker too,
 which includes the documented install folder `~/.local/bin`. This is what a worker's shell is handed, not a
 boundary: a worker that already knows an absolute path to a binary still starts it, a shell that reads a startup
 file it was given (`BASH_ENV`, a profile) can put a folder back on its own search path before it looks anything

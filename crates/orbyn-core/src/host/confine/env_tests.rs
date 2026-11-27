@@ -14,6 +14,12 @@ const DATA_VAR: &str = "ORBYN_DATA_DIR";
 const STORE_VAR: &str = "ORBYN_STORE";
 /// A variable a confined worker keeps: nothing about it names the data folder.
 const KEPT_NAME: &str = "ORBYN_TEST_KEPT";
+/// A name the run itself sets on the command: its value here is the one the child gets.
+const RUN_VAR: &str = "ORBYN_TEST_RUN_TMP";
+/// A variable that names a folder beside the data folder, not inside it.
+const SIBLING_VAR: &str = "ORBYN_TEST_SIBLING";
+/// The task id a Codex worker's private home is named after.
+const TASK: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 /// The child with no rules, then the worker's child.
 const CONTROL: &str = "control";
 const WORKER: &str = "worker";
@@ -27,6 +33,25 @@ fn setup(dir: &crate::testing::TempDir) -> (PathBuf, Confinement) {
     std::fs::create_dir_all(data.join("runs/mine")).unwrap();
     std::fs::write(data.join("orbyn.sqlite3"), "store").unwrap();
     let rules = Confinement::new(&data, &data.join("runs/mine"), &[], &[]).unwrap();
+    (data, rules)
+}
+
+/// A data folder and the real Codex home beside it, for the rules that give a worker its own home.
+fn codex_setup(dir: &crate::testing::TempDir) -> (PathBuf, Confinement) {
+    let base = std::fs::canonicalize(dir.path()).unwrap();
+    let data = base.join("data");
+    std::fs::create_dir_all(data.join("runs/mine")).unwrap();
+    let real = base.join("real-codex");
+    std::fs::create_dir_all(&real).unwrap();
+    std::fs::write(
+        real.join("auth.json"),
+        r#"{"auth_mode":"apikey","OPENAI_API_KEY":"sk-fake-api-key"}"#,
+    )
+    .unwrap();
+    let rules = Confinement::new(&data, &data.join("runs/mine"), &[], &[])
+        .unwrap()
+        .with_codex_worker_home_at(TASK, &real)
+        .unwrap();
     (data, rules)
 }
 
@@ -123,6 +148,95 @@ fn every_name_that_keeps_the_data_folder_goes_and_the_others_stay() {
             "{name} goes"
         );
     }
+}
+
+/// The Codex home the rules assign a worker is inside the data folder, so the value that carries
+/// it must survive the scrub that removes every other route to that folder. The exemption is the
+/// value the rules assigned, not the name: a `CODEX_HOME` naming anything else under the data
+/// folder is a route to the store like any other.
+#[test]
+fn a_codex_worker_keeps_the_home_the_rules_assigned_it() {
+    let dir = crate::testing::TempDir::new();
+    let (data, rules) = codex_setup(&dir);
+    let home = rules.codex_home().unwrap().to_path_buf();
+
+    let mut command = Command::new("engine");
+    command.env("CODEX_HOME", &home);
+    rules.scrub_env(&mut command);
+    assert_eq!(
+        env_value(&command, "CODEX_HOME"),
+        Some(Some(home.as_os_str())),
+        "the worker lost the home it was assigned"
+    );
+
+    let mut other = Command::new("engine");
+    other.env("CODEX_HOME", data.join("elsewhere"));
+    rules.scrub_env(&mut other);
+    assert_eq!(
+        env_value(&other, "CODEX_HOME"),
+        Some(None),
+        "a CODEX_HOME naming anything else under the data folder stays"
+    );
+}
+
+/// An inherited name is only a route while it is the value the child gets. The run sets its own
+/// variables after the inherited ones, so a safe value it sets for that name is the one that
+/// counts; an inherited name with no override keeps going.
+#[test]
+fn a_safe_value_the_run_sets_for_a_name_survives_the_inherited_one() {
+    let dir = crate::testing::TempDir::new();
+    let (data, rules) = setup(&dir);
+    let inherited = vec![
+        (OsString::from(RUN_VAR), data.join("tmp").into_os_string()),
+        (
+            OsString::from(STORE_VAR),
+            data.join("orbyn.sqlite3").into_os_string(),
+        ),
+    ];
+    let mut command = Command::new("engine");
+    command.env(RUN_VAR, "safe-tmp");
+    rules.scrub_env_with(&mut command, inherited.into_iter());
+    assert_eq!(
+        env_value(&command, RUN_VAR),
+        Some(Some(OsStr::new("safe-tmp"))),
+        "the run's own safe value went with the inherited name"
+    );
+    assert_eq!(
+        env_value(&command, STORE_VAR),
+        Some(None),
+        "an inherited name that keeps the store stays"
+    );
+}
+
+/// A folder that only starts with the same letters as the data folder is its sibling, not inside
+/// it: `/…/orbyn-tools` is not under `/…/orbyn`, so neither its search entry nor a name that
+/// carries it is a route to the store.
+#[test]
+fn a_folder_whose_name_only_starts_like_the_data_folder_is_not_inside_it() {
+    let dir = crate::testing::TempDir::new();
+    let (data, rules) = setup(&dir);
+    let owner = data.with_file_name("data-tools");
+    std::fs::create_dir_all(owner.join("bin")).unwrap();
+    let sibling = std::fs::canonicalize(owner).unwrap();
+    let bin = sibling.join("bin");
+    let keeper = dir.path().join("keeper");
+    std::fs::create_dir_all(&keeper).unwrap();
+    let path = std::env::join_paths([&bin, &keeper]).unwrap();
+
+    let mut command = Command::new("engine");
+    command.env("PATH", &path).env(SIBLING_VAR, &sibling);
+    rules.scrub_env(&mut command);
+    let kept = path_entries(
+        env_value(&command, "PATH")
+            .expect("PATH is decided, never dropped here")
+            .expect("PATH is set"),
+    );
+    assert_eq!(kept, [bin, keeper], "{kept:?}");
+    assert_eq!(
+        env_value(&command, SIBLING_VAR),
+        Some(Some(sibling.as_os_str())),
+        "a name carrying the sibling folder stays"
+    );
 }
 
 /// A real program that prints its environment.

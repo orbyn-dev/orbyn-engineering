@@ -16,9 +16,11 @@
 //!
 //! Whatever the platform, the worker's environment is scrubbed of the data folder and of the
 //! `orbyn` command line ([`Confinement::scrub_env`]): no inherited name keeps the folder, and
-//! the search path keeps no folder that offers the command. That covers the route a shell takes
-//! by name; it does not stop a worker that already knows an absolute path to a binary, which is
-//! what the data folder's denial is for.
+//! the search path keeps no folder that offers the command. The one value that keeps the folder
+//! is the one the rules gave the worker: its own Codex home is inside the data folder and it is
+//! handed over by name, so the scrub lets that value through and takes every other route. That
+//! covers the route a shell takes by name; it does not stop a worker that already knows an
+//! absolute path to a binary, which is what the data folder's denial is for.
 //!
 //! What this does not cover is listed in `docs/crew.md`: the network and the loopback service,
 //! the OS keychain, the engine's own login folders, other engines' saved conversations, and
@@ -279,27 +281,56 @@ impl Confinement {
     ///
     /// The service's own data-folder variable would point the worker's `orbyn` command at the
     /// folder it cannot read, and any other name whose value is that path hands the worker the
-    /// same route, so the value decides and not the name. The search path keeps only absolute
-    /// folders outside the data folder that offer no `orbyn` program, so a worker's shell finds
-    /// neither the app's folder nor the command line by name. It is not a boundary against a
-    /// worker that already knows an absolute path to the binary: the macOS profile and the data
-    /// folder's denial are what stop that (`docs/crew.md`). Run it after the run's own variables
-    /// are set, so one of those cannot put a route back.
+    /// same route, so the value decides and not the name. A value the rules themselves gave the
+    /// worker is not a route: its own Codex home, which they place inside the data folder, and
+    /// the run's own value for a name the parent also sets both stay. The search path keeps only
+    /// absolute folders outside the data folder that offer no `orbyn` program, so a worker's
+    /// shell finds neither the app's folder nor the command line by name. It is not a boundary
+    /// against a worker that already knows an absolute path to the binary: the macOS profile and
+    /// the data folder's denial are what stop that (`docs/crew.md`). Run it after the run's own
+    /// variables are set, so one of those cannot put a route back.
     pub fn scrub_env(&self, command: &mut Command) {
+        self.scrub_env_with(command, std::env::vars_os());
+    }
+
+    /// [`Self::scrub_env`] with the inherited environment named by the caller, so a test can say
+    /// what the parent hands the worker.
+    fn scrub_env_with(
+        &self,
+        command: &mut Command,
+        inherited_env: impl Iterator<Item = (OsString, OsString)>,
+    ) {
         // The folder as the rules compare it, resolved once for every name and search entry.
         let folder = comparable(&self.data);
+        // The Codex home these rules gave this worker, compared as one path: the only value that
+        // may name the data folder, because it is the folder the worker is meant to use.
+        let assigned = self.codex_home.as_deref().map(comparable);
+        let inherited: Vec<(OsString, OsString)> = inherited_env.collect();
         command.env_remove(DATA_DIR_VAR);
+        // The run sets its own variables after the inherited ones, so a name it sets is decided by
+        // the value the child would get and not by the name it was inherited under: the assigned
+        // home or anything naming nothing of the data folder stays, and any other value goes.
+        let mut run_names: Vec<&OsStr> = Vec::new();
         let mut named: Vec<OsString> = Vec::new();
-        for (name, value) in std::env::vars_os() {
-            if names_data(&name, &value, &folder) {
-                named.push(name);
+        for (name, value) in command.get_envs() {
+            let Some(value) = value else {
+                continue;
+            };
+            if is_path_name(name) {
+                continue;
+            }
+            run_names.push(name);
+            if !is_assigned_home(value, assigned.as_deref()) && names_data(name, value, &folder) {
+                named.push(name.to_os_string());
             }
         }
-        for (name, value) in command.get_envs() {
-            if let Some(value) = value
-                && names_data(name, value, &folder)
-            {
-                named.push(name.to_os_string());
+        // An inherited name the run does not set is still the value the child gets.
+        for (name, value) in &inherited {
+            if run_names.iter().any(|own| same_name(own, name)) {
+                continue;
+            }
+            if names_data(name, value, &folder) {
+                named.push(name.clone());
             }
         }
         for name in named {
@@ -310,7 +341,12 @@ impl Confinement {
             .filter_map(|(name, value)| value.map(|value| (name, value)))
             .find(|(name, _)| is_path_name(name))
             .map(|(_, value)| value.to_os_string())
-            .or_else(|| std::env::var_os("PATH"));
+            .or_else(|| {
+                inherited
+                    .iter()
+                    .find(|(name, _)| is_path_name(name))
+                    .map(|(_, value)| value.clone())
+            });
         let kept = worker_path(inherited.as_deref(), &folder);
         match std::env::join_paths(&kept)
             .ok()
@@ -324,7 +360,23 @@ impl Confinement {
     }
 }
 
-/// Whether an inherited `name` and `value` hand the worker the data folder. The search path is not decided
+/// Whether `value` is exactly the Codex home the rules assigned this worker. They place it inside
+/// the data folder, so the exemption is the value they chose and never the name that carries it.
+fn is_assigned_home(value: &OsStr, assigned: Option<&str>) -> bool {
+    assigned.is_some_and(|home| comparable(Path::new(value)) == home)
+}
+
+/// Whether `a` and `b` are the same environment name: Windows compares names without case, the
+/// other platforms exactly.
+fn same_name(a: &OsStr, b: &OsStr) -> bool {
+    if cfg!(windows) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
+/// Whether a name and its value hand the worker the data folder. The search path is not decided
 /// here: it is a list of folders, and one entry naming the folder does not spoil the others.
 fn names_data(name: &OsStr, value: &OsStr, folder: &str) -> bool {
     !is_path_name(name) && mentions(value, folder)
@@ -334,11 +386,7 @@ fn names_data(name: &OsStr, value: &OsStr, folder: &str) -> bool {
 /// `Path` is the same one, and case-sensitive everywhere else, where `Path` is a variable of its own that
 /// hands over whatever it names like any other.
 fn is_path_name(name: &OsStr) -> bool {
-    if cfg!(windows) {
-        name.eq_ignore_ascii_case("PATH")
-    } else {
-        name == "PATH"
-    }
+    same_name(name, OsStr::new("PATH"))
 }
 
 /// The worker's search path: the absolute folders that are outside the data folder (`folder`) and
@@ -359,12 +407,29 @@ fn worker_path(path: Option<&OsStr>, folder: &str) -> Vec<PathBuf> {
 /// is compared as text after resolving the spellings that name the same folder (a link above it,
 /// the Windows verbatim prefix, case), because a variable can name it in any shape.
 fn mentions(value: &OsStr, folder: &str) -> bool {
-    if comparable_text(&value.to_string_lossy()).contains(folder) {
+    if names_folder(&comparable_text(&value.to_string_lossy()), folder) {
         return true;
     }
     std::env::split_paths(value)
         .filter(|entry| entry.is_absolute())
-        .any(|entry| comparable(&entry).contains(folder))
+        .any(|entry| names_folder(&comparable(&entry), folder))
+}
+
+/// Whether `text` is `folder` or inside it, by whole path segments: `/…/orbyn-tools/bin` is a
+/// sibling of `/…/orbyn`, not inside it, while `/…/orbyn/store` and `/…/orbyn` itself are. The
+/// folder is absolute, so a match starts where it appears; it counts only when the folder ends
+/// there or a separator follows, which is what keeps a longer name that merely starts the same
+/// way out of it. A match left inside a longer path is still the folder named, so it counts too.
+fn names_folder(text: &str, folder: &str) -> bool {
+    let folder = folder.trim_end_matches('/');
+    if folder.is_empty() {
+        // A drive or filesystem root: every other path is inside it.
+        return true;
+    }
+    text.match_indices(folder).any(|(at, found)| {
+        let after = &text[at + found.len()..];
+        after.is_empty() || after.starts_with('/')
+    })
 }
 
 /// Whether `folder` offers the `orbyn` command line. A folder that does loses its other programs
