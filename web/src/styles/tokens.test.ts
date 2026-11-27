@@ -176,6 +176,13 @@ describe("control radii (Orbyn Components)", () => {
     expect(block(css["base.css"]!, ".menu")).toContain("border-radius: var(--radius-lg)");
   });
 
+  it("escapes a selector's backslash and plus before matching its block", () => {
+    // The #849 case: a class that leaves a backslash unescaped reads "\b" as a word boundary, and one
+    // that leaves "+" alone reads it as a quantifier, so neither block below is found.
+    expect(block("\n.a\\b {\n  color: red;\n}\n", ".a\\b")).toContain("color: red");
+    expect(block("\n.a+b {\n  gap: 1px;\n}\n", ".a+b")).toContain("gap: 1px");
+  });
+
   it("has no settings-only radius override for them", () => {
     const settings = readFileSync(join(process.cwd(), "src/features/settings/settingsDesign.css"), "utf8");
     expect(settings).not.toMatch(/\.segmented[^{]*\{[^}]*border-radius/);
