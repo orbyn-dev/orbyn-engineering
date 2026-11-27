@@ -1267,6 +1267,110 @@ async fn a_lapsed_lease_refuses_the_write_at_the_gate() {
     assert!(!w.repo.join("src/new.txt").exists(), "the write landed");
 }
 
+/// A person's wait outlasts the lease that was valid when their request was raised: the allow they gave is
+/// asked of the lease again once it is answered, so a lease that ran out during the wait refuses the write.
+/// The refusal is this request's outcome and is recorded like the one asked before the wait, while the
+/// person's own allow stays their decision in the approval row.
+#[tokio::test]
+async fn an_allow_whose_lease_lapsed_while_the_person_waited_is_refused_after_the_wait() {
+    let (w, id) = running().await;
+    // Only the lease is bound, as in a service that started with Crew Preview off: no chain answers, so the
+    // person is asked and the lease is the only thing that can refuse the write.
+    let gate = std::sync::Arc::new(gate_with_lease_only(&w));
+    let target = "src/new.txt";
+    let mut asking = scope(&w, &id);
+    // The worker's own run, so the approval the person answers can be stored.
+    asking.run_id = w
+        .core
+        .store
+        .thread(&w.worker(&id))
+        .expect("the worker's thread")
+        .active_run
+        .expect("the worker is running")
+        .id;
+    let waiting = {
+        let (gate, asking) = (gate.clone(), asking.clone());
+        tokio::spawn(async move {
+            gate.request(&asking, ask(ActionKind::FileChange, target, &[target]))
+                .await
+        })
+    };
+    // The request waits on a person, which it only reaches after the lease passed the check before the
+    // wait: a refusal there returned before any row was written.
+    w.until("the write waits for a person", |w| {
+        !w.core
+            .store
+            .list_approvals(Some(orbyn_contracts::ApprovalState::Pending))
+            .unwrap()
+            .is_empty()
+    })
+    .await;
+    let approval = w
+        .core
+        .store
+        .list_approvals(Some(orbyn_contracts::ApprovalState::Pending))
+        .unwrap()
+        .remove(0);
+    // The lease runs out while the person is deciding. Its `expires_at` is read on use, as everywhere else
+    // in the lease code, so the lapse is a stamp in the past rather than a clock advanced under the test.
+    let live = w
+        .core
+        .store
+        .crew_leases(&id)
+        .unwrap()
+        .into_iter()
+        .find(|lease| lease.mode == LeaseMode::Write)
+        .expect("the brief's write lease");
+    let mut lapsed = live;
+    lapsed.expires_at = crate::crew::leases::utc_seconds(crate::util::unix_now() - 60).unwrap();
+    lapsed.id = orbyn_contracts::CrewObject::Lease(lapsed.clone())
+        .computed_id()
+        .unwrap();
+    w.core
+        .store
+        .add_crew_object(&id, &orbyn_contracts::CrewObject::Lease(lapsed))
+        .unwrap();
+    gate.decide(&approval.id, true, false, "person").unwrap();
+    let refused = waiting.await.unwrap();
+    assert!(
+        words(&refused).contains("the lease ran out"),
+        "the allow stood on a lease that had lapsed during the wait: {}",
+        words(&refused)
+    );
+    assert!(
+        !w.repo.join(target).exists(),
+        "the write landed on a verdict the lease no longer stood behind"
+    );
+    assert_eq!(
+        w.core.store.approval(&approval.id).unwrap().state,
+        orbyn_contracts::ApprovalState::Allowed,
+        "the person's allow is their own decision and stays in the row"
+    );
+    let audit = w.core.store.list_audit(Some(&w.worker(&id)), 20).unwrap();
+    let refusals: Vec<_> = audit
+        .iter()
+        .filter(|row| {
+            row.action == "action.deny" && row.source == "crew_lease" && row.target == target
+        })
+        .collect();
+    assert_eq!(
+        refusals.len(),
+        1,
+        "the refusal made after the wait is not recorded as this request's outcome: {audit:?}"
+    );
+    assert_eq!(refusals[0].decision, Some(PolicyEffect::Deny));
+    assert_eq!(
+        refusals[0].detail,
+        serde_json::json!({ "kind": ActionKind::FileChange })
+    );
+    assert!(
+        !audit
+            .iter()
+            .any(|row| row.action == "action.allow" && row.target == target),
+        "the write refused after the wait was recorded as accepted: {audit:?}"
+    );
+}
+
 /// Neither check passes when it cannot be made: a lease guard with no core to read and Autopilot's
 /// own review with no core both deny, so a dropped core is never a way through the gate.
 #[tokio::test]
