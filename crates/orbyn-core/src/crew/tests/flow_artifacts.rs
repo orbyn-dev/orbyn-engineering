@@ -108,10 +108,7 @@ async fn the_read_reports_the_commit_the_checkout_is_on_now_so_a_pinned_artifact
     );
     assert_eq!(checked.head_absent, None);
     assert!(
-        checked
-            .checks
-            .iter()
-            .all(|row| row.commit.as_str() == now),
+        checked.checks.iter().all(|row| row.commit.as_str() == now),
         "every row is pinned to the commit the checks read, which the checkout is on, so none is stale"
     );
 
@@ -123,10 +120,7 @@ async fn the_read_reports_the_commit_the_checkout_is_on_now_so_a_pinned_artifact
     assert_eq!(moved.head.as_deref(), Some(later.as_str()));
     assert_ne!(moved.head, checked.head, "the checkout moved on");
     assert!(
-        moved
-            .checks
-            .iter()
-            .all(|row| row.commit.as_str() != later),
+        moved.checks.iter().all(|row| row.commit.as_str() != later),
         "a row pinned to the commit it read is stale against the head that moved on"
     );
 }
@@ -148,7 +142,10 @@ async fn a_checkout_git_cannot_read_answers_why_there_is_no_head() {
     }
 
     let view = w.core.crew_flow_task_artifacts(&subject).await.unwrap();
-    assert!(view.head.is_none(), "git could not say which commit it is on");
+    assert!(
+        view.head.is_none(),
+        "git could not say which commit it is on"
+    );
     assert_eq!(view.head_absent.as_deref(), Some("unreadable"));
     assert_eq!(
         view.diff_absent.as_deref(),

@@ -148,7 +148,11 @@ async fn diff_of(facts: &Facts, scrub: &Scrub) -> (Option<wire::FlowTaskDiff>, O
     let Some(root) = checkout_root(facts) else {
         return (None, Some("no_checkout".to_owned()));
     };
-    let Some(base) = facts.run.as_ref().and_then(|run| run.base_commit.as_deref()) else {
+    let Some(base) = facts
+        .run
+        .as_ref()
+        .and_then(|run| run.base_commit.as_deref())
+    else {
         return (None, Some("no_base".to_owned()));
     };
     match changed_since(root, base, scrub).await {
