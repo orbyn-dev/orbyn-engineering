@@ -54,7 +54,13 @@ export function useToastClearance(key: string) {
 }
 
 /** Moves focus into the new screen, so keyboard and screen reader users follow it. */
-export function useRouteFocus(routeKey: string, routeName: string, ready: boolean, main: React.RefObject<HTMLElement | null>) {
+export function useRouteFocus(
+  routeKey: string,
+  routeName: string,
+  ready: boolean,
+  main: React.RefObject<HTMLElement | null>,
+  coveredKey: string,
+) {
   const first = useRef(true);
   const previous = useRef({ key: routeKey, name: routeName });
   // What had focus, and which page was showing, when settings opened.
@@ -66,8 +72,14 @@ export function useRouteFocus(routeKey: string, routeName: string, ready: boolea
     // return to the control that opened it rather than to whatever the tab reached meanwhile.
     if (routeName === "settings" && before.name !== "settings" && opener.current === null) {
       const active = document.activeElement;
-      opener.current = { element: active && active !== document.body ? active : null, key: before.key };
+      // The page it covers is the one drawn behind it, which the shell already knows, not the last page
+      // focus completed on: a screen whose chunk is still arriving has replaced that page already, and
+      // closing Settings restores the opener only while it names the page that is showing.
+      opener.current = { element: active && active !== document.body ? active : null, key: coveredKey };
     }
+    // A Settings session that ended before its screen arrived left its opener behind, and the next one
+    // would never be recorded; closing the session that completed is the other branch's to read.
+    if (routeName !== "settings" && before.name !== "settings") opener.current = null;
     if (!ready) return;
     const root = main.current;
     if (!root) return;
@@ -91,5 +103,5 @@ export function useRouteFocus(routeKey: string, routeName: string, ready: boolea
     first.current = false;
     (target ?? root).focus({ preventScroll: true });
     root.scrollTop = 0;
-  }, [routeKey, routeName, ready, main]);
+  }, [routeKey, routeName, ready, main, coveredKey]);
 }

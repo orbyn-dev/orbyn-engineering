@@ -28,6 +28,7 @@ import { BackgroundAnnouncer, useThreadNotifications } from "./notifications";
 import { useRouteFocus, useToastClearance } from "./focus";
 import { RouteView, ScreenPainted, type PageRoute } from "./routes";
 import { ScreenBoundary } from "./ScreenBoundary";
+import { useCloseOnEscape } from "./closeOnEscape";
 
 /** Settings is a route screen too, drawn by the shell over the page it covers. */
 const SettingsPage = lazy(() => import("../../features/settings").then((module) => ({ default: module.SettingsPage })));
@@ -40,16 +41,7 @@ const SettingsPage = lazy(() => import("../../features/settings").then((module) 
  * Exported for its test, which presses the key.
  */
 export function SettingsLoading({ onClose }: { onClose(): void }) {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector("dialog[open], [aria-modal='true']")) return;
-      event.preventDefault();
-      onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  useCloseOnEscape(onClose);
   return <Loading label="Opening Settings" />;
 }
 
@@ -130,7 +122,10 @@ export function Shell() {
   const screenKey = overlay ? routeKey : routeHref(underneath);
   const painted = overlay ? settingsOnPage : screenOnPage;
   const waitsForScreen = overlay || !(phone && home);
-  useRouteFocus(routeKey, route.name, threadReady && !(phone && drawerOpen) && (!waitsForScreen || painted === screenKey), main);
+  // The address of the page actually on the page, which Settings covers rather than stands in for: what
+  // opened Settings belongs to that page, whether or not focus has caught up with it yet.
+  const coveredKey = routeHref(underneath);
+  useRouteFocus(routeKey, route.name, threadReady && !(phone && drawerOpen) && (!waitsForScreen || painted === screenKey), main, coveredKey);
   const showNav = phone ? home || drawerOpen : small ? drawerOpen : reading ? readingNav : !collapsed;
   // A docked sidebar stays mounted while collapsed: showing it again must not rebuild every row.
   const docked = !small && !phone && !reading;
@@ -234,7 +229,10 @@ export function Shell() {
         // The page under the phone's sheet stays mounted, so its scroll and its terminal survive.
         <main id="main" ref={main} tabIndex={-1} className="main" hidden={phone && drawerOpen}>
           {route.name === "settings" ? (
-            <ScreenBoundary>
+            // Both boundaries hand the answer back to this page: the failure reports Settings' own address,
+            // so focus follows the error state as it follows the page, and both the loading state and the
+            // failure answer Escape, because the page that owns the key is not up in either.
+            <ScreenBoundary screenKey={routeKey} onScreen={setSettingsOnPage} onClose={() => closeSettings(underneath)}>
               <Suspense fallback={<SettingsLoading onClose={() => closeSettings(underneath)} />}>
                 <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => closeSettings(underneath)} />
                 <ScreenPainted screenKey={routeKey} onScreen={setSettingsOnPage} />

@@ -39,8 +39,9 @@ it("records the Settings opener as the route enters it, not once the screen arri
   const main = screen("Screen title");
   const ref = { current: main };
   const view = renderHook(
-    (props: { key: string; name: string; ready: boolean }) => useRouteFocus(props.key, props.name, props.ready, ref),
-    { initialProps: { key: "#/threads/t-1", name: "thread", ready: true } },
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/threads/t-1", name: "thread", ready: true, covered: "#/threads/t-1" } },
   );
   // A person on the thread page, on the control they are about to open Settings from.
   const opener = control("Open settings");
@@ -50,7 +51,7 @@ it("records the Settings opener as the route enters it, not once the screen arri
 
   // Settings is chosen while its first chunk is still arriving: the route is Settings, the screen is not
   // on the page, and the ready gate holds the focus where it is.
-  view.rerender({ key: "#/settings", name: "settings", ready: false });
+  view.rerender({ key: "#/settings", name: "settings", ready: false, covered: "#/threads/t-1" });
   expect(document.activeElement).toBe(opener);
 
   // Tabbing during that wait moves the keyboard on, which is the state the opener must survive.
@@ -58,10 +59,58 @@ it("records the Settings opener as the route enters it, not once the screen arri
   expect(document.activeElement).toBe(tabbedTo);
 
   // The chunk arrives: the screen takes the focus, and what opened it is still the control it was.
-  view.rerender({ key: "#/settings", name: "settings", ready: true });
+  view.rerender({ key: "#/settings", name: "settings", ready: true, covered: "#/threads/t-1" });
   expect(document.activeElement?.textContent).toBe("Screen title");
 
   // Closing Settings returns to that control, never to the one the tab reached during the wait.
-  view.rerender({ key: "#/threads/t-1", name: "thread", ready: true });
+  view.rerender({ key: "#/threads/t-1", name: "thread", ready: true, covered: "#/threads/t-1" });
   expect(document.activeElement).toBe(opener);
+});
+
+it("records the page Settings covers, not the last page focus completed on", () => {
+  const main = screen("Screen title");
+  const ref = { current: main };
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/usage", name: "usage", ready: true, covered: "#/usage" } },
+  );
+  const opener = control("Open settings");
+  act(() => opener.focus());
+
+  // Skills is chosen and its chunk is still arriving: Skills is the page on the page, Usage is the last
+  // page focus completed on, and Settings opens from a control that stays on screen throughout.
+  view.rerender({ key: "#/skills", name: "skills", ready: false, covered: "#/skills" });
+  view.rerender({ key: "#/settings", name: "settings", ready: false, covered: "#/skills" });
+  view.rerender({ key: "#/settings", name: "settings", ready: true, covered: "#/skills" });
+  expect(document.activeElement?.textContent).toBe("Screen title");
+
+  // Closing Settings returns to that control: it names the page underneath, which is the page showing.
+  view.rerender({ key: "#/skills", name: "skills", ready: true, covered: "#/skills" });
+  expect(document.activeElement).toBe(opener);
+});
+
+it("records a second opener after a session that ended before its screen arrived", () => {
+  const main = screen("Screen title");
+  const ref = { current: main };
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/usage", name: "usage", ready: true, covered: "#/usage" } },
+  );
+  const first = control("Open settings");
+  const second = control("Open settings again");
+
+  // Settings is chosen from the first control while its chunk is arriving.
+  act(() => first.focus());
+  view.rerender({ key: "#/settings", name: "settings", ready: false, covered: "#/usage" });
+  // The person leaves Settings before that first chunk arrives, so the session never completed.
+  view.rerender({ key: "#/usage", name: "usage", ready: false, covered: "#/usage" });
+
+  // Opening it again from another control must record that control, not keep the abandoned one.
+  act(() => second.focus());
+  view.rerender({ key: "#/settings", name: "settings", ready: false, covered: "#/usage" });
+  view.rerender({ key: "#/settings", name: "settings", ready: true, covered: "#/usage" });
+  view.rerender({ key: "#/usage", name: "usage", ready: true, covered: "#/usage" });
+  expect(document.activeElement).toBe(second);
 });

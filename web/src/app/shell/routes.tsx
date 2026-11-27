@@ -61,8 +61,10 @@ export function RouteView({
 }) {
   const page = (
     // The boundary sits outside Suspense, so a chunk that does not arrive is answered here instead of taking
-    // the whole app down, and it is keyed by the address, so moving to another screen tries that one.
-    <ScreenBoundary key={routeHref(route)}>
+    // the whole app down, and it is keyed by the address, so moving to another screen tries that one. It
+    // reports that address itself when the screen fails, so focus follows the error state as it follows a
+    // screen that arrived.
+    <ScreenBoundary key={routeHref(route)} screenKey={routeHref(route)} onScreen={onScreen}>
       {/* The boundary sits inside the page's own frame, so the file panel, the title bar and the
           sidebar stay put while a screen's chunk loads, and Loading draws nothing at all unless the
           wait outlasts 400 ms. */}

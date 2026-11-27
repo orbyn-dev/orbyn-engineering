@@ -1,6 +1,7 @@
-import { Component, type ReactNode } from "react";
+import { Component, useEffect, type ReactNode } from "react";
 import { ApiFailure } from "../../api/client";
 import { ErrorState } from "../../product/ui/states";
+import { useCloseOnEscape } from "./closeOnEscape";
 import { reloadPage } from "./pageReload";
 
 /** What a failed import is drawn as: not a service refusal, so no request, no status, nothing retried by a read. */
@@ -18,7 +19,17 @@ const NOT_LOADED = new ApiFailure("screen_not_loaded", "This screen's code did n
  * A caller that can move to another screen keys this by what identifies that screen, so the next screen is
  * tried instead of keeping this failure.
  */
-export class ScreenBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+export class ScreenBoundary extends Component<
+  {
+    children: ReactNode;
+    /** The address whose screen this is, reported once the error state is on the page so focus can follow it. */
+    screenKey?: string;
+    onScreen?: (key: string) => void;
+    /** Answers Escape while this screen's own page, which owns the key once it is up, is not. */
+    onClose?: () => void;
+  },
+  { failed: boolean }
+> {
   override state: { failed: boolean } = { failed: false };
 
   static getDerivedStateFromError(): { failed: boolean } {
@@ -29,8 +40,29 @@ export class ScreenBoundary extends Component<{ children: ReactNode }, { failed:
     if (!this.state.failed) return this.props.children;
     return (
       <div className="page">
-        <ErrorState title="This screen did not open" failure={NOT_LOADED} onRetry={reloadPage} />
+        <ScreenFailure screenKey={this.props.screenKey} onScreen={this.props.onScreen} onClose={this.props.onClose} />
       </div>
     );
   }
+}
+
+/**
+ * The error state as the page that failed to arrive would have been: it reports its address, because the
+ * screen never mounted to report it and focus would otherwise stay on the control that chose it, and it
+ * answers Escape, because the page that owns the key never mounted either.
+ */
+function ScreenFailure({
+  screenKey,
+  onScreen,
+  onClose,
+}: {
+  screenKey?: string;
+  onScreen?: (key: string) => void;
+  onClose?: () => void;
+}) {
+  useCloseOnEscape(onClose);
+  useEffect(() => {
+    if (screenKey !== undefined && onScreen) onScreen(screenKey);
+  }, [screenKey, onScreen]);
+  return <ErrorState title="This screen did not open" failure={NOT_LOADED} onRetry={reloadPage} />;
 }
