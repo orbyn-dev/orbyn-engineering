@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMockFetch } from "../../../test-support";
@@ -88,6 +88,25 @@ describe("while the pull request list is read, and when it cannot be (palette-pr
     await waitFor(() => expect(screen.queryByText(/Couldn’t read pull requests/)).toBeNull());
   });
 
+  it("draws the frame's alert icon before the line when the list cannot be read, and none while it is read", async () => {
+    let answer: (response: Response) => void = () => undefined;
+    pullsAnswer(() => new Promise<Response>((resolve) => { answer = resolve; }));
+    const user = userEvent.setup();
+    render(<CommandPalette start="root" onClose={() => undefined} />);
+    await user.type(await screen.findByRole("combobox"), "ne");
+    // palette-prs-loading draws the spinner and the words, not the alert icon; that icon belongs to the unreadable line.
+    expect(await screen.findByText("Looking for pull requests…")).toBeVisible();
+    expect(document.querySelector(".palette-note-icon")).toBeNull();
+    await act(async () => answer(new Response(JSON.stringify({ code: "offline", message: "offline" }), { status: 503 })));
+    const line = await screen.findByText("Couldn’t read pull requests. Threads and commands still work.");
+    const note = line.parentElement;
+    // palette-prs-unreadable draws the alert triangle first, hidden from the reading order.
+    const icon = note?.querySelector("svg.palette-note-icon");
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute("aria-hidden")).toBe("true");
+    expect(note?.firstElementChild).toBe(icon);
+  });
+
   it("never shows the service's own words for the failure", async () => {
     pullsAnswer(async () => new Response(JSON.stringify({ code: "x", message: "<img src=x onerror=alert(1)> token ghp_secret" }), { status: 500 }));
     const user = userEvent.setup();
@@ -95,5 +114,36 @@ describe("while the pull request list is read, and when it cannot be (palette-pr
     await user.type(await screen.findByRole("combobox"), "ne");
     await screen.findByText(/Couldn’t read pull requests/);
     expect(document.body.textContent).not.toContain("ghp_secret");
+  });
+
+  it("treats a project the service could not read as the unreadable line, and Retry asks for a fresh list", async () => {
+    let failed: { project_id: string; message: string }[] = [{ project_id: "p1", message: "GraphQL: Could not resolve to a Repository with the name 'o/r'." }];
+    const calls = pullsAnswer(async () => new Response(JSON.stringify({ pulls: [], failed }), { status: 200 }));
+    const user = userEvent.setup();
+    render(<CommandPalette start="root" onClose={() => undefined} />);
+    await user.type(await screen.findByRole("combobox"), "ne");
+    // The answer is a 200 with the project named in its failed rows; the palette draws the frame's line for it.
+    expect(await screen.findByText("Couldn’t read pull requests. Threads and commands still work.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
+    failed = [];
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(calls.length).toBe(2));
+    // Retry is the person's own read, so the service is asked to read the list now rather than serve what it kept.
+    expect(new URL(calls[1] ?? "", "http://localhost").searchParams.get("refresh")).toBe("1");
+    await waitFor(() => expect(screen.queryByText(/Couldn’t read pull requests/)).toBeNull());
+  });
+
+  it("keeps one Pull requests heading when rows arrived and a project could not be read", async () => {
+    const first = await firstPull();
+    const failed = [{ project_id: "unreadable", message: "GraphQL: Could not resolve to a Repository with the name 'o/r'." }];
+    pullsAnswer(async () => new Response(JSON.stringify({ pulls: [first], failed }), { status: 200 }));
+    const user = userEvent.setup();
+    render(<CommandPalette start="root" onClose={() => undefined} />);
+    await user.type(await screen.findByRole("combobox"), first.word);
+    // The rows that did arrive draw the group's heading; the note under them says the rest could not be read.
+    expect(await screen.findByRole("button", { name: new RegExp(`#${first.pull.number}$`) })).toBeVisible();
+    expect(await screen.findByText("Couldn’t read pull requests. Threads and commands still work.")).toBeVisible();
+    expect(screen.getAllByText("Pull requests", { exact: true })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 });

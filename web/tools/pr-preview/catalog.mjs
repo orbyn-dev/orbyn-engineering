@@ -182,6 +182,14 @@ export const FRAMES = {
   "pr-list-signedout": { route: "#/pulls", scenario: "pulls-signed-out" },
   "pr-list-draft": { route: "#/pulls", scenario: "pulls", steps: [click("button", "Drafts", { prefix: true })] },
   "pr-list-offline": { route: "#/pulls", scenario: "pulls", steps: [{ do: "offline" }] },
+  // The command palette's unreadable Pull requests note (Engineer designs v195, palette-prs-unreadable): the read fails, so the
+  // note under the group's heading draws the alert triangle, the words and Retry.
+  "palette-prs-unreadable": {
+    route: "#/threads/t-done",
+    pre: [{ route: "**/api/pulls?*", status: 503 }],
+    steps: [click("button", "Search or ask", { prefix: true }), { do: "fill", label: "Search", value: "zz", exact: true }],
+    wait: 900,
+  },
   "pr-list-filtered": {
     route: "#/pulls",
     scenario: "pulls",
