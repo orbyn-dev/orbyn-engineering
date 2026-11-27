@@ -212,7 +212,9 @@ the person sees what they are about to apply.
 
 Errors for the family: `400 invalid_input` (field named, value never echoed), `404 not_found` (profile, thread or crew),
 `403 desktop_required` (browser mode or CLI on a Person route), `403 builtin_profile`, `409 revision_conflict`,
-`409 confirm_required` (only for a grant-raising profile whose grants are not acknowledged; the answer lists them), `409 profile_limit` (50 saved), `409 name_taken`, `409 engine_unavailable`, `409 mode_not_offered`, `409 tier_unmapped`,
+`409 confirm_required` (only for a grant-raising profile whose grants are not acknowledged: nothing is applied and
+`detail` is `{ "grants": [...] }`, the codes the request did not acknowledge), `409 profile_limit` (50 saved),
+`409 name_taken`, `409 engine_unavailable`, `409 mode_not_offered`, `409 tier_unmapped`,
 `409 run_active` when a thread's engine would change during a run (the model and mode alone change from the next turn).
 
 Audit: each Person write adds a row before the effect, with ids and names only (`profile.created`, `profile.changed`,

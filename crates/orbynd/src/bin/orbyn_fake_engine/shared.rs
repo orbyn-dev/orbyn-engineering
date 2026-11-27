@@ -373,6 +373,15 @@ pub(crate) fn sibling_exists(name: &str) -> bool {
         .is_ok_and(|path| std::path::Path::new(&path).with_file_name(name).exists())
 }
 
+/// Lets this engine session leave a state a later one should see, such as an account
+/// window it spent. Written beside the launch file, the same place a test writes its knobs.
+pub(crate) fn write_sibling(name: &str, text: &str) {
+    if let Ok(path) = std::env::var("ORBYN_FAKE_LAUNCH_FILE") {
+        std::fs::write(std::path::Path::new(&path).with_file_name(name), text)
+            .expect("sibling file write");
+    }
+}
+
 pub(crate) const WORKFLOW_SCRIPT: &str =
     "export const meta = { name: 'probe', description: 'probe' }\nawait agent('look')\n";
 

@@ -21,6 +21,16 @@ describe("review batch", () => {
     expect(groups.map((g) => [g.path, g.drafts.map((d) => d.id)])).toEqual([["b.ts", ["a", "c"]], ["a.ts", ["b"]]]);
   });
 
+  it("counts and groups another repository's file apart from the thread's file of the same path", () => {
+    const drafts = [
+      draft("a", "notes.txt", 1, "mine", { repoId: "planner", repoName: "orbyn-planner" }),
+      draft("b", "notes.txt", 2, "own"),
+      draft("c", "notes.txt", 3, "also mine", { repoId: "planner", repoName: "orbyn-planner" }),
+    ];
+    expect(batchSummary(drafts)).toEqual({ comments: 3, files: 2 });
+    expect(groupByFile(drafts).map((group) => [group.path, group.drafts.map((d) => d.id)])).toEqual([["orbyn-planner/notes.txt", ["a", "c"]], ["notes.txt", ["b"]]]);
+  });
+
   it("builds one message with a count heading and every comment in written order", () => {
     const message = reviewMessage([draft("a", "z.ts", 15, "first"), draft("b", "a.ts", 8, "second", { stale: true })], "fix/login");
     expect(message.startsWith("Review comments on fix/login (2)\n\n")).toBe(true);

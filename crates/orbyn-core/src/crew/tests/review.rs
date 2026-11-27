@@ -403,6 +403,11 @@ async fn a_budget_cut_review_call_names_its_lanes() {
 /// Issue #628, the blocker: the loop is paced by the deadline of the MCP timer itself. Run inside the real
 /// `within`, with a reserve that leaves no room after the first lane, the call answers with the cut error
 /// and the timer never fires, so the generic "did not finish in time" is not what comes back.
+///
+/// The budget is the test build's own clock: the first lane's start is real git and real routing, and a loaded
+/// machine can take longer than a production-sized timer (tdd 3.7 reproduced this flake as the timer's generic
+/// "did not finish in time" reply). The reserve stays larger than the budget, so the boundary pinned is the same
+/// one: no room for a second lane, so the call cuts itself before the timer can fire.
 #[tokio::test]
 async fn a_review_call_paced_by_the_mcp_timer_names_its_lanes() {
     let w = crew(arc(|n, root| match n {
@@ -413,11 +418,11 @@ async fn a_review_call_paced_by_the_mcp_timer_names_its_lanes() {
     let subject = w.built_work().await;
     let binding = lead_binding(&w);
     let args = json!({ "task": subject, "lanes": ["correctness", "security", "performance"] });
-    let budget = std::time::Duration::from_secs(30);
+    let budget = std::time::Duration::from_secs(10 * 60);
     let reply = crate::tools::mcp::within_deadline(budget, async {
         let deadline = crate::tools::mcp::call_deadline().expect("a budgeted call has a deadline");
         assert!(deadline <= std::time::Instant::now() + budget);
-        let reserve = std::time::Duration::from_secs(60);
+        let reserve = budget + std::time::Duration::from_secs(5);
         match w
             .core
             .crew_lanes_tool(&binding, &args, deadline, reserve)
