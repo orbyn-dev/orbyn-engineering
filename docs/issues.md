@@ -636,16 +636,17 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
     word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
     nothing left writes nothing, and a removal deletes by the award's id. The answer carries each award name and
     count from the award list's first page of 100, and carries no counts (`null`) when that page is full, because
-    more may be behind it; a removal whose own-award lookup runs out of those pages answers `tracker_unavailable`
-    rather than pretending the award is gone.
+    more may be behind it; an add or a removal whose own-award lookup runs out of those pages answers
+    `tracker_unavailable` rather than pretending the award is not there.
   - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
     `400 invalid_input` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
     React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
     directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
-    left writes nothing. The answer carries each content word and count from at most two pages of 50, and carries
-    no counts when the last page is full, because more may be behind it. Label names are resolved against the
-    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid_input` even though it
-    exists.
+    left writes nothing, as far as those pages show: a reaction they do not carry while the last page is full may be
+    behind it, so both directions answer `tracker_unavailable` rather than guess, writing nothing. The answer carries
+    each content word and count from at most two pages of 50, and carries no counts when the last page is full, because
+    more may be behind it. Label names are resolved against the repository's labels read up to five pages of 50, so a
+    label beyond the first 250 is `400 invalid_input` even though it exists.
   - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
     Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
     than one is `400 invalid_input`, as is a label with a semicolon in it); comment writes markdown and answers the stored
