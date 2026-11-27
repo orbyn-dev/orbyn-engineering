@@ -145,7 +145,8 @@ test("a thread in two repositories gets one task folder and one branch in each, 
 
   // The service's answer: one task folder under threads/<id>/, one branch name in every repository, two worktrees.
   const folder = await service.api<TaskFolder>("GET", `/api/threads/${threadId}/task-folder`);
-  expect(folder.root).toContain(`threads/${threadId}`);
+  // The service answers the folder's own path, so Windows writes backslashes; compare it with one separator style.
+  expect(folder.root.replace(/\\/g, "/")).toContain(`threads/${threadId}`);
   expect(folder.max_per_thread).toBe(8);
   expect(folder.repos.map((repo) => repo.name)).toEqual(["my-repo", "second-repo"]);
   expect(folder.branch).toMatch(/^orbyn\/[0-9a-z]{8}$/);
@@ -286,10 +287,13 @@ test("a folder scan lists the Git folders beside it and imports a .code-workspac
   const imported = await service.api<Scan>("POST", `/api/projects/${projectId}/repos/scan`, { path: file });
   expect(imported.code_workspace_file).toBe("evidence.code-workspace");
   expect(imported.is_git).toBe(false);
+  // A path with a drive prefix is refused on Windows by design (docs/multi-repo.md, "Workspace import"), while the same
+  // absolute path on a Unix machine names a folder inside the file's own folder.
+  const drivePrefix = process.platform === "win32" ? "outside" : null;
   expect(byName(imported.folders).map((folder) => [folder.name, folder.path, folder.source, folder.refused])).toEqual([
     ["scan-one", one, "code_workspace", null],
     ["scan-outside", outside, "code_workspace", "outside"],
-    ["scan-two", two, "code_workspace", null],
+    ["scan-two", two, "code_workspace", drivePrefix],
   ]);
 
   // A scan writes nothing: the project still holds the three repositories the earlier steps added.

@@ -1209,7 +1209,7 @@ a run whose crew is not stored, is `not_found`; with the flag off the route is n
 **As built (slice 4h, listeners, migration 59; KC7 adds the issue-reader listeners):** `crew/background_listeners.rs` is one owned future, `run_crew_background_listeners`, that the
 service starts behind the Preview flag **only when it sets an interval** (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60 s to 24 h; unset means no pass, not even at
 startup) and awaits on shutdown. Each pass fires what is due for the crews that are on (a crew that is off is not read and spends no event):
-a `schedule` crew once per `every_hours` bucket, a `watch` crew's command once per `every_hours` window (see "Watches" above), a `ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
+a `schedule` crew once per `every_hours` window (the same start comparison as the watch tick), a `watch` crew's command once per `every_hours` window (see "Watches" above), a `ci_failure` crew on a failed check run at its branch head (its branch setting, else the project default),
 narrowed by its optional workflow filter, an `issue_label` crew on an open issue in its project's tracker scope that carries the crew's stored `label` (GitHub's issue events feed first; every other tracker keeps the label-set proxy), and a
 `dependency_update` crew on an open Dependabot alert its project's GitHub reader reports (up to 10 pages of 100; a longer feed answers "cannot", since it could not be baselined whole), narrowed by its optional `ecosystem` setting.
 Only the one connected tracker reader the project's `origin` remote names answers for a project (GitHub, GitLab, Azure DevOps or Forgejo; Linear reads team keys
@@ -1218,7 +1218,7 @@ and start nothing. Every claim — each issue or update a baseline sees and ever
 
 | Event | Claim | Held-start key |
 | --- | --- | --- |
-| schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
+| schedule | `schedule:<crew>:<start>` | `<crew>:schedule:<start>` |
 | watch | `watch:<crew>:<start>` (the window's start, in unix seconds) | `<crew>:watch:<start>` |
 | CI failure | `ci:<crew>:<head>:<hash>` | `<crew>:ci:<head>:<hash>` |
 | issue label events baseline (GitHub) | `issue_label:<crew>:<tracker>:<scope>:baseline-events:<hash of label>` | (none: the baseline starts nothing) |
@@ -1229,8 +1229,8 @@ and start nothing. Every claim — each issue or update a baseline sees and ever
 | dependency update | `dependency_update:<crew>:<tracker>:<scope>:<hash of update>` | `<crew>:dependency_update:<hash of scope>:<hash of update>` |
 
 `<hash>` is the first 16 hex characters of the SHA-256 of the value, so a long check name, tracker scope or issue key still fits the held row's 128-character key;
-the label is the crew's own stored setting. A repeat of an event starts nothing new, and a bucket at or before the newest claimed one never fires again (a clock that
-moves back starts nothing). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass, and the
+the label is the crew's own stored setting. A repeat of an event starts nothing new, and a window start at or before the newest claimed one never fires again (a clock that
+moves back starts nothing, and a changed `every_hours` compares starts rather than bucket numbers, so a longer interval cannot be stranded by a shorter one's claim). **One firing per crew per pass**: a head with several failing checks fires the first and leaves the others for a later pass, and the
 newest unclaimed labelled issue fires and leaves the rest unclaimed. **An issue-label crew starts with a baseline:** GitHub answers the repository's issue events feed (one page of 100, newest first), where each label event has its own id, so a label removed and added again fires once; the crew's first pass with a feed claims every event it selects and starts nothing, then keeps its own marker (`issue_label:<crew>:<tracker>:<scope>:baseline-events:<hash of label>`). Every other tracker keeps the label-set proxy: on its first sight of a stored
 label (no `issue_label:<crew>:baseline:<hash of label>` claim yet) it claims every matching issue on every page it reads (up to ten pages of 100) and starts nothing, then keeps
 the baseline claim, but only when every page was read (a listing cut short baselines again on the next pass); changing a crew's stored label baselines the issues that already carry the new label the same way. A later pass fires only on an issue whose
@@ -1897,13 +1897,13 @@ On the web, one shared needs-you read draws the Inbox's watch and could-not-stop
 
 | Feature | Service | Web | Still to build |
 |---|---|---|---|
-| KC2 close the lead | merged (#1355); Stop again retries a failed worker stop (#1417, #1423) | dialog (#1342) and the Inbox could-not-stop row (#1415) | the Board's Needs you card needs a service field (#1416) |
-| KC3 one needs-you | `working` and every service reader merged (#1368) | Inbox watch and could-not-stop rows (#1363, #1415) | board column, Map words and dashboard tiles from the field |
+| KC2 close the lead | merged (#1355); Stop again retries a failed worker stop (#1417, #1423) | dialog (#1342), the Inbox could-not-stop row (#1415) and the Board card (#1434, built after this snapshot) | whether Stop again asks to confirm (Designer); a real-service run |
+| KC3 one needs-you | `working` and every service reader merged (#1368) | Inbox watch and could-not-stop rows (#1363, #1415); the Board words (#1485), the dashboard's Right now tiles (#1492) and the Map's Working word and crew summary (#1493), built after this snapshot | Idle is not served (the store keeps no member without a task); the narrow-panel redraw; cross-view clearing; the Review queue’s `waiting_elsewhere` line; the Inbox from the field; a real-service run (the one-off watch run is tracked in #1546) |
 | KC4 disk guard | background "Not started · Disk" row, migration 82 (#1362) | drawn (#1414) | a real run; the Windows branch is unobserved |
 | KC5 lessons | store and write path with brief injection, migrations 80 and 81 (#1350, #1359) | list (#1345) and card (#1349), hidden on a 404 | the lessons routes (slice 3) and EvalHistory samples (slice 4) |
 | KC6 watches | slices 1 to 3 (#1343, #1353) | watch pages and Inbox rows (#1363) | a run route for "Open the run" |
 | KC7 listeners | plumbing and `issue_label` (#1364) | none needed | `dependency_update` needs a reader feed (#1360) |
-| KC8 resume | merged (#1344); the second death's Inbox item names `stop_detail: worker_stopped_twice` (migration 86) | card line (#1340) | the web Inbox row |
+| KC8 resume | merged (#1344); the second death's Inbox item names `stop_detail: worker_stopped_twice` (migration 86) | card line (#1340) and the Inbox row (#1470) | a real macOS run (Crew workers are macOS-only in the beta) |
 | KC9 skill proposals | the `skills-local` area and its one writer (#1366, #1411); native discovery of the local skills for Claude (per-run read-only copy, built after this snapshot) | Skills group, proposals, review page, read error (#1358, #1409), hidden on a 404 | a Windows junction check (#1406) |
 | KC10 notifications | the once-per-item claim, migration 83 (#1418) | not built | the notification, its settings switch |
 
