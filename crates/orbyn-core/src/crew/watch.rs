@@ -447,11 +447,3 @@ impl Core {
 pub fn event_key(start: i64) -> String {
     format!("watch:{start}")
 }
-
-/// The start, in unix seconds, of the `every_hours` window `now` falls in. The tick claims `watch:<crew>:<start>` and names its
-/// event `watch:<start>`. A start is comparable across intervals, so a person who changes `every_hours` is never held back
-/// by claims the old interval made: a window that starts after the newest claim checks, one that starts at or before it does not.
-pub fn window_start(now: i64, hours: u32) -> i64 {
-    let window = i64::from(hours) * 3600;
-    now.div_euclid(window) * window
-}
