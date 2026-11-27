@@ -2405,10 +2405,13 @@ for are not verified on a real install.
 Provider detail pages in the beta are limited to Claude Code, Codex and OpenCode,
 including their named instances. Other registered providers retain their list and
 instance-edit controls, but cannot open an unbuilt detail page, including before
-the catalog arrives. OpenCode reports its version through the bounded CLI probe;
-compatibility still comes only from the authenticated manifest. Without an
-OpenCode entry its support stays Unknown. Its detail page shows reported version,
-login, location and models; Crew tier mapping remains Planned.
+the catalog arrives. The Needs attention rows keep to it as well: an engine outside
+the beta states its gap and offers no action, since both actions it could draw
+(Open, Sign in again) are rows of that page. OpenCode reports its version through
+the bounded CLI probe; compatibility still comes only from the authenticated
+manifest. Without an OpenCode entry its support stays Unknown. Its detail page
+shows reported version, login, location and models; Crew tier mapping remains
+Planned.
 
 The ACP driver offers protocol version 1, the only one it speaks. An agent that answers 2
 in version 1's shape (`agentInfo`, `agentCapabilities`), as some shipped agents do, runs as
