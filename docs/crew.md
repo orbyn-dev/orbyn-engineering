@@ -2051,11 +2051,12 @@ token is read from an owner-only file in the lead's run folder, never from argum
 
 A worker's environment carries no route to that folder either, whatever the platform: the core removes every
 inherited name whose value is the data folder (`ORBYN_DATA_DIR` and any other), and the search path it is given
-keeps only absolute folders outside the data folder that offer no `orbyn` program, so a worker's shell finds
-neither the folder nor the CLI by name. A folder that offers `orbyn` loses its other programs for the worker too,
+keeps only absolute folders outside the data folder that offer no `orbyn` program, so the environment a worker is
+handed names neither the folder nor the CLI. A folder that offers `orbyn` loses its other programs for the worker too,
 which includes the documented install folder `~/.local/bin`. This is what a worker's shell is handed, not a
-boundary: a worker that already knows an absolute path to a binary still starts it, and the profile above is what
-stops it reading the store. Codex and ACP workers get the same environment.
+boundary: a worker that already knows an absolute path to a binary still starts it, a shell that reads a startup
+file it was given (`BASH_ENV`, a profile) can put a folder back on its own search path before it looks anything
+up, and the profile above is what stops it reading the store. Codex and ACP workers get the same environment.
 
 A Claude worker also cannot read or write another session's saved Claude conversation (the lead's transcript
 under `~/.claude/projects`), nor Claude's prompt history; it keeps its own session, which a first turn names with

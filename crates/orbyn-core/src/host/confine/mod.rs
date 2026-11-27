@@ -308,7 +308,7 @@ impl Confinement {
         let inherited = command
             .get_envs()
             .filter_map(|(name, value)| value.map(|value| (name, value)))
-            .find(|(name, _)| name.eq_ignore_ascii_case("PATH"))
+            .find(|(name, _)| is_path_name(name))
             .map(|(_, value)| value.to_os_string())
             .or_else(|| std::env::var_os("PATH"));
         let kept = worker_path(inherited.as_deref(), &folder);
@@ -324,10 +324,21 @@ impl Confinement {
     }
 }
 
-/// Whether an inherited `name` and `value` hand the worker the data folder. `PATH` is not decided
+/// Whether an inherited `name` and `value` hand the worker the data folder. The search path is not decided
 /// here: it is a list of folders, and one entry naming the folder does not spoil the others.
 fn names_data(name: &OsStr, value: &OsStr, folder: &str) -> bool {
-    !name.eq_ignore_ascii_case("PATH") && mentions(value, folder)
+    !is_path_name(name) && mentions(value, folder)
+}
+
+/// Whether `name` is the search-path variable. Environment names are case-insensitive on Windows, where
+/// `Path` is the same one, and case-sensitive everywhere else, where `Path` is a variable of its own that
+/// hands over whatever it names like any other.
+fn is_path_name(name: &OsStr) -> bool {
+    if cfg!(windows) {
+        name.eq_ignore_ascii_case("PATH")
+    } else {
+        name == "PATH"
+    }
 }
 
 /// The worker's search path: the absolute folders that are outside the data folder (`folder`) and

@@ -58,6 +58,30 @@ fn path_entries(value: &OsStr) -> Vec<PathBuf> {
     std::env::split_paths(value).collect()
 }
 
+/// On Unix environment names are case-sensitive, so `Path` is a variable of its own: one that names the data
+/// folder goes like any other, and is never taken for the search path the rules rewrite.
+#[cfg(unix)]
+#[test]
+fn a_differently_cased_path_is_a_variable_of_its_own_and_goes() {
+    let dir = crate::testing::TempDir::new();
+    let (data, rules) = setup(&dir);
+    let mut command = Command::new("engine");
+    command.env("Path", &data).env("PATH", "/usr/bin");
+    rules.scrub_env(&mut command);
+    assert!(
+        command
+            .get_envs()
+            .any(|(name, value)| name == "Path" && value.is_none()),
+        "`Path` names the data folder and is not the search path"
+    );
+    assert!(
+        command
+            .get_envs()
+            .any(|(name, value)| name == "PATH" && value.is_some()),
+        "the search path itself is rewritten, not removed"
+    );
+}
+
 #[test]
 fn a_search_folder_inside_the_data_folder_or_offering_the_cli_goes_and_the_rest_stays() {
     let dir = crate::testing::TempDir::new();
