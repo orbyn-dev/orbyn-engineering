@@ -1,4 +1,4 @@
-import { File, FolderPlus, GitPullRequest, MessageSquare, RotateCcw, Search, Settings, Sparkles, SquarePen, SunMoon, TextSearch } from "lucide-react";
+import { File, FolderPlus, GitPullRequest, MessageSquare, RotateCcw, Search, Settings, Sparkles, SquarePen, SunMoon, TextSearch, TriangleAlert } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { api, pullsApi } from "../api";
 import { compactAge } from "../../../lib/format";
@@ -101,6 +101,7 @@ function PullsNote({ status, heading, onRetry }: { status: "loading" | "error"; 
     <div>
       {heading ? <div className="palette-group">Pull requests</div> : null}
       <div className="palette-note" role="status">
+        {status === "error" ? <TriangleAlert className="palette-note-icon" size={14} aria-hidden /> : null}
         <span>{status === "loading" ? "Looking for pull requests…" : "Couldn’t read pull requests. Threads and commands still work."}</span>
         {status === "error" ? <Button small onClick={onRetry}>Retry</Button> : null}
       </div>
