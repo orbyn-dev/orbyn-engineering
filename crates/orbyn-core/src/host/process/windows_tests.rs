@@ -35,6 +35,23 @@ fn resolver_fixture() {
     assert!(command.program.is_absolute());
     assert!(Path::new(&command.prefix[0]).is_absolute());
 
+    // npm's own shims name the payload through a variable, not a quoted literal.
+    let set_command = resolve("demo-set.cmd").unwrap();
+    let output = std::process::Command::new(&set_command.program)
+        .args(&set_command.prefix)
+        .args(args)
+        .current_dir(root.join("other cwd"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let actual: Vec<String> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(actual, args);
+    assert!(Path::new(&set_command.prefix[0]).is_absolute());
+
     let node_file = if mode == "fallback" {
         "node host/node.exe"
     } else {
@@ -58,6 +75,51 @@ fn resolver_fixture() {
     }
     let unsupported = find_on_path("unsupported.cmd", Some(&path)).unwrap();
     assert!(shim_target(&unsupported).is_none());
+}
+
+/// A shim that starts a native program directly keeps it as the program, while
+/// one that asks the Node host to run one is refused: the host would read the
+/// executable as a module, so following it would run something else.
+#[test]
+fn a_native_executable_is_never_a_node_payload() {
+    let dir = crate::testing::TempDir::new();
+    let direct = dir.path().join("tool.cmd");
+    std::fs::write(&direct, "SET \"TOOL=%~dp0\\tool.exe\"\r\n\"%TOOL%\" %*\r\n").unwrap();
+    // Resolution only accepts a target that is on disk, as an installer leaves it.
+    std::fs::write(dir.path().join("tool.exe"), b"").unwrap();
+    let resolved = shim_target(&direct).unwrap();
+    assert_eq!(resolved.program, dir.path().join("tool.exe"));
+    assert!(resolved.prefix.is_empty());
+
+    let node_payload = dir.path().join("worker.cmd");
+    std::fs::write(
+        &node_payload,
+        concat!(
+            "SET \"NODE_EXE=%~dp0\\node.exe\"\r\n",
+            "SET \"WORKER=%~dp0\\worker.exe\"\r\n",
+            "\"%NODE_EXE%\" \"%WORKER%\" %*\r\n",
+        ),
+    )
+    .unwrap();
+    assert!(shim_target(&node_payload).is_none());
+}
+
+/// A shim whose named target is not on disk cannot launch: resolution reports it
+/// unavailable instead of offering an install that only fails at spawn.
+#[test]
+fn a_shim_naming_a_missing_target_is_refused() {
+    let dir = crate::testing::TempDir::new();
+    // A native payload that is gone: the shim would fail at spawn.
+    let native = dir.path().join("tool.cmd");
+    std::fs::write(&native, "SET \"TOOL=%~dp0\\tool.exe\"\r\n\"%TOOL%\" %*\r\n").unwrap();
+    assert!(shim_target(&native).is_none());
+
+    // The same for a JavaScript payload the Node host would load, even with the
+    // host still beside the shim.
+    std::fs::write(dir.path().join("node.exe"), b"").unwrap();
+    let node = dir.path().join("demo.cmd");
+    std::fs::write(&node, "\"%~dp0\\node_modules\\demo\\cli.js\" %*\r\n").unwrap();
+    assert!(shim_target(&node).is_none());
 }
 
 #[test]
@@ -104,6 +166,11 @@ fn run_fixture(mode: &str) {
         "process.stdout.write(JSON.stringify(process.argv.slice(2)))",
     )
     .unwrap();
+    std::fs::write(
+        bin.join("demo-set.cmd"),
+        "SET \"NODE_EXE=%~dp0\\node.exe\"\r\nSET \"DEMO_JS=%~dp0\\node_modules\\demo\\cli.js\"\r\n\"%NODE_EXE%\" \"%DEMO_JS%\" %*\r\n",
+    )
+    .unwrap();
     std::fs::write(bin.join("check.ps1"), "Write-Output fixture").unwrap();
     std::fs::write(
         bin.join("unsupported.cmd"),
@@ -127,4 +194,43 @@ fn run_fixture(mode: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// The Windows twin of the Unix descendant test. A job object holds every descendant (no
+/// breakaway is allowed), so dropping the owner ends the whole tree, not just the leader.
+#[tokio::test]
+async fn dropping_the_owner_kills_descendants() {
+    use crate::testing::{TempDir, assert_process_reaped, process_alive, sleeper_pid};
+
+    let dir = TempDir::new();
+    let pid_file = dir.path().join("pid");
+    let comspec =
+        std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into());
+    // The leader is the owner's direct child; the child it starts sleeps, so only a tree kill ends it.
+    // Both paths travel in the environment: a temporary folder can hold an apostrophe that would
+    // end a PowerShell literal, and the pid file would then never be written.
+    let script = "$p = Start-Process -FilePath $env:ORBYN_DESCENDANT_COMSPEC -ArgumentList '/d','/c','ping -n 60 127.0.0.1 >nul' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath $env:ORBYN_DESCENDANT_PID_FILE -Value $p.Id; Start-Sleep -Seconds 60";
+    let command = resolve("powershell").expect("Windows process tests require PowerShell");
+    let mut process = engine_command(
+        &command,
+        &[
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+            script.into(),
+        ],
+        dir.path(),
+    );
+    process
+        .env("ORBYN_DESCENDANT_COMSPEC", &comspec)
+        .env("ORBYN_DESCENDANT_PID_FILE", &pid_file);
+    let child = ManagedChild::spawn(process).unwrap();
+    assert!(
+        child.tree.job.is_some(),
+        "the owner must hold its job object"
+    );
+    let descendant = sleeper_pid(&pid_file).await;
+    assert!(process_alive(descendant), "the descendant must be running");
+    drop(child);
+    assert_process_reaped(descendant, "its owner").await;
 }

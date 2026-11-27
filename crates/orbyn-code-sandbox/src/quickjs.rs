@@ -4,14 +4,17 @@ use crate::{
     CodeExecutor, ErrorKind, Limits, Run, RunError, RunSeed, Step, ToolFailure, ToolHost, strip,
 };
 use async_trait::async_trait;
+use rquickjs::allocator::{Allocator, RustAllocator};
 use rquickjs::prelude::Async;
 use rquickjs::{AsyncContext, AsyncRuntime, CatchResultExt, Ctx, Function, Promise};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
@@ -35,6 +38,10 @@ struct Logs {
 struct Shared {
     clock: Mutex<Clock>,
     cpu_hit: AtomicBool,
+    heap_hit: AtomicBool,
+    /// Tool calls the script has started and not been answered for: the only work outside the
+    /// engine that can run the script again.
+    in_flight: AtomicUsize,
     calls: AtomicUsize,
     logs: Mutex<Logs>,
 }
@@ -49,6 +56,12 @@ impl Shared {
 
     fn resume_clock(&self) {
         self.clock.lock().expect("clock").since = Some(Instant::now());
+    }
+
+    /// Whether the heap is what holds the script: the allocator refused a request and no tool call
+    /// is outstanding, so nothing outside the engine can run the script again.
+    fn heap_stalled(&self) -> bool {
+        self.heap_hit.load(Ordering::SeqCst) && self.in_flight.load(Ordering::SeqCst) == 0
     }
 
     fn log(&self, text: String, limits: &Limits) {
@@ -72,11 +85,281 @@ impl Shared {
 
 type Job = Pin<Box<dyn Future<Output = Step> + Send>>;
 
+/// The sandbox heap: every byte the engine asks for is counted against its limit, and a request
+/// the limit refuses is recorded in `heap_hit`.
+///
+/// The record is needed because the engine cannot always say what happened. With the heap full it
+/// cannot allocate the error that says "out of memory" either, and throws `null` instead (see
+/// `JS_ThrowError2` in `quickjs.c`), so the text `classify` used to match is not there. Counting
+/// the bytes ourselves makes the refusal an observed fact.
+struct Heap {
+    used: usize,
+    limit: usize,
+    shared: Arc<Shared>,
+}
+
+impl Heap {
+    /// A limit of 0 is no limit, which is how [`Limits::heap_bytes`] reads.
+    fn new(limit: usize, shared: Arc<Shared>) -> Self {
+        Self {
+            used: 0,
+            limit: if limit == 0 { usize::MAX } else { limit },
+            shared,
+        }
+    }
+
+    /// Whether `add` bytes fit once `free` bytes are given back, and the record of a refusal.
+    fn fits(&mut self, free: usize, add: usize) -> bool {
+        let held = self.used.saturating_sub(free);
+        let total = held.saturating_add(add);
+        if total > self.limit {
+            self.shared.heap_hit.store(true, Ordering::SeqCst);
+            return false;
+        }
+        true
+    }
+}
+
+// SAFETY: every method hands QuickJS a block from `RustAllocator`, which returns null or memory
+// aligned to a `u64` of at least the size asked for, so the trait's contract holds. `usable_size`
+// is the size of the block that same allocator handed out.
+unsafe impl Allocator for Heap {
+    fn alloc(&mut self, size: usize) -> *mut u8 {
+        if !self.fits(0, size) {
+            return ptr::null_mut();
+        }
+        let pointer = RustAllocator.alloc(size);
+        if !pointer.is_null() {
+            self.used = self
+                .used
+                .saturating_add(unsafe { RustAllocator::usable_size(pointer) });
+        }
+        pointer
+    }
+
+    fn calloc(&mut self, count: usize, size: usize) -> *mut u8 {
+        let Some(bytes) = count.checked_mul(size) else {
+            return ptr::null_mut();
+        };
+        if !self.fits(0, bytes) {
+            return ptr::null_mut();
+        }
+        let pointer = RustAllocator.calloc(count, size);
+        if !pointer.is_null() {
+            self.used = self
+                .used
+                .saturating_add(unsafe { RustAllocator::usable_size(pointer) });
+        }
+        pointer
+    }
+
+    unsafe fn dealloc(&mut self, pointer: *mut u8) {
+        let size = unsafe { RustAllocator::usable_size(pointer) };
+        self.used = self.used.saturating_sub(size);
+        unsafe { RustAllocator.dealloc(pointer) };
+    }
+
+    unsafe fn realloc(&mut self, pointer: *mut u8, new_size: usize) -> *mut u8 {
+        if pointer.is_null() {
+            return self.alloc(new_size);
+        }
+        let free = unsafe { RustAllocator::usable_size(pointer) };
+        if !self.fits(free, new_size) {
+            return ptr::null_mut();
+        }
+        let moved = unsafe { RustAllocator.realloc(pointer, new_size) };
+        if !moved.is_null() {
+            self.used = self
+                .used
+                .saturating_sub(free)
+                .saturating_add(unsafe { RustAllocator::usable_size(moved) });
+        }
+        moved
+    }
+
+    unsafe fn usable_size(pointer: *mut u8) -> usize {
+        if pointer.is_null() {
+            0
+        } else {
+            unsafe { RustAllocator::usable_size(pointer) }
+        }
+    }
+}
+
 struct QuickJsRun {
     job: Job,
     finished: Option<Step>,
     wall_deadline: Instant,
     shared: Arc<Shared>,
+}
+
+/// Whether a tool call answering or a deadline reached woke the script while `drive` polled it. A
+/// poll that parks and leaves the waker alone has no work left that could run the script again.
+#[derive(Default)]
+struct Woken(AtomicBool);
+
+impl Woken {
+    fn woken(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// The waker `drive` waits with: it records that the script woke itself and passes the wake-up on to
+/// the caller, so a tool reply or a timer still resumes the run.
+struct Forward {
+    woken: AtomicBool,
+    caller: Waker,
+}
+
+impl Forward {
+    fn new(caller: Waker) -> Self {
+        Self {
+            woken: AtomicBool::new(false),
+            caller,
+        }
+    }
+
+    fn woken(&self) -> bool {
+        self.woken.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for Forward {
+    fn wake(self: Arc<Self>) {
+        self.woken.store(true, Ordering::SeqCst);
+        self.caller.wake_by_ref();
+    }
+}
+
+/// What a poll of the script while `drive` waits found.
+enum Waiting {
+    /// The script finished.
+    Done(Step),
+    /// The poll parked, woke nothing, and the heap is what holds the script.
+    HeapStalled,
+}
+
+/// Polls the script while `drive` waits, so every poll is also a check of whether the heap holds the
+/// run. Waiting in `timeout_at` alone checks once, before the wait: a script that catches a heap
+/// refusal after a tool replies can then await a promise that never settles, and nothing would review
+/// it again until the deadline.
+struct Watched<'a> {
+    job: &'a mut Job,
+    shared: &'a Shared,
+}
+
+impl Future for Watched<'_> {
+    type Output = Waiting;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Waiting> {
+        let this = self.get_mut();
+        let forward = Arc::new(Forward::new(cx.waker().clone()));
+        let waker = Waker::from(forward.clone());
+        let mut context = Context::from_waker(&waker);
+        match this.job.as_mut().poll(&mut context) {
+            Poll::Ready(step) => Poll::Ready(Waiting::Done(step)),
+            Poll::Pending if !forward.woken() && this.shared.heap_stalled() => {
+                Poll::Ready(Waiting::HeapStalled)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl QuickJsRun {
+    fn finish(&mut self, step: Step) -> Step {
+        self.finished = Some(step.clone());
+        step
+    }
+
+    /// The heap limit as the run's end, with the logs kept so far.
+    fn heap_step(&mut self) -> Step {
+        let (logs, truncated) = self.shared.take_logs();
+        self.finish(Step::Failed {
+            error: heap_limit_error(),
+            logs,
+            truncated,
+        })
+    }
+
+    /// Polls the script once, with no deadline, and ends it when the heap is what holds it.
+    ///
+    /// A heap the limit refused can leave the script with nothing that can run it: with the heap
+    /// full the engine cannot always allocate the job that would settle the promise the script
+    /// awaits, so the future stays pending forever and only the wall clock would end the run.
+    /// A single poll tells the two apart: parked without waking itself, with `heap_hit` set and no
+    /// tool call outstanding, no later poll can make progress either.
+    fn poll_held_by_the_heap(&mut self) -> Option<Step> {
+        let woken = Arc::new(Woken::default());
+        let waker = Waker::from(woken.clone());
+        let mut context = Context::from_waker(&waker);
+        match self.job.as_mut().poll(&mut context) {
+            Poll::Ready(step) => Some(self.finish(step)),
+            Poll::Pending if !woken.woken() && self.shared.heap_stalled() => Some(self.heap_step()),
+            Poll::Pending => None,
+        }
+    }
+}
+
+#[async_trait]
+impl Run for QuickJsRun {
+    async fn drive(&mut self, until: Instant) -> Step {
+        if let Some(step) = &self.finished {
+            return step.clone();
+        }
+        // Ask first whether the heap is holding the script: the heap can be refused during this
+        // very poll, and the caller's deadline may be the whole budget, so the verdict is taken
+        // here rather than only when an earlier poll already recorded the refusal.
+        if let Some(step) = self.poll_held_by_the_heap() {
+            return step;
+        }
+        let wall_over = self.wall_deadline <= until;
+        let stop = tokio::time::Instant::from_std(until.min(self.wall_deadline));
+        let watched = Watched {
+            job: &mut self.job,
+            shared: &self.shared,
+        };
+        match tokio::time::timeout_at(stop, watched).await {
+            Ok(Waiting::Done(step)) => self.finish(step),
+            // Every poll of the wait checks the heap as well, so a refusal the script caught after a
+            // tool replied and a promise it can never settle end the run here instead of at the clock.
+            Ok(Waiting::HeapStalled) => self.heap_step(),
+            // Reaching this deadline with the heap still holding the run is the heap's ending, not
+            // the clock's. The wall clock stays the backstop for every other run that stops moving.
+            Err(_) if self.shared.heap_stalled() => self.heap_step(),
+            Err(_) if wall_over => {
+                let (logs, truncated) = self.shared.take_logs();
+                let step = Step::Failed {
+                    error: limit_error("The run took longer than its time limit.".into()),
+                    logs,
+                    truncated,
+                };
+                self.finish(step)
+            }
+            Err(_) => Step::Yielded,
+        }
+    }
+}
+
+fn limit_error(message: String) -> RunError {
+    RunError {
+        kind: ErrorKind::Limit,
+        message,
+        line: None,
+        code: None,
+    }
+}
+
+/// The heap limit as a run reports it, whichever rule reached it: `classify` reading the error the
+/// engine threw, or `drive` finding the script held by the heap.
+fn heap_limit_error() -> RunError {
+    limit_error("The script used more than its memory limit (heap).".into())
 }
 
 #[async_trait]
@@ -101,18 +384,20 @@ impl CodeExecutor for QuickJsExecutor {
             line: None,
             code: None,
         };
-        let runtime = AsyncRuntime::new().map_err(engine)?;
-        runtime.set_memory_limit(limits.heap_bytes).await;
-        runtime.set_max_stack_size(limits.stack_bytes).await;
         let shared = Arc::new(Shared {
             clock: Mutex::new(Clock {
                 used: Duration::ZERO,
                 since: None,
             }),
             cpu_hit: AtomicBool::new(false),
+            heap_hit: AtomicBool::new(false),
+            in_flight: AtomicUsize::new(0),
             calls: AtomicUsize::new(0),
             logs: Mutex::new(Logs::default()),
         });
+        let runtime = AsyncRuntime::new_with_alloc(Heap::new(limits.heap_bytes, shared.clone()))
+            .map_err(engine)?;
+        runtime.set_max_stack_size(limits.stack_bytes).await;
         let watched = shared.clone();
         let cpu = limits.cpu;
         runtime
@@ -140,43 +425,6 @@ impl CodeExecutor for QuickJsExecutor {
             wall_deadline,
             shared,
         }))
-    }
-}
-
-#[async_trait]
-impl Run for QuickJsRun {
-    async fn drive(&mut self, until: Instant) -> Step {
-        if let Some(step) = &self.finished {
-            return step.clone();
-        }
-        let wall_over = self.wall_deadline <= until;
-        let stop = tokio::time::Instant::from_std(until.min(self.wall_deadline));
-        match tokio::time::timeout_at(stop, &mut self.job).await {
-            Ok(step) => {
-                self.finished = Some(step.clone());
-                step
-            }
-            Err(_) if wall_over => {
-                let (logs, truncated) = self.shared.take_logs();
-                let step = Step::Failed {
-                    error: limit_error("The run took longer than its time limit.".into()),
-                    logs,
-                    truncated,
-                };
-                self.finished = Some(step.clone());
-                step
-            }
-            Err(_) => Step::Yielded,
-        }
-    }
-}
-
-fn limit_error(message: String) -> RunError {
-    RunError {
-        kind: ErrorKind::Limit,
-        message,
-        line: None,
-        code: None,
     }
 }
 
@@ -263,7 +511,7 @@ async fn execute<'js>(
     );
     let promise: Promise = match ctx.eval_promise(source).catch(ctx) {
         Ok(promise) => promise,
-        Err(caught) => return Err(classify(&caught.to_string(), shared)),
+        Err(caught) => return Err(classify(&caught, shared)),
     };
     let settled = promise.into_future::<rquickjs::Value>().await.catch(ctx);
     shared.pause_clock();
@@ -272,12 +520,20 @@ async fn execute<'js>(
             let text: String = globals.get("__out").map_err(|e| internal(&e.to_string()))?;
             serde_json::from_str(&text).map_err(|e| internal(&e.to_string()))
         }
-        Err(caught) => Err(classify_caught(ctx, &caught, shared)),
+        Err(caught) => {
+            // Reading the exception's properties runs the script's own getters, so the clock stays
+            // running while it is inspected: the work a getter hides is still the script's CPU, and
+            // the interrupt hook ends it, with `classify` reading that `cpu_hit` before anything else.
+            shared.resume_clock();
+            let error = classify_caught(ctx, &caught, shared);
+            shared.pause_clock();
+            Err(error)
+        }
     }
 }
 
 fn classify_caught(ctx: &Ctx<'_>, caught: &rquickjs::CaughtError<'_>, shared: &Shared) -> RunError {
-    let mut error = classify(&caught.to_string(), shared);
+    let mut error = classify(caught, shared);
     if let rquickjs::CaughtError::Exception(exception) = caught {
         let code: Option<String> = exception.get("code").ok();
         if code.as_deref() == Some("limit") {
@@ -285,6 +541,11 @@ fn classify_caught(ctx: &Ctx<'_>, caught: &rquickjs::CaughtError<'_>, shared: &S
         }
         error.code = code;
         error.line = exception.stack().as_deref().and_then(first_line);
+    }
+    // Those reads run the script's own getters, so the CPU limit can be reached after `classify`
+    // looked: the engine's record decides, not the order the reads happened in.
+    if shared.cpu_hit.load(Ordering::SeqCst) {
+        return limit_error("The script used more than its CPU time.".into());
     }
     let _ = ctx;
     error
@@ -299,18 +560,84 @@ fn first_line(stack: &str) -> Option<u32> {
     })
 }
 
-fn classify(message: &str, shared: &Shared) -> RunError {
-    let lower = message.to_lowercase();
-    if shared.cpu_hit.load(Ordering::SeqCst) || lower.contains("interrupted") {
+/// The thrown exception's class and message, as read once. Both properties are the script's own getters, so a second
+/// read can answer something else: what is shown and what is classified have to come from the same read.
+struct Thrown {
+    name: Option<String>,
+    message: Option<String>,
+}
+
+/// The engine's own error class and message, when the run ended with a JavaScript `Error`.
+fn thrown(caught: &rquickjs::CaughtError<'_>) -> Option<Thrown> {
+    let rquickjs::CaughtError::Exception(exception) = caught else {
+        return None;
+    };
+    Some(Thrown {
+        name: exception.get::<_, Option<String>>("name").ok().flatten(),
+        message: exception.message(),
+    })
+}
+
+/// Whether what ended the run says nothing about why: `null`, `undefined`, a blank string, an `Error` with an empty
+/// message, or an allocation the Rust side could not make. Anything else, including a thrown number or object, is
+/// what the script threw and is reported as it is.
+fn carries_no_reason(caught: &rquickjs::CaughtError<'_>, thrown: Option<&Thrown>) -> bool {
+    match caught {
+        // The message alone decides: a `name` that is absent or cannot be read does not make a thrown `Error`
+        // reasonless, and replacing its message with a limit's would be a lie.
+        rquickjs::CaughtError::Exception(_) => thrown
+            .and_then(|thrown| thrown.message.as_ref())
+            .is_none_or(|text| text.trim().is_empty()),
+        rquickjs::CaughtError::Value(value) => {
+            if value.is_null() || value.is_undefined() {
+                return true;
+            }
+            value
+                .as_string()
+                .is_some_and(|text| text.to_string().map_or(true, |text| text.trim().is_empty()))
+        }
+        rquickjs::CaughtError::Error(error) => matches!(error, rquickjs::Error::Allocation),
+    }
+}
+
+fn classify(caught: &rquickjs::CaughtError<'_>, shared: &Shared) -> RunError {
+    let thrown = thrown(caught);
+    // The words a person reads are built from that one read as well, so a getter that answers something else the
+    // second time cannot make the message disagree with the class it was given. Only a value that is not a
+    // JavaScript `Error` reaches the engine's formatting, which is the one path with no getter to read.
+    let message = match &thrown {
+        Some(Thrown { name, message }) => match (name, message) {
+            (Some(name), Some(message)) => format!("{name}: {message}"),
+            (Some(name), None) => name.clone(),
+            (None, Some(message)) => message.clone(),
+            (None, None) => String::new(),
+        },
+        None => caught.to_string(),
+    };
+    // The engine records why it stopped the script, so a limit is read from that record and never
+    // from the words in the error: `cpu_hit` from the interrupt hook, `heap_hit` from the heap.
+    if shared.cpu_hit.load(Ordering::SeqCst) {
         return limit_error("The script used more than its CPU time.".into());
     }
-    if lower.contains("out of memory") {
-        return limit_error("The script used more than its memory limit (heap).".into());
+    // `InternalError` is the class the engine uses for its own resources, and is the only thing
+    // that says "out of memory"; a script throwing an `Error` with those words stays a runtime
+    // error. A heap that refuses an allocation and explains nothing is the heap limit as well.
+    let engine_says = |class: &str, text: &str| match &thrown {
+        Some(Thrown {
+            name: Some(name),
+            message: Some(message),
+        }) => name.as_str() == class && message.as_str() == text,
+        _ => false,
+    };
+    if engine_says("InternalError", "out of memory")
+        || (shared.heap_hit.load(Ordering::SeqCst) && carries_no_reason(caught, thrown.as_ref()))
+    {
+        return heap_limit_error();
     }
-    if lower.contains("call stack") || lower.contains("stack overflow") {
+    if engine_says("RangeError", "Maximum call stack size exceeded") {
         return limit_error("The script used more than its stack limit.".into());
     }
-    let syntax = lower.contains("syntaxerror") || lower.contains("unexpected token");
+    let syntax = thrown.as_ref().and_then(|thrown| thrown.name.as_deref()) == Some("SyntaxError");
     RunError {
         kind: if syntax {
             ErrorKind::Syntax
@@ -323,6 +650,23 @@ fn classify(message: &str, shared: &Shared) -> RunError {
     }
 }
 
+/// A tool call the script is waiting on, counted until its reply is ready however it ends. The
+/// count is what tells a run the heap holds from one that is still waiting on the outside.
+struct InFlight<'a>(&'a AtomicUsize);
+
+impl<'a> InFlight<'a> {
+    fn begin(calls: &'a AtomicUsize) -> Self {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Self(calls)
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 async fn host_call(
     host: Arc<dyn ToolHost>,
     shared: Arc<Shared>,
@@ -331,6 +675,7 @@ async fn host_call(
     name: String,
     args: String,
 ) -> String {
+    let _in_flight = InFlight::begin(&shared.in_flight);
     let failure =
         |code: &str, message: String| json!({ "err": { "code": code, "message": message } });
     if shared.calls.fetch_add(1, Ordering::SeqCst) >= max_calls {

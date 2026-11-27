@@ -2,6 +2,7 @@ import { act, configure, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { dataChanged } from "../../../api/shell";
+import "../../../app/routeScreens.test-support";
 import { App } from "../../../app/App";
 import { createReposMock } from "../../../../mock/repos";
 import { startDataRefresh } from "../../../lib/dataRefresh";

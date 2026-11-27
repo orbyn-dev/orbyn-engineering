@@ -8,12 +8,16 @@ use serde_json::json;
 
 use super::fake::*;
 
+/// The rejection of `engine`, found by the name it carries: a rejection list is read in no fixture order, so a
+/// test names the engine it means instead of reading a place.
+fn rejected<'a>(rows: &'a [RouteRejection], engine: &str) -> &'a RouteRejection {
+    rows.iter()
+        .find(|row| row.engine.as_str() == engine)
+        .unwrap_or_else(|| panic!("{engine} was not rejected: {rows:?}"))
+}
+
 fn why<'a>(decision: &'a RouteDecision, engine: &str) -> &'a RouteRejection {
-    decision
-        .rejected
-        .iter()
-        .find(|r| r.engine.as_str() == engine)
-        .unwrap_or_else(|| panic!("{engine} was not rejected: {:?}", decision.rejected))
+    rejected(&decision.rejected, engine)
 }
 
 #[test]
@@ -149,7 +153,14 @@ fn needs_must_match_capabilities() {
 
     // `image` is a model input: only an engine with an image-capable model passes.
     let mut seeing = engine("codex");
-    seeing.models.as_mut().unwrap()[1] = with_image(model("terra-1", "Terra", true));
+    // The default model is the one the router prefers, so the fixture's Terra is widened, found by id rather
+    // than by place.
+    let models = seeing.models.as_mut().expect("Codex lists models");
+    let terra = models
+        .iter_mut()
+        .find(|model| model.id == "terra-1")
+        .expect("Codex's Terra model");
+    *terra = with_image(model("terra-1", "Terra", true));
     let decision = routed(
         &brief(json!({ "needs": ["image"] })),
         &[engine("claude"), seeing],
@@ -216,7 +227,12 @@ fn engines_without_a_model_for_the_tier_are_rejected_by_tier() {
 
     // No Opus listed, so Claude cannot take a lead-tier role.
     let mut no_opus = engine("claude");
-    no_opus.models.as_mut().unwrap().remove(0);
+    let models = no_opus.models.as_mut().expect("Claude lists models");
+    let opus = models
+        .iter()
+        .position(|model| model.id == "claude-opus-4")
+        .expect("Claude's Opus model");
+    models.remove(opus);
     let review = routed(
         &reading(json!({ "kind": "review" })),
         &[no_opus, engine("codex")],
@@ -316,12 +332,17 @@ fn tier_words_match_whole_words_only() {
         &[odd],
         &Ask::default(),
     );
-    assert_eq!(refusal.rejected[0].why, RejectionWhy::TierBelowLead);
+    assert_eq!(
+        rejected(&refusal.rejected, "codex").why,
+        RejectionWhy::TierBelowLead,
+        "neither listed model mentions a whole tier word"
+    );
     // A named model is a whole word too: `son` is not `sonnet`.
     let named =
         brief(json!({ "engine": { "id": "claude", "model": "son", "assigned_by": "person" } }));
+    let refusal = refused(&named, &[engine("claude")], &Ask::default());
     assert_eq!(
-        refused(&named, &[engine("claude")], &Ask::default()).rejected[0].why,
+        rejected(&refusal.rejected, "claude").why,
         RejectionWhy::MissingCapability
     );
     let exact = brief(

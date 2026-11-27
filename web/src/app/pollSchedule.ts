@@ -1,4 +1,4 @@
-/** The shell's poll reads projects, threads and approvals every tick; Git-backed status is read far less often. */
+/** The shell's poll reads the project list and the one global thread list every tick, and pending approvals while a run can wait on one; Git-backed status is read far less often. */
 export const POLL_MS = 4000;
 /** Branches and update status come from running Git over every worktree: read them every few minutes, and on focus. */
 export const SLOW_POLL_EVERY = 45;

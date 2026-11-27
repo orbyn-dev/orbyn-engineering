@@ -163,6 +163,8 @@ describe("the Skill proposals section of the Lessons page", () => {
     const region = await card();
     const task = within(region).getByRole("link", { name: "Task 5b2d8a3" });
     expect(task).toHaveAttribute("href", "#/threads/5b2d8a3");
+    // The shared crew target class gives the inline link its 24 px box (WCAG 2.2 AA 2.5.8).
+    expect(task).toHaveClass("cx-t10r");
     expect(within(region).getByRole("link", { name: "Task 8c1d4f6" })).toHaveAttribute("href", "#/threads/8c1d4f6");
     expect(within(region).getByRole("link", { name: "Escape 9be4410" })).toHaveAttribute(
       "href",

@@ -680,9 +680,43 @@ describe("Request changes", () => {
 });
 
 describe("the Run tab", () => {
-  afterEach(() => setRunLinkClient(null));
+  afterEach(() => {
+    setRunLinkClient(null);
+    useConnection.setState({ crewPreview: false });
+    vi.unstubAllGlobals();
+  });
 
-  it("is absent with the production client, which reports no run for any pull request", async () => {
+  it("is absent while Crew Preview is off, so no Crew route is asked", async () => {
+    await show(detail());
+    expect(screen.queryByRole("tab", { name: "Run" })).toBeNull();
+  });
+
+  it("is drawn from the service's own run link when Crew Preview is on", async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ task: "task-redirect" }), { status: 200 })));
+    vi.stubGlobal("fetch", fetch);
+    useConnection.setState({ crewPreview: true });
+    await show(detail());
+    expect(fetch).toHaveBeenCalledWith("/api/crew/flow/run-link?project=p&number=142", expect.anything());
+    expect(screen.getByRole("tab", { name: "Run" })).toBeInTheDocument();
+  });
+
+  it("is drawn when Crew Preview turns on while the page is open", async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ task: "task-redirect" }), { status: 200 })));
+    vi.stubGlobal("fetch", fetch);
+    await show(detail());
+    expect(screen.queryByRole("tab", { name: "Run" })).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    act(() => useConnection.setState({ crewPreview: true }));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+    expect(fetch).toHaveBeenCalledWith("/api/crew/flow/run-link?project=p&number=142", expect.anything());
+    expect(screen.getByRole("tab", { name: "Run" })).toBeInTheDocument();
+  });
+
+  it("is absent when the service says no Crew task made the pull request", async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ code: "not_found", message: "no task made it" }), { status: 404 })));
+    vi.stubGlobal("fetch", fetch);
+    useConnection.setState({ crewPreview: true });
     await show(detail());
     expect(screen.queryByRole("tab", { name: "Run" })).toBeNull();
   });

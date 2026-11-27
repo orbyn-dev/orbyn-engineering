@@ -13,11 +13,17 @@ test.afterAll(() => service.stop());
 
 test("sent files and typed paths stay as chips that still open", async ({ page }) => {
   await page.goto(`${service.page}#/new/${projectId}`);
-  await page.locator('input[type="file"]').first().setInputFiles({
-    name: "notes.txt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("sent context\n"),
-  });
+  // The shell mounts its own hidden transcript-import picker before the composer does, so the first
+  // file input on the page is not the composer's Attach files control. Attach through the draft
+  // composer's own input, by its label, so the spec follows the path a person's paperclip uses.
+  await page
+    .getByRole("region", { name: "New thread" })
+    .locator('input[type="file"][aria-label="Attach files"]')
+    .setInputFiles({
+      name: "notes.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("sent context\n"),
+    });
   await expect(page.getByRole("list", { name: "Attachments" })).toContainText("notes.txt");
 
   await send(page, "read @README.md with the notes");
