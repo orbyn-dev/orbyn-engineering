@@ -43,6 +43,15 @@ pub struct FlowRunCheck {
 }
 
 wire! {
+/// The Crew task whose run published one pull request, as the pull request page's Run tab reads it. Only the task's own
+/// forge intent says so: another repository's number, a branch name or a title never links a pull request to a task.
+pub struct FlowRunLink {
+    /// The Crew task whose Flow read the Run tab shows.
+    pub task: String,
+}
+}
+
+wire! {
 /// The pull request one task made, from its forge intent and its result: the number the forge gave it and what the run
 /// published. A task Orbyn opened no pull request for has none.
 pub struct FlowRunPull {

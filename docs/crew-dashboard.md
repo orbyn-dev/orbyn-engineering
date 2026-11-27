@@ -1,9 +1,10 @@
 # Crew dashboard contract
 
 What the web Crew dashboard (W12 in [crew.md](crew.md), frames `dash-*` of Crew Designs "23. Dashboard") needs from the service. **The
-service side is served** (`GET /api/crew/dashboard`, this document) and the web client is wired to it; a service without the route
-answers `404` and the page falls back to the trust record, drawing a Planned mark where only this read can answer. Eng 2 owns the service side. A name here changes only if the service PR says so. Row: G18
-in [parity](parity.md).
+service side is served** (`GET /api/crew/dashboard` and the project menu's `GET /api/crew/dashboard/projects`, this document) and the
+single-repository read's web client is wired to it; a service without the route answers `404` and the page falls back to the trust
+record, drawing a Planned mark where only this read can answer. Eng 2 owns the service side. A name here changes only if the service
+PR says so. Row: G18 in [parity](parity.md).
 
 ## What exists today and what the page draws from it
 
@@ -66,6 +67,31 @@ Errors (the usual `{code, message}` body):
 
 Limits: one repository per request; the answer is at most about 40 KiB. The merge read is bounded to the window in SQL, so a refresh re-reads only the window's merges and the page does not cache the answer.
 
+## `GET /api/crew/dashboard/projects?days=<30|60|90>`
+
+The project menu's counts: how many merges each repository the service lists made in one window, so the menu can draw a
+count beside a name without one request per repository first (which is why the built menu shows no count at all). Same
+family, gate and `days` rule as the read above: `days` defaults to `60` and is one of 30, 60 or 90. There is no
+`utc_offset_minutes`: no week is counted here, so the person's zone cannot change a count.
+
+Answer:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `days` | 30, 60 or 90 | The window actually read. |
+| `as_of` | unix seconds | When the counts were taken. |
+| `projects` | array, at most 200, in the service's own project order | `{project, merges}`. One row per repository the service lists: a repository the person has never used Crew in is a row with `merges: 0`, never left out, because no merges is a figure the records can state. |
+| `truncated` | boolean | The project list had more repositories than one answer holds; the rows beyond the bound are not here, and the menu says the counts are partial rather than drawing a cut list as whole. |
+
+Rules the service keeps:
+
+- A count is the same figure `GET /api/crew/dashboard` answers as `merges` for that repository and window, so the menu and the page never disagree.
+- Counts only. A rate, a median, a cycle time or a cost stays with the one-repository read above; this answer is never used to work one out.
+- Counted in one query, bounded to the window in SQL: the read never hands the window's merge rows back, and never reads a merge's own brief, proof or ledger rows. A merge whose task is no longer joined to a lead thread is in no project's count.
+- Nothing here is text, so nothing here is scrubbed: `project` is an id, and a name is the project list's.
+
+Errors: `400 invalid_input` when `days` is not 30, 60 or 90; `404 not_found` while Crew Preview is off; `500 history_unreadable` when the Crew records or the project list on this device cannot be read, never an empty menu.
+
 ## Answers to the four open questions
 
 The service answers them from records it already keeps (`crates/orbyn-core/src/crew/dashboard.rs`); none needed a new table or column.
@@ -90,6 +116,14 @@ The service answers them from records it already keeps (`crates/orbyn-core/src/c
 
 - Route: `GET /api/crew/dashboard` in `crates/orbynd/src/routes/crew.rs`, listed in `crates/orbynd/tests/routes.json`. Read: `Core::crew_dashboard`
   in `crates/orbyn-core/src/crew/dashboard.rs`. Types: `crates/orbyn-contracts/src/crew_dashboard.rs` (`CrewDashboard` and its rows).
+- The project menu's counts: `GET /api/crew/dashboard/projects`, read by `Core::crew_dashboard_projects` and counted by one query
+  (`Store::crew_merge_counts_since`, grouped by the lead thread's project and bounded to the window in SQL), over the service's own
+  project list (`Store::list_projects`, at most 200 rows, `truncated` when it is cut). Types: `CrewDashboardProjects` and
+  `CrewDashboardProjectCount`. Nothing is text, so nothing is scrubbed, and a read that fails is `history_unreadable`, never an empty menu.
+  Tests: `crew::tests::dashboard`'s `the_projects_read_counts_every_repository_and_only_the_window` (the count equals the
+  one-repository read's `merges` for every window), `..._refuses_a_window_it_does_not_serve_and_the_flag_being_off`, `..._writes_nothing`,
+  `..._says_when_the_menu_lists_more_repositories_than_one_answer_holds` and `..._answers_history_unreadable_when_the_records_cannot_be_read`,
+  plus `crates/orbynd/src/routes/crew_dashboard_tests.rs` (`the_projects_read_needs_the_flag_the_token_and_answers_a_row_for_every_repository`).
 - Weeks: one row per week from the first week with a merge to the week of `as_of`, or to the week of a merge stamped after `as_of` (it is still counted in
   `merges`), at most 14 (newest kept), so a quiet week is a zero bar and never a missing one and the weeks add up to `merges`. `title`, `name` and `model`
   are redacted, have the task's answer-key text withheld and the person's Settings › Secrets patterns masked, and are capped at 200 characters; the page
@@ -122,6 +156,8 @@ The service answers them from records it already keeps (`crates/orbyn-core/src/c
   `web/scripts/assert-no-previews.mjs` fail a production build that holds it.
 - Page: Settings › Crew › Dashboard at `#/settings/crew/dashboard?repo=<project>`, behind Crew Preview. The project and period are remembered per person
   in browser storage (`orbyn.crew-dashboard`), with a fallback when storage is off.
+- The project menu still draws no count beside a name (`Controls.tsx` says why): the count read above is served and the menu is not
+  wired to it yet, so wiring it is web work outside this service change.
 
 ## Open questions for Eng 2
 

@@ -84,7 +84,7 @@ function ArtifactsBody({ read }: { read: FlowTaskArtifacts }) {
           <h3>Rules for every artifact</h3>
           <p>Pinned to a commit. Reviewers are given the diff, the purpose and the check results; not the author’s transcript or verdict.</p>
           <p className="fv-muted">
-            Stale when the commit moves on, and marked so. <Planned why="No read reports the checkout’s head, so this view cannot mark an artifact stale" />
+            Stale when the commit moves on, and marked so. <Planned why="The read reports the checkout’s head and each row’s commit, so a row can be marked stale; this view does not mark one yet" />
           </p>
         </section>
       </div>

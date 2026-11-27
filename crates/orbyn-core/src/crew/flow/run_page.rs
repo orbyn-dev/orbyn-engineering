@@ -32,6 +32,23 @@ const PROMPT_MAX: usize = 2000;
 const CHECK_TEXT_MAX: usize = 200;
 
 impl Core {
+    /// Which Crew task made one pull request: what the pull request page's Run tab reads
+    /// (`docs/crew-run-page.md`). A read of what this device stores, so no store write, no process and no file, and it is
+    /// behind Crew Preview like every Crew route. Only the task's own forge intent links it: a number the project's own
+    /// repository never published, another repository's number of the same value, and a branch name or a title link
+    /// nothing, so the tab is absent rather than wrong.
+    pub fn crew_run_link(&self, project_id: &str, number: u64) -> Result<wire::FlowRunLink> {
+        self.crew_preview_only()?;
+        let project = self.store.project(project_id)?;
+        // The intent's repository is the project's own folder: `MergeTarget` is built from it, so another repository of a
+        // multi-repository project publishes under its own path and never answers here.
+        let task = self
+            .store
+            .crew_task_for_pull(&project.path, number)?
+            .ok_or_else(|| CoreError::NotFound("run link".into()))?;
+        Ok(wire::FlowRunLink { task })
+    }
+
     /// One work task's Run page: its prompt, the checks of its latest verification round, what was not verified and the
     /// pull request it made. A read: no state changes, so Autopilot's rule refuses nothing here.
     pub fn crew_flow_run(&self, id: &str) -> Result<wire::FlowRunPage> {
