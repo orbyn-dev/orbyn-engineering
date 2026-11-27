@@ -96,14 +96,55 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
+ * The index just past the quoted span that starts at `at`, or `null` when it does not close. `'...'` holds its text as
+ * written, so a backslash there escapes nothing; `"..."`, `$'...'` and `$"..."` take a backslash escape. A `"..."` and a
+ * `$"..."` also nest a `${...}` expansion, so the quote inside `"${TOKEN:-"hunter2"}"` does not end the span.
+ */
+function quotedEnd(text: string, at: number): number | null {
+  const ansi = text[at] === "$";
+  const quote = ansi ? text[at + 1] : text[at];
+  if (quote !== '"' && quote !== "'") return null;
+  const escapes = ansi || quote === '"';
+  for (let cursor = at + (ansi ? 2 : 1); cursor < text.length; ) {
+    const char = text[cursor];
+    if (escapes && char === "\\") {
+      cursor += 2;
+      continue;
+    }
+    if (char === quote) return cursor + 1;
+    if (quote === '"' && char === "$" && text[cursor + 1] === "{") {
+      const braced = bracesIn(text, cursor + 1);
+      if (braced === null) return null;
+      cursor = braced.end;
+      continue;
+    }
+    cursor += 1;
+  }
+  return null;
+}
+
+/**
  * The inside of the `${...}` whose `{` is at `open`, and the index just past its `}`. The braces nest, since a default can
- * hold another reference (`API_TOKEN=${TOKEN:-${OTHER:-hunter2}}`); nothing is returned when they do not close.
+ * hold another reference (`API_TOKEN=${TOKEN:-${OTHER:-hunter2}}`), but one inside a quoted span or behind a backslash is
+ * text, so `API_TOKEN=${TOKEN:-$'hunter{2'}` ends at the first `}` and keeps its `{`; nothing is returned when the
+ * expansion does not close.
  */
 function bracesIn(text: string, open: number): { body: string; end: number } | null {
   let depth = 0;
   for (let at = open; at < text.length; at += 1) {
-    if (text[at] === "{") depth += 1;
-    else if (text[at] === "}") {
+    const char = text[at];
+    if (char === "\\") {
+      at += 1;
+      continue;
+    }
+    if (char === "'" || char === '"' || (char === "$" && (text[at + 1] === "'" || text[at + 1] === '"'))) {
+      const close = quotedEnd(text, at);
+      if (close === null) return null;
+      at = close - 1;
+      continue;
+    }
+    if (char === "{") depth += 1;
+    else if (char === "}") {
       depth -= 1;
       if (depth === 0) return { body: text.slice(open + 1, at), end: at + 1 };
     }
@@ -117,8 +158,8 @@ function bracesIn(text: string, open: number): { body: string; end: number } | n
  */
 function valueAt(line: string, from: number): string {
   const rest = line.slice(from);
-  const quoted = /^"(?:[^"\\]|\\.)*"/.exec(rest) ?? /^'[^']*'/.exec(rest);
-  if (quoted) return quoted[0];
+  const quoted = quotedEnd(rest, rest[0] === "$" && (rest[1] === "'" || rest[1] === '"') ? 1 : 0);
+  if (quoted !== null) return rest.slice(0, quoted);
   if (rest.startsWith("${")) {
     const braced = bracesIn(rest, 1);
     if (braced) return rest.slice(0, braced.end);
@@ -131,14 +172,19 @@ function valueAt(line: string, from: number): string {
  * quote wraps what it holds (`" hunter2"` is text, `"$VAR"` and `"$(command)"` are not), `$(...)` and a backtick run a
  * command, `$'...'` and `$"..."` are ANSI-C and locale literals, `$NAME` and `${NAME}` copy a variable, and the default in
  * `${NAME:-default}` or `${NAME:=default}` is what the shell substitutes when that variable is unset, so it is read the same
- * way again. Anything left is text someone typed, which is the secret.
+ * way again. A single-quoted or ANSI-C literal is taken exactly as written, so a `$` inside it (`$'$ecret42'`) is text and
+ * not a reference, while `"..."` and `$"..."` expand their contents and are read again. Anything left is text someone
+ * typed, which is the secret.
  */
 function typedValue(raw: string): boolean {
   const text = raw.replace(/^[ \t]+/, "");
   if (text === "") return false;
-  if (text[0] === '"' || text[0] === "'") return typedValue(text.slice(1));
+  if (text[0] === "'" || text.startsWith("$'")) {
+    const literal = text.slice(text[0] === "'" ? 1 : 2);
+    return (literal.split("'")[0] ?? "").trim() !== "";
+  }
+  if (text[0] === '"' || text.startsWith('$"')) return typedValue(text.slice(text[0] === "$" ? 2 : 1));
   if (text[0] === "`" || text.startsWith("$(")) return false;
-  if (text.startsWith("$'") || text.startsWith('$"')) return typedValue(text.slice(2));
   if (text.startsWith("${")) {
     const braced = bracesIn(text, 1);
     if (braced === null) return false;
