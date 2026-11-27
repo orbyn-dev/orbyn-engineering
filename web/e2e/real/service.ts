@@ -1,11 +1,10 @@
 import { expect, type Page } from "@playwright/test";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { pathToFileURL } from "node:url";
 import { once } from "node:events";
 import { SCRIPTED_ENGINE, USAGE_ENGINE } from "./engine-scripts";
 import { editForgeState, readForgeState } from "./forge-state";
@@ -129,6 +128,33 @@ const STAND_IN_ISSUES: IssueFixture[] = [
 ];
 
 const STAND_IN_GH = resolve(WEB, "e2e/real/stand-in-gh.mjs");
+/** The stand-in imports this beside itself; a copy on Windows needs it copied too. */
+const STAND_IN_GH_LOCK = resolve(WEB, "e2e/real/forge-lock.mjs");
+
+/**
+ * A program named `gh` on the fixture PATH. Linux runs the linked script itself. Windows cannot run a shebang and may
+ * refuse a file symlink without Developer Mode, so the stand-in is linked when the OS allows it and copied, with the lock
+ * module its relative import needs, when it does not. Either way an npm-style `.cmd` shim is what the service resolves
+ * and follows to Node without a shell, so the forge probe really runs the stand-in.
+ */
+function standInGhProgram(bin: string): void {
+  if (process.platform !== "win32") {
+    symlinkSync(STAND_IN_GH, join(bin, "gh"));
+    return;
+  }
+  const launcher = join(bin, "gh.mjs");
+  try {
+    symlinkSync(STAND_IN_GH, launcher);
+  } catch (error) {
+    // A stock Windows box refuses a file symlink without Developer Mode (EPERM, or EACCES when a policy takes the
+    // right away). The copy runs from the fixture folder, so copy the lock module it imports beside it.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EPERM" && code !== "EACCES") throw error;
+    copyFileSync(STAND_IN_GH, launcher);
+    copyFileSync(STAND_IN_GH_LOCK, join(bin, "forge-lock.mjs"));
+  }
+  writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0\\gh.mjs" %*\r\n');
+}
 
 /** A GitHub-only fixture: `gh` keeps state, and discovery of other forges fails locally. */
 function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: string; state: string; log: string } {
@@ -138,22 +164,7 @@ function standInGh(dir: string, pulls: PullFixture[], starred = false): { bin: s
   const log = join(dir, "gh-calls.log");
   writeFileSync(log, "");
   writeFileSync(state, JSON.stringify({ starred, pulls: pulls.map(pullRow), repos: [], next: 100, people: ["ada", "grace"], labels: [{ name: "bug", color: "d73a4a", description: "About bug" }, { name: "docs", color: "0075ca", description: "About docs" }], template: pullRow({ number: 0, title: "" }), issues: STAND_IN_ISSUES }));
-  if (process.platform === "win32") {
-    const launcher = join(bin, "gh.mjs");
-    try {
-      symlinkSync(STAND_IN_GH, launcher);
-    } catch (error) {
-      // A stock Windows box refuses a file symlink without Developer Mode (EPERM, or EACCES when a policy
-      // takes the right away). A launcher that imports the stand-in runs it from its real path, so its own
-      // relative imports resolve, and forge specs run without elevation.
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "EPERM" && code !== "EACCES") throw error;
-      writeFileSync(launcher, `import ${JSON.stringify(pathToFileURL(STAND_IN_GH).href)};\n`);
-    }
-    writeFileSync(join(bin, "gh.cmd"), '@echo off\r\nnode "%~dp0gh.mjs" %*\r\n');
-  } else {
-    symlinkSync(STAND_IN_GH, join(bin, "gh"));
-  }
+  standInGhProgram(bin);
   // /api/forges probes every forge. Never let this GitHub fixture reach an installed non-GitHub CLI.
   for (const program of ["glab", "az", "tea"]) {
     if (process.platform === "win32") {
@@ -489,6 +500,11 @@ export async function startProject(options: ServiceOptions = {}) {
 export async function send(page: Page, text: string) {
   const box = page.getByRole("textbox", { name: /^Message/ });
   await box.fill(text);
+  // The composer ignores Enter until it can send: the draft's Send control stays disabled while
+  // the model defaults, the engine list and the checkout load, and a press made in that window is
+  // dropped, so no run request ever leaves. Wait for the control itself to say the composer is ready.
+  const composer = page.locator("form.composer").filter({ has: box });
+  await expect(composer.locator('button.send-btn[type="submit"]')).toBeEnabled();
   const taken = text.startsWith("/")
     ? null
     : page.waitForResponse(

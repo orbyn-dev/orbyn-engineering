@@ -26,7 +26,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
 | `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write |
-| `checks` | The check runners: command kinds, `file_scope`, `diff_size`, `schema`, `secret_scan`, `repo_required`. Any other kind is `skipped` |
+| `checks` | The check runners: command kinds, `file_scope`, `diff_size`, `schema`, `secret_scan`, `repo_required`. Any other kind is `skipped` with the accepted limit it records (#793): what it needs and the decision it waits on |
 | `http_probe` | The `http_probe` runner: one GET to the key's loopback URL, compared with its `expect_status`. No redirect followed and no retry; no answer is an error, never a pass |
 | `verify` | The verifier: runs the key in the task's checkout, writes Evidence and the Gate, builds the reason a worker may read |
 | `workers` | The allow list of Orbyn tools a Crew worker may call; every other `orbyn_*` tool, including any added later, is refused |
@@ -145,9 +145,11 @@ measures each and guards a budget with 25% headroom. Re-measure with
   no Windows test shows it yet).
 - The worker runs in the lead's checkout, as `delegate` does. A writing worker's own worktree
   (docs/crew.md, "Isolation") is not created yet, so the diff checks see the lead's changes too.
-- The check kinds `http_probe`, `preview`, `visual_compare`, `manual`, `screenshot_only`,
-  `accessibility_audit`, `performance_budget` and `licence_scan` report `skipped` and are listed as
-  not verified; `schema`, `secret_scan` and `repo_required` run (docs/crew.md, "Verification without limits").
+- The check kinds `preview`, `visual_compare`, `screenshot_only`, `accessibility_audit`,
+  `performance_budget` and `licence_scan` are accepted limits (#793): each reports `skipped` and is listed as
+  not verified, with the sentence that names what it needs and the decision it waits on, recorded in
+  docs/crew.md, "Check kinds this version does not run". `schema`, `secret_scan`, `repo_required`,
+  `http_probe` and `manual` run (docs/crew.md, "Verification without limits").
 - Tier words match whole words in a model's id or label; they are defaults to check against real ids.
 
 ## How it is tested
@@ -159,7 +161,7 @@ with a fake worker that writes files in a git checkout and calls `crew_report` o
 takes a task from its first turn to the end (fail, retry with the reason, the same failure twice,
 one change of approach, stop; pass; no report; engine error), `starts.rs` covers what a start
 refuses and the lease rules, `lead_stop.rs` the lead's stop and the tokens it refuses, `resume_held.rs` the lead's resume of a held task and the callers it
-refuses, `lifecycle.rs` checks the table against the spec's own, and `verify.rs` the reason a worker may read and the check runners. `review.rs` runs the review stages (see the [review README](review/README.md)). `bus.rs` and `bus_guards.rs` run two fake engines (one
+refuses, `lifecycle.rs` checks the table against the spec's own, and `verify.rs` the reason a worker may read and the check runners. `unrun_kinds.rs` holds a skipped kind to its accepted limit and to docs/crew.md, `http_probe.rs` runs probes against a loopback server it starts. `review.rs` runs the review stages (see the [review README](review/README.md)). `bus.rs` and `bus_guards.rs` run two fake engines (one
 takes input mid-turn, one does not) through the [bus](bus/README.md).
 
 The crate's [group table](../../README.md#groups) lists every group.

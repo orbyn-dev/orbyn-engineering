@@ -166,6 +166,30 @@ pub struct IssueComment {
 }
 
 wire_enum! {
+/// What one event on an issue's own timeline says happened. The beta reads only the tracker's state changes: the
+/// closed event the activity shows, and a reopen after it (docs/issues.md).
+pub enum IssueActivityKind {
+    Closed,
+    Reopened,
+}
+}
+
+wire! {
+/// One thing that happened to an issue, as its tracker's own timeline reports it. Read only, oldest first.
+pub struct IssueActivity {
+    pub kind: IssueActivityKind,
+    /// Who did it, when the tracker names them: a deleted account, or a tracker that does not say, is absent.
+    pub actor: Option<IssueActor>,
+    /// When the tracker says it happened, in the tracker's own spelling of an RFC 3339 UTC instant.
+    pub at: String,
+    /// How it closed, for a `closed` event whose tracker says so; never on a reopen (docs/issues.md).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub close_reason: Option<IssueCloseReason>,
+}
+}
+
+wire_enum! {
 pub enum LinkedPullState {
     Open,
     Closed,
@@ -199,6 +223,11 @@ pub struct IssueDetail {
     pub body: String,
     /// The first 50, oldest first.
     pub comments: Vec<IssueComment>,
+    /// The issue's own state changes, oldest first: the closed event, and a reopen after it. Empty for a tracker that
+    /// reports no timeline, for an issue nothing happened to, and when the read did not answer (docs/issues.md).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<IssueActivity>>")]
+    pub activity: Vec<IssueActivity>,
     pub linked_pull_requests: Vec<IssueLinkedPull>,
     /// Threads that link this issue.
     pub linked_threads: Vec<String>,
@@ -569,5 +598,55 @@ mod tests {
                 count: 2,
             }])
         );
+    }
+
+    #[test]
+    fn an_issue_detail_carries_the_events_that_closed_and_reopened_it() {
+        // A detail read before any event carries none, and one from a service that does not report a timeline still
+        // parses: absent is no event known, never an error.
+        assert!(plain_detail().activity.is_empty());
+        let detail: IssueDetail = serde_json::from_str(
+            r##"{"tracker":"github","scope":"acme/app","key":"7","display_key":"#7","title":"T",
+                "url":"u","author":null,"state":{"category":"closed","name":"Closed",
+                "close_reason":"not_planned"},
+                "created_at":"c","updated_at":"u","assignees":[],"labels":[],"comment_count":0,
+                "body":"b","comments":[],"linked_pull_requests":[],"linked_threads":[],
+                "activity":[
+                  {"kind":"closed","actor":{"login":"ann"},"at":"2026-11-02T00:00:00Z",
+                   "close_reason":"not_planned"},
+                  {"kind":"reopened","actor":null,"at":"2026-11-03T00:00:00Z"}]}"##,
+        )
+        .unwrap();
+        assert_eq!(
+            detail.activity,
+            vec![
+                IssueActivity {
+                    kind: IssueActivityKind::Closed,
+                    actor: Some(IssueActor {
+                        login: "ann".into()
+                    }),
+                    at: "2026-11-02T00:00:00Z".into(),
+                    close_reason: Some(IssueCloseReason::NotPlanned),
+                },
+                IssueActivity {
+                    kind: IssueActivityKind::Reopened,
+                    actor: None,
+                    at: "2026-11-03T00:00:00Z".into(),
+                    close_reason: None,
+                },
+            ],
+            "a closed event keeps how it closed; a reopen after it carries no reason"
+        );
+    }
+
+    /// The one detail read an empty activity is asserted against: the shape an older service answers.
+    fn plain_detail() -> IssueDetail {
+        serde_json::from_str(
+            r##"{"tracker":"github","scope":"acme/app","key":"7","display_key":"#7","title":"T",
+                "url":"u","author":null,"state":{"category":"open","name":"Open"},
+                "created_at":"c","updated_at":"u","assignees":[],"labels":[],"comment_count":0,
+                "body":"b","comments":[],"linked_pull_requests":[],"linked_threads":[]}"##,
+        )
+        .unwrap()
     }
 }

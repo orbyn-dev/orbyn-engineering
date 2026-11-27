@@ -488,6 +488,7 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/api/crew/stops", get(stops))
         .route("/api/crew/trust", get(trust))
         .route("/api/crew/dashboard", get(dashboard))
+        .route("/api/crew/dashboard/projects", get(dashboard_projects))
         .route("/api/crew/needs-you", get(needs_you))
         .route("/api/crew/lead/{thread_id}/live", get(lead_live))
         .route("/api/crew/background", get(background_list))
@@ -815,6 +816,19 @@ async fn dashboard(State(state): State<AppState>, query: QueryMap) -> ApiResult<
         &required(&query, "project")?,
         number(&query, "days")?,
         offset_minutes(&query)?,
+        unix_now(),
+    )?))
+}
+
+/// Every repository's merges in a window, one row each: the count the dashboard's project menu draws beside a name
+/// without one request per repository. `days` is the dashboard's own (30, 60 or 90, 60 by default), and there is no
+/// UTC offset because no week is counted here. Read-only.
+async fn dashboard_projects(
+    State(state): State<AppState>,
+    query: QueryMap,
+) -> ApiResult<impl IntoResponse> {
+    Ok(Json(state.core.crew_dashboard_projects(
+        number(&query, "days")?,
         unix_now(),
     )?))
 }

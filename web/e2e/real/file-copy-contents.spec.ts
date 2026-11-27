@@ -5,8 +5,16 @@ import { startProject, type Service } from "./service";
 
 /**
  * Copy contents in the file viewer's panel bar, through the real service and Chromium's real clipboard: the text that
- * reaches the clipboard is the file's bytes as the service reads them, not what the viewer happens to render.
+ * reaches the clipboard is the file's text as the service reads it, with the platform clipboard's own line ending, not
+ * what the viewer happens to render.
  */
+
+/**
+ * The text the clipboard holds for a file of these contents. The Windows clipboard's text format separates lines with
+ * CRLF, so Chromium writes the file's LF line breaks as CRLF and reads them back that way; every other platform hands
+ * back the file's own text. Every other character is the file's, so the copy still proves it is the file's contents.
+ */
+const clipboardText = (contents: string) => (process.platform === "win32" ? contents.replace(/\n/g, "\r\n") : contents);
 
 let service: Service;
 let projectId: string;
@@ -38,7 +46,7 @@ test("Copy contents puts the file's complete text on the clipboard and says so",
   await page.evaluate(() => navigator.clipboard.writeText("stale clipboard"));
   await copy.click();
   await expect(page.getByText("Contents copied")).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(contents);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(clipboardText(contents));
 
   // A file changed on disk and reopened copies its new text, never a cached older one.
   const changed = "# Copy me\n\nchanged on disk\n";
@@ -50,5 +58,5 @@ test("Copy contents puts the file's complete text on the clipboard and says so",
   await palette.getByRole("button", { name: /copy-source\.md/ }).first().click();
   await expect(copy).toBeEnabled();
   await copy.click();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(changed);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(clipboardText(changed));
 });

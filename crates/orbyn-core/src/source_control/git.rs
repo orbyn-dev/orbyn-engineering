@@ -733,11 +733,94 @@ pub(crate) async fn diff(cwd: &Path, base: Option<&str>) -> Result<Vec<FileDiff>
     let base = base.unwrap_or("HEAD");
     let mut files = tracked_diff(cwd, &[base]).await?;
     let listing = git(cwd, &["ls-files", "--others", "--exclude-standard", "-z"]).await?;
-    for path in listing.split(|byte| *byte == 0).filter(|p| !p.is_empty()) {
-        files.push(untracked_diff(cwd, &String::from_utf8_lossy(path)).await?);
+    let paths: Vec<_> = listing
+        .split(|byte| *byte == 0)
+        .filter(|p| !p.is_empty())
+        .collect();
+    let attributes = untracked_diff_attributes(cwd, &listing, &paths).await?;
+    for (path, use_git) in paths.into_iter().zip(attributes) {
+        let path = String::from_utf8_lossy(path);
+        files.push(if use_git {
+            git_untracked_diff(cwd, &path).await?
+        } else {
+            untracked_diff(cwd, &path).await?
+        });
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(files)
+}
+
+/// Check every name in one process; custom drivers and -diff need Git's own classification.
+async fn untracked_diff_attributes(
+    cwd: &Path,
+    listing: &[u8],
+    paths: &[&[u8]],
+) -> Result<Vec<bool>> {
+    use tokio::io::AsyncWriteExt;
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    // check-attr prints the same words for boolean states and drivers literally named
+    // "set" or "unspecified". If either driver configures binary classification,
+    // conservatively let Git resolve the ambiguous value.
+    let drivers = git_raw(
+        cwd,
+        &[
+            "config",
+            "--name-only",
+            "--get-regexp",
+            r"^diff\.(set|unspecified)\.binary$",
+        ],
+    )
+    .await?;
+    if !drivers.status.success() && drivers.status.code() != Some(1) {
+        return Err(CoreError::Git(text(&drivers.stderr)));
+    }
+    let configured = String::from_utf8_lossy(&drivers.stdout);
+    let named_set = configured.lines().any(|name| name == "diff.set.binary");
+    let named_unspecified = configured
+        .lines()
+        .any(|name| name == "diff.unspecified.binary");
+    let mut cmd = command(cwd);
+    cmd.args(SAFE_CONFIG)
+        .args(["check-attr", "-z", "--stdin", "diff"])
+        .stdin(Stdio::piped());
+    let mut child = crate::host::process::ManagedChild::spawn(cmd)
+        .map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
+    let mut stdin = child
+        .child_mut()
+        .stdin
+        .take()
+        .ok_or_else(|| CoreError::Git("Could not open git stdin".into()))?;
+    let write = async move {
+        let result = stdin.write_all(listing).await;
+        drop(stdin);
+        result
+    };
+    let (written, output) = tokio::join!(write, child.output());
+    written.map_err(|error| CoreError::Git(format!("Could not write git input: {error}")))?;
+    let output = output.map_err(|error| CoreError::Git(format!("Could not run git: {error}")))?;
+    if !output.status.success() {
+        return Err(CoreError::Git(text(&output.stderr)));
+    }
+    let fields: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
+    if fields.len() != paths.len() * 3 + 1 || fields.last() != Some(&&b""[..]) {
+        return Err(CoreError::Git("Invalid git check-attr output".into()));
+    }
+    paths
+        .iter()
+        .zip(fields.as_chunks::<3>().0)
+        .map(|(path, fields)| {
+            if fields[0] != *path || fields[1] != b"diff" {
+                return Err(CoreError::Git("Invalid git check-attr output".into()));
+            }
+            Ok(match fields[2] {
+                b"unspecified" => named_unspecified,
+                b"set" => named_set,
+                _ => true,
+            })
+        })
+        .collect()
 }
 
 async fn tracked_diff(cwd: &Path, range: &[&str]) -> Result<Vec<FileDiff>> {
@@ -756,27 +839,300 @@ async fn tracked_diff(cwd: &Path, range: &[&str]) -> Result<Vec<FileDiff>> {
     numstat_args.extend(range);
     let numstat = git(cwd, &numstat_args).await?;
     let counts = parse_numstat(&numstat);
-    let mut files = Vec::new();
-    for (status, path) in parse_name_status(&statuses) {
-        let mut patch_args = vec!["diff", "--no-ext-diff", "--no-textconv"];
-        patch_args.extend(range);
-        let literal = format!(":(top,literal){path}");
-        patch_args.extend(["--", &literal]);
-        let patch = git(cwd, &patch_args).await?;
+    // One call carries every file's patch. Its headers line up with the status entries only when
+    // both reads saw the same files in the same order, so a count or a header that does not match
+    // falls back to one call per file, the read this replaces.
+    let mut patch_args = vec!["diff", "--no-ext-diff", "--no-textconv"];
+    patch_args.extend(range);
+    let together = git(cwd, &patch_args).await?;
+    let chunks = split_git_patch(&together);
+    let entries = parse_name_status(&statuses);
+    let batched = chunks.len() == entries.len()
+        && entries
+            .iter()
+            .zip(chunks.iter().copied())
+            .all(|((status, path), chunk)| {
+                matches!(status.as_str(), "renamed" | "copied") || patch_chunk_is_for(chunk, path)
+            });
+    let mut files = Vec::with_capacity(entries.len());
+    for (at, (status, path)) in entries.into_iter().enumerate() {
+        // A rename or copy reads differently when Git limits the diff to the new path, and that is
+        // the chart this read has always handed the UI; keep the one call those entries need.
+        let renamed = matches!(status.as_str(), "renamed" | "copied");
+        let patch = if batched && !renamed {
+            String::from_utf8_lossy(chunks[at]).into_owned()
+        } else {
+            per_file_patch(cwd, range, &path).await?
+        };
         let (additions, deletions) = counts.get(&path).copied().unwrap_or((0, 0));
         files.push(FileDiff {
             path,
             status,
             additions,
             deletions,
-            patch: String::from_utf8_lossy(&patch).into_owned(),
+            patch,
             repo_id: None,
         });
     }
     Ok(files)
 }
 
+/// One file's patch, the call the batched read replaces: a rename or copy keeps it, and so does
+/// any read whose combined patch could not be lined up with the status entries.
+async fn per_file_patch(cwd: &Path, range: &[&str], path: &str) -> Result<String> {
+    let mut patch_args = vec!["diff", "--no-ext-diff", "--no-textconv"];
+    patch_args.extend(range);
+    let literal = format!(":(top,literal){path}");
+    patch_args.extend(["--", &literal]);
+    Ok(String::from_utf8_lossy(&git(cwd, &patch_args).await?).into_owned())
+}
+
+/// A combined patch cut back into one chunk per file, each keeping its own diff --git header.
+/// Every hunk line starts with a space, '+', '-' or '\', so only a header starts a line this way.
+fn split_git_patch(patch: &[u8]) -> Vec<&[u8]> {
+    let mut chunks = Vec::new();
+    let mut start = None;
+    let mut at = 0;
+    while at < patch.len() {
+        let end = patch[at..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(patch.len(), |offset| at + offset + 1);
+        if patch[at..end].starts_with(b"diff --git ") {
+            if let Some(begin) = start {
+                chunks.push(&patch[begin..at]);
+            }
+            start = Some(at);
+        }
+        at = end;
+    }
+    if let Some(begin) = start {
+        chunks.push(&patch[begin..]);
+    }
+    chunks
+}
+
+/// Whether a chunk's header names path on its new side: the default "a/<path> b/<path>", a
+/// mnemonic "c/<path> w/<path>", or the no-prefix "<path> <path>" form. The whole header is
+/// compared, so the trailing " b/x" of a header for "folder b/x" cannot stand in for "x"; a header
+/// that reads two ways is left to the per-file fallback. Renames and copies never reach here, so
+/// both sides of the header name the same path.
+fn patch_chunk_is_for(chunk: &[u8], path: &str) -> bool {
+    let Some(header) = chunk.split(|byte| *byte == b'\n').next() else {
+        return false;
+    };
+    let Some(rest) = header.strip_prefix(b"diff --git ") else {
+        return false;
+    };
+    let path = path.as_bytes();
+    if rest.first() == Some(&b'"') {
+        // The quoted form keeps the path's spaces inside the quotes; unescape it, then compare
+        // both complete fields.
+        return quoted_header_fields(header).is_some_and(|(source, destination)| {
+            header_fields_are_for(&source, &destination, path)
+        });
+    }
+    // An unquoted path can hold spaces, so its two fields cannot be split at a space. Their widths
+    // follow from the path itself, and a space has to separate them.
+    let fields = if rest.len() == 2 * path.len() + 5 && rest[2 + path.len()] == b' ' {
+        Some((&rest[..2 + path.len()], &rest[3 + path.len()..]))
+    } else if rest.len() == 2 * path.len() + 1 && rest[path.len()] == b' ' {
+        Some((&rest[..path.len()], &rest[path.len() + 1..]))
+    } else {
+        None
+    };
+    fields.is_some_and(|(source, destination)| header_fields_are_for(source, destination, path))
+}
+
+/// Whether a header's two complete fields name path: both on their own for "diff.noprefix", or both
+/// behind a one-byte prefix, the default "a/" and "b/" or a mnemonic pair such as "c/" and "w/".
+/// Two equal prefixes can be read as either form, so they are left to the per-file fallback; Git
+/// never writes them for a non-rename.
+fn header_fields_are_for(source: &[u8], destination: &[u8], path: &[u8]) -> bool {
+    if source == path && destination == path {
+        return true;
+    }
+    let (Some((source_prefix, source_path)), Some((destination_prefix, destination_path))) = (
+        strip_git_path_prefix(source),
+        strip_git_path_prefix(destination),
+    ) else {
+        return false;
+    };
+    source_prefix != destination_prefix && source_path == path && destination_path == path
+}
+
+/// The one-byte Git diff prefix ("a/", "b/", "c/", "w/") and the path behind it; None when the
+/// field carries no such prefix.
+fn strip_git_path_prefix(field: &[u8]) -> Option<(u8, &[u8])> {
+    (field.len() >= 3 && field[0].is_ascii_alphanumeric() && field[1] == b'/')
+        .then(|| (field[0], &field[2..]))
+}
+
+/// The two complete paths a quoted diff --git header names, with Git's C-style quoting undone; None
+/// when the header is not the quoted form.
+fn quoted_header_fields(header: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    let rest = header.strip_prefix(b"diff --git ")?;
+    let (source, rest) = unquote_git_path(rest)?;
+    let rest = rest.strip_prefix(b" ")?;
+    if rest.first() == Some(&b'"') {
+        let (destination, rest) = unquote_git_path(rest)?;
+        return rest.is_empty().then_some((source, destination));
+    }
+    Some((source, rest.to_vec()))
+}
+
+/// Git's quoted path syntax: a leading quote, C-style escapes and octal bytes, then a closing
+/// quote. Returns the unescaped bytes and the input after the closing quote.
+fn unquote_git_path(input: &[u8]) -> Option<(Vec<u8>, &[u8])> {
+    let mut rest = input.strip_prefix(b"\"")?;
+    let mut path = Vec::new();
+    loop {
+        let byte = *rest.first()?;
+        rest = &rest[1..];
+        match byte {
+            b'"' => return Some((path, rest)),
+            b'\\' => {
+                let escape = *rest.first()?;
+                rest = &rest[1..];
+                match escape {
+                    b'n' => path.push(b'\n'),
+                    b't' => path.push(b'\t'),
+                    b'a' => path.push(0x07),
+                    b'b' => path.push(0x08),
+                    b'f' => path.push(0x0c),
+                    b'r' => path.push(b'\r'),
+                    b'v' => path.push(0x0b),
+                    b'"' => path.push(b'"'),
+                    b'\\' => path.push(b'\\'),
+                    b'0'..=b'7' => {
+                        let mut value = u32::from(escape - b'0');
+                        for _ in 0..2 {
+                            let Some(next) = rest.first() else { break };
+                            if !(b'0'..=b'7').contains(next) {
+                                break;
+                            }
+                            value = value * 8 + u32::from(next - b'0');
+                            rest = &rest[1..];
+                        }
+                        path.push(u8::try_from(value).ok()?);
+                    }
+                    _ => return None,
+                }
+            }
+            byte => path.push(byte),
+        }
+    }
+}
+
 async fn untracked_diff(cwd: &Path, path: &str) -> Result<FileDiff> {
+    let Some(patch) = synthesized_untracked_patch(cwd, path) else {
+        // A binary, symlinked, oddly named or unreadable file keeps the one Git call this read
+        // has always made, so its patch stays byte for byte the one Git writes.
+        return git_untracked_diff(cwd, path).await;
+    };
+    let additions = patch
+        .lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .count() as u32;
+    Ok(FileDiff {
+        path: path.to_owned(),
+        status: "added".into(),
+        additions,
+        deletions: 0,
+        patch,
+        repo_id: None,
+    })
+}
+
+/// Files larger than this keep Git's own patch: the file and its patch would otherwise both sit
+/// in memory at file size, and a patch that large is unfit for the Changes read anyway. One Git
+/// call answers byte for byte.
+const MAX_SYNTHESIZED_UNTRACKED_BYTES: u64 = 8 * 1024 * 1024;
+
+/// The patch Git writes for a new file, built from the file's own bytes instead of a run of Git
+/// per file. None when Git should answer: a binary file, a symlink, a path Git would quote, a file
+/// over the synthesis limit, or a file that cannot be read. Raw bytes go in unchanged, so line
+/// endings stay the file's own; the index line Git prints is left out because its hash covers the
+/// converted content.
+fn synthesized_untracked_patch(cwd: &Path, path: &str) -> Option<String> {
+    if !path
+        .bytes()
+        .all(|byte| (b' '..=b'~').contains(&byte) && byte != b'"' && byte != b'\\')
+    {
+        return None;
+    }
+    let file = cwd.join(path);
+    let metadata = std::fs::symlink_metadata(&file).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_SYNTHESIZED_UNTRACKED_BYTES {
+        return None;
+    }
+    let content = std::fs::read(&file).ok()?;
+    if content.contains(&0) {
+        return None;
+    }
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"diff --git a/");
+    patch.extend_from_slice(path.as_bytes());
+    patch.extend_from_slice(b" b/");
+    patch.extend_from_slice(path.as_bytes());
+    patch.push(b'\n');
+    patch.extend_from_slice(b"new file mode ");
+    patch.extend_from_slice(untracked_file_mode(&metadata).as_bytes());
+    patch.push(b'\n');
+    if content.is_empty() {
+        return Some(String::from_utf8_lossy(&patch).into_owned());
+    }
+    let lines = count_file_lines(&content);
+    patch.extend_from_slice(b"--- /dev/null\n+++ b/");
+    patch.extend_from_slice(path.as_bytes());
+    // Git separates a path that contains a space from the rest of the +++ line with a tab.
+    if path.contains(' ') {
+        patch.push(b'\t');
+    }
+    patch.push(b'\n');
+    if lines == 1 {
+        patch.extend_from_slice(b"@@ -0,0 +1 @@\n");
+    } else {
+        patch.extend_from_slice(format!("@@ -0,0 +1,{lines} @@\n").as_bytes());
+    }
+    for line in content.split_inclusive(|byte| *byte == b'\n') {
+        patch.push(b'+');
+        patch.extend_from_slice(line);
+    }
+    if !content.ends_with(b"\n") {
+        // The marker is a line of its own after the added line's terminator.
+        patch.push(b'\n');
+        patch.extend_from_slice(b"\\ No newline at end of file\n");
+    }
+    Some(String::from_utf8_lossy(&patch).into_owned())
+}
+
+fn count_file_lines(content: &[u8]) -> usize {
+    if content.is_empty() {
+        return 0;
+    }
+    let newlines = content.iter().filter(|byte| **byte == b'\n').count();
+    newlines + usize::from(!content.ends_with(b"\n"))
+}
+
+/// The file mode Git records for a new file: only the owner's execute bit changes it.
+#[cfg(unix)]
+fn untracked_file_mode(metadata: &std::fs::Metadata) -> &'static str {
+    use std::os::unix::fs::PermissionsExt;
+    if metadata.permissions().mode() & 0o100 != 0 {
+        "100755"
+    } else {
+        "100644"
+    }
+}
+
+#[cfg(not(unix))]
+fn untracked_file_mode(_metadata: &std::fs::Metadata) -> &'static str {
+    "100644"
+}
+
+/// One new file through Git, for the cases the synthesis cannot reproduce byte for byte.
+async fn git_untracked_diff(cwd: &Path, path: &str) -> Result<FileDiff> {
     let null_device = if cfg!(windows) { "NUL" } else { "/dev/null" };
     // `--no-index` exits 1 when files differ, which is the expected case.
     let output = git_raw(
@@ -1273,6 +1629,361 @@ mod tests {
         let files = diff(&repo, None).await.unwrap();
         assert_eq!(files.len(), 1);
         assert!(!marker.exists());
+    }
+
+    /// The read the batched tracked diff replaces: one Git call per file. It proves the entries
+    /// keep their order, status, counts and exact patches.
+    async fn per_file_tracked_diff(cwd: &Path, range: &[&str]) -> Vec<FileDiff> {
+        let root = checkout_root(cwd).await.unwrap();
+        let cwd = root.as_path();
+        let mut statuses_args = vec![
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-status",
+            "-z",
+        ];
+        statuses_args.extend(range);
+        let statuses = git(cwd, &statuses_args).await.unwrap();
+        let mut numstat_args = vec!["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z"];
+        numstat_args.extend(range);
+        let counts = parse_numstat(&git(cwd, &numstat_args).await.unwrap());
+        let mut files = Vec::new();
+        for (status, path) in parse_name_status(&statuses) {
+            let (additions, deletions) = counts.get(&path).copied().unwrap_or((0, 0));
+            files.push(FileDiff {
+                patch: per_file_patch(cwd, range, &path).await.unwrap(),
+                path,
+                status,
+                additions,
+                deletions,
+                repo_id: None,
+            });
+        }
+        files
+    }
+
+    #[tokio::test]
+    async fn tracked_patches_stay_identical_to_one_git_call_per_file() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        std::fs::create_dir_all(repo.join("dir with space")).unwrap();
+        for (path, content) in [
+            ("plain.txt", "one\n"),
+            ("binary.dat", "not yet"),
+            ("unicodé.txt", "u\n"),
+            ("gone.txt", "bye\n"),
+            ("rename-src.txt", "alpha\nbravo\ncharlie\n"),
+            ("dir with space/nested.txt", "n\n"),
+            ("splitter.txt", "start\n"),
+            ("noeol.txt", "one\ntwo"),
+            ("empty.txt", "e\n"),
+        ] {
+            std::fs::write(repo.join(path), content).unwrap();
+        }
+        std::fs::write(repo.join("binary.dat"), [0u8, 1, 2, 3, 0, 255, 65]).unwrap();
+        git(&repo, &["add", "."]).await.unwrap();
+        git(&repo, &["commit", "-qm", "before"]).await.unwrap();
+
+        std::fs::write(repo.join("plain.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(repo.join("binary.dat"), [0u8, 9, 9, 0, 1]).unwrap();
+        std::fs::remove_file(repo.join("gone.txt")).unwrap();
+        // The new line looks like a file header but starts with '+' inside the hunk.
+        std::fs::write(
+            repo.join("splitter.txt"),
+            "start\ndiff --git a/fake b/fake\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("noeol.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(repo.join("empty.txt"), "").unwrap();
+        std::fs::write(repo.join("dir with space/nested.txt"), "n\nmore\n").unwrap();
+        std::fs::write(repo.join("unicodé.txt"), "u\nmore\n").unwrap();
+        git(&repo, &["mv", "rename-src.txt", "rename-dst.txt"])
+            .await
+            .unwrap();
+        std::fs::write(repo.join("staged-add.txt"), "added\n").unwrap();
+        git(&repo, &["add", "staged-add.txt"]).await.unwrap();
+
+        let batched = tracked_diff(&repo, &["HEAD"]).await.unwrap();
+        let expected = per_file_tracked_diff(&repo, &["HEAD"]).await;
+        assert_eq!(batched, expected);
+        assert!(
+            batched.iter().any(|file| file.status == "renamed"),
+            "the fixture must exercise the rename fallback"
+        );
+        assert!(
+            batched.iter().any(|file| file.path == "unicodé.txt"),
+            "the fixture must exercise a quoted header"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_diff_read_spawns_the_same_number_of_commands_for_one_file_and_many() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        std::fs::create_dir_all(repo.join("tracked")).unwrap();
+        for at in 0..20 {
+            std::fs::write(repo.join(format!("tracked/file-{at:02}.txt")), "one\n").unwrap();
+        }
+        git(&repo, &["add", "tracked"]).await.unwrap();
+        git(&repo, &["commit", "-qm", "tracked"]).await.unwrap();
+
+        std::fs::write(repo.join("tracked/file-00.txt"), "two\n").unwrap();
+        std::fs::write(repo.join("single-untracked.txt"), "one\n").unwrap();
+        crate::host::process::reset_spawned_on_this_thread();
+        let few = diff(&repo, None).await.unwrap();
+        let few_spawns = crate::host::process::spawned_on_this_thread();
+        assert_eq!(few.len(), 2);
+
+        std::fs::create_dir_all(repo.join("bulk")).unwrap();
+        for at in 0..40 {
+            std::fs::write(
+                repo.join(format!("bulk/file-{at:03}.txt")),
+                format!("marker {at}\n"),
+            )
+            .unwrap();
+        }
+        for at in 1..20 {
+            std::fs::write(repo.join(format!("tracked/file-{at:02}.txt")), "two\n").unwrap();
+        }
+        crate::host::process::reset_spawned_on_this_thread();
+        let many = diff(&repo, None).await.unwrap();
+        let many_spawns = crate::host::process::spawned_on_this_thread();
+
+        assert_eq!(many.len(), 1 + 20 + 40);
+        let bulk = many
+            .iter()
+            .find(|file| file.path == "bulk/file-000.txt")
+            .unwrap();
+        assert_eq!(bulk.status, "added");
+        assert_eq!(bulk.additions, 1);
+        assert!(bulk.patch.contains("+marker 0"));
+        assert_eq!(
+            many_spawns, few_spawns,
+            "the diff read must not start more programs as the change grows"
+        );
+        assert!(
+            many_spawns <= 8,
+            "the diff read spawned {many_spawns} programs for 60 files"
+        );
+    }
+
+    #[tokio::test]
+    async fn untracked_patches_stay_identical_to_git_apart_from_the_index_line() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        // Read the files as raw bytes, which is what Git does without line-ending conversion.
+        crate::testing::run_git(&repo, &["config", "core.autocrlf", "false"]);
+        for (path, content) in [
+            ("plain.txt", b"one\ntwo\n".to_vec()),
+            ("single.txt", b"only\n".to_vec()),
+            ("noeol.txt", b"alpha\nbeta".to_vec()),
+            ("empty.txt", Vec::new()),
+            ("blank-lines.txt", b"a\n\n\nb\n".to_vec()),
+            ("crlf.txt", b"one\r\ntwo\r\n".to_vec()),
+            ("space name.txt", b"space\n".to_vec()),
+            ("splitter.txt", b"x\ndiff --git a/fake b/fake\n".to_vec()),
+            ("plusplus.txt", b"++line\n".to_vec()),
+        ] {
+            std::fs::write(repo.join(path), content).unwrap();
+        }
+        let files = diff(&repo, None).await.unwrap();
+        // A developer's global Git config changes the reference patch without changing the
+        // file: diff.noprefix drops the a//b/ prefixes that synthesis always writes, and
+        // color.ui=always adds escape bytes. Set both on this repository so the reference
+        // command below has to pin the compared shape itself.
+        crate::testing::run_git(&repo, &["config", "diff.noprefix", "true"]);
+        crate::testing::run_git(&repo, &["config", "color.ui", "always"]);
+        for (path, content) in [
+            ("plain.txt", b"one\ntwo\n".to_vec()),
+            ("single.txt", b"only\n".to_vec()),
+            ("noeol.txt", b"alpha\nbeta".to_vec()),
+            ("empty.txt", Vec::new()),
+            ("blank-lines.txt", b"a\n\n\nb\n".to_vec()),
+            ("crlf.txt", b"one\r\ntwo\r\n".to_vec()),
+            ("space name.txt", b"space\n".to_vec()),
+            ("splitter.txt", b"x\ndiff --git a/fake b/fake\n".to_vec()),
+            ("plusplus.txt", b"++line\n".to_vec()),
+        ] {
+            let file = files.iter().find(|file| file.path == path).unwrap();
+            let output = git_raw(
+                &repo,
+                &[
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-color",
+                    "--src-prefix=a/",
+                    "--dst-prefix=b/",
+                    "--no-index",
+                    "--",
+                    null_device(),
+                    path,
+                ],
+            )
+            .await
+            .unwrap();
+            assert_eq!(output.status.code(), Some(1), "git --no-index {path}");
+            assert_eq!(
+                file.patch.as_bytes(),
+                without_index_line(&output.stdout),
+                "{path}"
+            );
+            if path != "plusplus.txt" {
+                assert_eq!(
+                    file.additions as usize,
+                    count_file_lines(&content),
+                    "{path}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn untracked_diff_respects_binary_diff_attributes() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "*.bin -diff\n*.custom diff=opaque\n*.namedset diff=set\n*.namedunspecified diff=unspecified\n",
+        )
+        .unwrap();
+        crate::testing::run_git(&repo, &["config", "diff.opaque.binary", "true"]);
+        crate::testing::run_git(&repo, &["config", "diff.set.binary", "true"]);
+        crate::testing::run_git(&repo, &["config", "diff.unspecified.binary", "true"]);
+        for path in [
+            "plain.bin",
+            "named.custom",
+            "x.namedset",
+            "x.namedunspecified",
+            "ordinary.txt",
+        ] {
+            std::fs::write(repo.join(path), "plain text without NUL\n").unwrap();
+        }
+        let files = diff(&repo, None).await.unwrap();
+        for path in [
+            "plain.bin",
+            "named.custom",
+            "x.namedset",
+            "x.namedunspecified",
+        ] {
+            let file = files.iter().find(|file| file.path == path).unwrap();
+            let expected = git_untracked_diff(&repo, path).await.unwrap();
+            assert!(expected.patch.contains("Binary files"), "{path}");
+            assert_eq!(file.patch, expected.patch, "{path}");
+            assert_eq!(file.additions, 0, "{path}");
+        }
+        assert!(
+            files
+                .iter()
+                .find(|file| file.path == "ordinary.txt")
+                .unwrap()
+                .patch
+                .contains("+plain text")
+        );
+    }
+
+    #[tokio::test]
+    async fn binary_and_quoted_untracked_files_keep_gits_own_patch() {
+        let dir = TempDir::new();
+        let repo = repo(dir.path()).await;
+        crate::testing::run_git(&repo, &["config", "core.autocrlf", "false"]);
+        std::fs::write(repo.join("binary.dat"), [0u8, 1, 2, 3, 0, 255]).unwrap();
+        std::fs::write(repo.join("unicodé.txt"), "u\n").unwrap();
+        let files = diff(&repo, None).await.unwrap();
+        for path in ["binary.dat", "unicodé.txt"] {
+            let file = files.iter().find(|file| file.path == path).unwrap();
+            let output = git_raw(
+                &repo,
+                &[
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-index",
+                    "--",
+                    null_device(),
+                    path,
+                ],
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                file.patch,
+                String::from_utf8_lossy(&output.stdout),
+                "{path} must keep Git's own patch"
+            );
+        }
+    }
+
+    #[test]
+    fn an_untracked_file_over_the_synthesis_limit_keeps_gits_own_patch() {
+        let dir = TempDir::new();
+        let file = dir.path().join("large.txt");
+        std::fs::write(&file, vec![b'a'; MAX_SYNTHESIZED_UNTRACKED_BYTES as usize]).unwrap();
+        assert!(
+            synthesized_untracked_patch(dir.path(), "large.txt").is_some(),
+            "a file at the limit is still synthesized"
+        );
+        let mut append = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&file)
+            .unwrap();
+        std::io::Write::write_all(&mut append, b"a").unwrap();
+        assert!(
+            synthesized_untracked_patch(dir.path(), "large.txt").is_none(),
+            "a file over the limit keeps Git's own patch"
+        );
+    }
+
+    fn without_index_line(patch: &[u8]) -> Vec<u8> {
+        patch
+            .split_inclusive(|byte| *byte == b'\n')
+            .filter(|line| !line.starts_with(b"index "))
+            .flatten()
+            .copied()
+            .collect()
+    }
+
+    fn null_device() -> &'static str {
+        if cfg!(windows) { "NUL" } else { "/dev/null" }
+    }
+
+    #[test]
+    fn a_combined_patch_splits_only_at_file_headers() {
+        let patch = b"diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+diff --git a/fake b/fake\ndiff --git \"a/unicod\\303\\251.txt\" \"b/unicod\\303\\251.txt\"\nnew file mode 100644\n";
+        let chunks = split_git_patch(patch);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].ends_with(b"+diff --git a/fake b/fake\n"));
+        assert!(patch_chunk_is_for(chunks[0], "a.txt"));
+        assert!(patch_chunk_is_for(chunks[1], "unicodé.txt"));
+        assert!(!patch_chunk_is_for(chunks[1], "a.txt"));
+    }
+
+    #[test]
+    fn a_header_must_name_the_whole_path() {
+        let header = |line: &str| format!("{line}\n").into_bytes();
+        // The trailing " b/x" belongs to the path "folder b/x", not to "x".
+        let spaced = header("diff --git a/folder b/x b/folder b/x");
+        assert!(patch_chunk_is_for(&spaced, "folder b/x"));
+        assert!(!patch_chunk_is_for(&spaced, "x"));
+        // A one-letter first component is not a prefix when the header carries none.
+        let bare = header("diff --git x/file x/file");
+        assert!(patch_chunk_is_for(&bare, "x/file"));
+        assert!(!patch_chunk_is_for(&bare, "file"));
+        // Behind the default prefixes the same path still matches.
+        assert!(patch_chunk_is_for(
+            &header("diff --git a/x/file b/x/file"),
+            "x/file"
+        ));
+        // Mnemonic prefixes are understood, and both sides must name the path.
+        assert!(patch_chunk_is_for(
+            &header("diff --git c/plain.txt w/plain.txt"),
+            "plain.txt"
+        ));
+        assert!(!patch_chunk_is_for(
+            &header("diff --git c/plain.txt w/other.txt"),
+            "plain.txt"
+        ));
     }
 
     #[test]

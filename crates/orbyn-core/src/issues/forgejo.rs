@@ -806,6 +806,7 @@ impl IssueSource for Forgejo {
             comments: Vec::new(),
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
             states: None,
         })
@@ -971,6 +972,7 @@ impl IssueSource for Forgejo {
             comments: comments_from(rows),
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
             states: None,
         })
