@@ -14,7 +14,8 @@
 //! repository, watched where `commondir` names them). `HEAD` is watched although the
 //! answer never contains it, so a commit or a branch switch is observed rather than
 //! ignored, and `objects` and `refs` are watched for what Git finds at them rather than
-//! for their contents, so renaming either is a repository Git no longer finds. The
+//! for their contents, so renaming either, or a directory Git can no longer search, is a
+//! repository Git no longer finds. The
 //! work tree's `.git` is kept by the location it resolved to, because Git names the
 //! directory it resolved: a link retargeted at another repository leaves those files
 //! as they were. What the answer rests on is watched before the configuration is read
@@ -205,6 +206,15 @@ impl Watch {
     }
 }
 
+/// Whether a directory is still there and one Git can search. Git accepts a repository's `objects`
+/// and `refs` with `access(X_OK)` and never reads them, so a directory whose search permission was
+/// dropped is one it no longer finds. Resolving `dir/.` asks for that search: stating the directory
+/// itself needs none, and reading its entries needs read rather than search. Windows drops the
+/// trailing `.`, where the same existence test Git makes there is the one this makes.
+fn searchable(path: &Path) -> bool {
+    std::fs::metadata(path.join(".")).is_ok()
+}
+
 /// The common directory Git resolved for `git_dir`: the path its `commondir` names, and the Git
 /// directory itself when it names none. Git drops a trailing newline and carriage return from
 /// that path and nothing else, so a name that ends in a space keeps it; trimming the path would
@@ -313,6 +323,7 @@ impl Seen {
             ),
             Self::Directory(resolved) => {
                 std::fs::metadata(path).is_ok_and(|meta| meta.is_dir())
+                    && searchable(path)
                     && crate::util::canonicalize(path).is_ok_and(|now| now == *resolved)
             }
             Self::File { len, digest } => {

@@ -544,6 +544,46 @@ async fn a_linked_worktree_whose_common_directory_lost_a_signature_is_observed_a
     );
 }
 
+/// Git accepts a signature only while it can search it: `is_git_directory` checks both `objects`
+/// and `refs` with `access(X_OK)`, so a directory whose search permission was dropped is one Git
+/// no longer finds, however unchanged its contents are. Root searches regardless of the mode, as
+/// Git does, so there is nothing to observe when the test itself runs as root.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_signature_that_lost_its_search_permission_is_observed_again() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let folder = dir.path().join("repo");
+    repository(&folder);
+    configure(&folder, "origin", "git@host:Owner/Repo.git");
+    core.add_project(folder.to_str().unwrap()).await.unwrap();
+    let first = read(&core).await;
+    assert_eq!(
+        only_member(&first).repository_label.as_deref(),
+        Some("Owner/Repo")
+    );
+    if std::fs::metadata(dir.path()).unwrap().uid() == 0 {
+        return;
+    }
+    let signature = folder.join(".git").join("objects");
+    let mode = std::fs::metadata(&signature).unwrap().permissions().mode();
+    std::fs::set_permissions(&signature, std::fs::Permissions::from_mode(mode & !0o111)).unwrap();
+    let watched = std::slice::from_ref(&folder);
+    let before = spawns(watched);
+    let second = read(&core).await;
+    std::fs::set_permissions(&signature, std::fs::Permissions::from_mode(mode)).unwrap();
+    assert!(
+        since(&before, watched)[0] > 0,
+        "the repository Git can no longer search is observed again"
+    );
+    assert!(
+        !only_member(&second).metadata_complete,
+        "a folder Git cannot search as a repository is left unobserved"
+    );
+}
+
 /// Git drops only a trailing newline and carriage return from `commondir`, so a common directory
 /// whose name ends in a space is another directory: the watch has to cover what Git resolved, or
 /// a remote changed there is never noticed. An ordinary Windows path cannot open a name ending in
