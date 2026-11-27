@@ -422,6 +422,45 @@ async fn a_stale_record_never_authorizes_deleting_a_replacement_folder() {
 }
 
 #[tokio::test]
+async fn a_checkout_of_another_repository_is_never_reused_for_the_workers() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let made = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .unwrap()
+        .expect("a brief that writes gets a worktree");
+    let path = at(&made);
+    // Another repository's checkout is put at the member's path: git still lists the registration for
+    // the member's branch, but the folder a worker would write in is not this repository's.
+    let elsewhere = world._dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    crate::testing::run_git(&elsewhere, &["init", "-q"]);
+    std::fs::remove_file(path.join(".git")).unwrap();
+    std::fs::write(
+        path.join(".git"),
+        format!("gitdir: {}/.git/worktrees/foreign", elsewhere.display()),
+    )
+    .unwrap();
+    std::fs::write(path.join("theirs.txt"), "another repository's work\n").unwrap();
+    let error = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .expect_err("another repository's checkout is never the worker's");
+    assert!(
+        error.message.contains("not this repository's"),
+        "{}",
+        error.message
+    );
+    assert!(
+        path.join("theirs.txt").is_file(),
+        "the other checkout is left alone"
+    );
+}
+
+#[tokio::test]
 async fn a_checkout_on_another_branch_is_never_taken_for_the_workers() {
     let world = setup().await;
     let lead = lead_of(&world);

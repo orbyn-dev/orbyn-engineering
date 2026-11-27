@@ -240,7 +240,9 @@ the gap Crew fills. openbot is non-commercial: no code or text from it, only the
 - **Lead**: an ordinary thread on whatever engine the person picks. It gets the Crew tools. It writes briefs and
   reviews results. It does no routing maths.
 - **Router** (Rust, no model): picks the engine for each brief. The decision and its reasons are stored and shown.
-- **Workers**: threads on the chosen engines. Planned: each writing worker in its own worktree, built and off by default (#436); today they run in the lead's checkout (see "Isolation"). Depth is 1: workers cannot start workers.
+- **Workers**: threads on the chosen engines. A writing worker's own worktree is built and off by default (#436): behind
+  `CoreConfig::crew_writer_worktrees` it gets a checkout of its own, and with the flag off, which is how it ships, the
+  worker runs in the lead's checkout (see "Isolation"). Depth is 1: workers cannot start workers.
 - **Crew bus** (Rust): owns runs, messages and the shared board.
 - **Verifier** (Rust): runs the answer-key checks in the worker's checkout (the lead's, until worker worktrees are switched on).
 
@@ -371,7 +373,8 @@ retries with the reason. The same failure twice means one change of approach, an
     task counts, including review lanes and fixes, except Autopilot's merge corrections, which create their task
     directly (deterministic, no worker turns). A task whose worker thread exists or whose first prompt is still queued
     counts at least one turn.
-  - The worker runs in the lead's checkout through `delegate`. A writing worker's own checkout is built and off by default (#436, "Isolation").
+  - The worker runs in the lead's checkout through `delegate`, unless a writing worker's own checkout is switched on
+    (#436, "Isolation"), which it is not by default.
   - **Check kinds this version runs (#437):** besides the command kinds, `file_scope` and `diff_size`,
     `schema`, `secret_scan` and `repo_required` run in the checkout, and `http_probe` sends one
     request, each recording its Evidence:

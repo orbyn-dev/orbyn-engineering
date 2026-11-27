@@ -83,6 +83,15 @@ impl Core {
         if let Some(checkout) = &checkout
             && checkout.path.exists()
         {
+            // Git lists its own registration, not what is in the folder: a checkout of another
+            // repository placed at the path is not this member's, and the worker would write there.
+            if !points_at_this_repository(&repo, &checkout.path).await {
+                return Err(invalid(format!(
+                    "The checkout that holds this member's branch is not this repository's: {}; \
+                     move or remove it yourself.",
+                    checkout.path.display()
+                )));
+            }
             let start = self.member_base(&repo, &purpose, base).await?;
             return Ok(Some(WriterWorktree {
                 worktree: Worktree {
@@ -97,7 +106,7 @@ impl Core {
         // Without that record the folder can hold a person's work, so it is kept and the start says
         // what is in the way instead of deleting it.
         if target.exists() && !listed(&repo, &target).await.map_err(internal)? {
-            if !made_by_orbyn(&root, &purpose) || !is_linked_checkout(&target) {
+            if !made_by_orbyn(&root, &purpose) || !points_at_this_repository(&repo, &target).await {
                 return Err(invalid(format!(
                     "The folder {} is in the way of the worker's worktree, and Orbyn did not make it \
                      or it is no longer this clone's checkout; move or remove it yourself.",
@@ -284,15 +293,28 @@ fn made_by_orbyn(root: &Path, purpose: &str) -> bool {
     record_path(root, purpose).is_file()
 }
 
-/// Whether `folder` is a checkout this clone's worktrees make. A linked worktree keeps a `.git` file
-/// pointing at the repository's worktree records, so the folder on disk is the one the record was
-/// written for; a folder a person made, moved or restored at the same path has none, and a record
-/// left behind by a checkout that is gone describes no folder at all.
-fn is_linked_checkout(folder: &Path) -> bool {
+/// Whether `folder` is a checkout of this repository: its `.git` file points at this repository's
+/// worktree records. Git lists a worktree from its own metadata, so it still lists the registration
+/// when another repository's checkout sits at the path; the folder on disk is what the worker would
+/// write in, and it is only this member's when the pointer returns here.
+async fn points_at_this_repository(repo: &Path, folder: &Path) -> bool {
+    let Ok(git_dir) = git::git(repo, &["rev-parse", "--absolute-git-dir"]).await else {
+        return false;
+    };
     let Ok(pointer) = std::fs::read_to_string(folder.join(".git")) else {
         return false;
     };
-    pointer.trim_start().starts_with("gitdir:") && pointer.contains("worktrees")
+    let Some(target) = pointer.trim().strip_prefix("gitdir:") else {
+        return false;
+    };
+    // Git spells paths with forward slashes in both places; the comparison ignores case because the
+    // same folder is spelled differently by the two sources on Windows and macOS.
+    let target = target.trim().replace('\\', "/").to_lowercase();
+    let here = format!(
+        "{}/worktrees/",
+        text(&git_dir).replace('\\', "/").to_lowercase()
+    );
+    target.starts_with(&here)
 }
 
 /// Git's answer as text, trimmed.
