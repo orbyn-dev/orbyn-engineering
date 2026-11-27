@@ -3075,15 +3075,35 @@ impl DeviceWorld {
         }
     }
 
-    /// Calls the tool through the dispatch entry the MCP layer uses: the gate, the Crew
-    /// refusal, the audit row and the device call all live there. The transport adds its own
-    /// future chain on top, which the screenshot's deep device future does not leave room for
-    /// on a debug build's test thread, so a tool call here skips only that framing.
+    /// One request through the MCP transport, the way the shell sends it: the JSON-RPC
+    /// envelope, the token's binding and the budget timer around the dispatch entry.
+    async fn rpc(&self, method: &str, params: Value) -> Value {
+        let message = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
+        self.core
+            .mcp
+            .handle(&self.token, &message)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    /// Calls the tool through that same transport, so a device tool test covers the chain a
+    /// live engine does and not only the dispatch entry behind it (#1515).
     async fn call_text(&self, name: &str, args: Value) -> (String, bool) {
-        match self.core.call_orbyn_tool(&self.binding, name, &args).await {
-            Ok(value) => (value.to_string(), false),
-            Err(error) => (error.public_message(), true),
+        let reply = self
+            .rpc("tools/call", json!({ "name": name, "arguments": args }))
+            .await;
+        if let Some(text) = reply["result"]["content"][0]["text"].as_str() {
+            return (text.to_owned(), reply["result"]["isError"] == json!(true));
         }
+        // A name the tool table never held is the transport's own error, not a tool result.
+        (
+            reply["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned(),
+            true,
+        )
     }
 
     async fn call_json(&self, name: &str, args: Value) -> (Value, bool) {
@@ -3238,17 +3258,16 @@ async fn the_device_tools_are_hidden_from_a_machine_without_platform_tools() {
     let w = DeviceWorld::new(Fake::unavailable_devices).await;
     let names = w.tool_names().await;
     assert!(!names.iter().any(|name| is_device_tool(name)), "{names:?}");
-    // A hidden tool is as unknown as a name the table never held: the dispatch entry the
-    // MCP layer calls answers that tool's NotFound, exactly as it does for an unknown name.
-    for name in [
-        "orbyn_device_list",
-        "orbyn_device_power_off",
-        "orbyn_no_such_tool",
-    ] {
+    // A hidden tool answers its own NotFound, as if the table never held it.
+    for name in ["orbyn_device_list", "orbyn_device_power_off"] {
         let (text, error) = w.call_text(name, json!({})).await;
         assert!(error, "{name}: {text}");
         assert_eq!(text, format!("tool {name} not found"));
     }
+    // A name the table never held is the transport's own error, not a tool's answer.
+    let (text, error) = w.call_text("orbyn_no_such_tool", json!({})).await;
+    assert!(error, "{text}");
+    assert_eq!(text, "Unknown tool orbyn_no_such_tool.");
 }
 
 #[tokio::test]
@@ -3573,6 +3592,58 @@ async fn the_device_screenshot_row_is_written_before_the_device_answers() {
             .count(),
         1
     );
+}
+
+/// The screenshot's success path through the transport on a normal debug test thread: the
+/// reply is the JSON-RPC envelope the shell reads, with the image inside it. A device call
+/// that grew past the thread's stack would abort this test instead of failing it (#1515).
+#[tokio::test]
+async fn the_device_screenshot_succeeds_through_the_mcp_transport() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    let reply = w
+        .rpc(
+            "tools/call",
+            json!({
+                "name": "orbyn_device_screenshot",
+                "arguments": { "device_id": "android:Pixel_8" },
+            }),
+        )
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    let content = &reply["result"]["content"][0];
+    assert_eq!(content["type"], "text", "{reply}");
+    assert!(reply["result"]["isError"] != json!(true), "{reply}");
+    let answer: Value = serde_json::from_str(content["text"].as_str().unwrap()).unwrap();
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(answer["device"]["id"], "android:Pixel_8", "{answer}");
+    assert!(
+        answer["image"]
+            .as_str()
+            .is_some_and(|image| !image.is_empty()),
+        "{answer}"
+    );
+    // One row for the one call, written before the device answered (rule 6).
+    the_one(&w.audit(), "device.tool.screenshot");
+}
+
+/// The list tool takes the same transport path, so its counts arrive inside the envelope
+/// too, and the deep future is not only the screenshot's (#1515).
+#[tokio::test]
+async fn the_device_list_succeeds_through_the_mcp_transport() {
+    let w = DeviceWorld::new(Fake::devices).await;
+    let reply = w
+        .rpc(
+            "tools/call",
+            json!({ "name": "orbyn_device_list", "arguments": {} }),
+        )
+        .await;
+    assert!(reply.get("error").is_none(), "{reply}");
+    assert!(reply["result"]["isError"] != json!(true), "{reply}");
+    let answer: Value =
+        serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(answer["devices"].as_array().unwrap().len(), 4, "{answer}");
+    assert_eq!(answer["platforms"].as_array().unwrap().len(), 2, "{answer}");
+    the_one(&w.audit(), "device.tool.list");
 }
 
 #[tokio::test]
