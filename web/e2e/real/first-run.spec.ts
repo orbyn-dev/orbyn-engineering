@@ -15,15 +15,20 @@ test.beforeAll(async () => {
 
 test.afterAll(() => service.stop());
 
-test("a fresh install opens on the draft flow with no setup step", async ({ page }) => {
+test("a fresh install opens the welcome steps and leaves them for the Welcome page", async ({ page }) => {
   await page.setViewportSize(WINDOW);
   await page.goto(service.page);
-  // The welcome steps open first and are never a gate: one click leaves them for the draft flow.
+  // The welcome steps open first and are never a gate: one click leaves them for the Welcome page.
   await expect(page.getByRole("heading", { name: "Welcome to Orbyn Engineering" })).toBeVisible();
   await page.getByRole("button", { name: "Skip for now" }).click();
-  await expect(page.getByRole("heading", { name: "Add your first project" })).toBeVisible();
-  await expect(page.locator(".no-projects").getByRole("button", { name: "Add a folder" })).toBeVisible();
-  await expect(page.locator(".no-projects").getByRole("button", { name: "Clone a repository" })).toBeVisible();
+  // The shipped empty home is the Welcome page, not a separate first-project screen.
+  await expect(page.getByRole("heading", { name: "Welcome to Orbyn Engineering", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Add your first project" })).toHaveCount(0);
+  const projects = page.getByRole("region", { name: "Projects" });
+  await expect(projects).toBeVisible();
+  await expect(page.getByRole("region", { name: "Agents" })).toBeVisible();
+  await expect(projects.getByRole("button", { name: "Add a folder" })).toBeVisible();
+  await expect(projects.getByRole("button", { name: "Clone a repository" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
   await expect(page.getByText(/set up/i)).toHaveCount(0);
   await expect(page.getByText("Skills library")).toBeHidden();

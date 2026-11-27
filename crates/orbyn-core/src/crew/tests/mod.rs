@@ -89,6 +89,7 @@ mod resume;
 mod resume_held;
 mod reviewer_only;
 mod unmanaged;
+mod unrun_kinds;
 // The checks are shell commands (`touch`, `rm`, `sleep`, a loop), so these tests run where there is a POSIX shell.
 #[cfg(unix)]
 mod rerun;
@@ -108,6 +109,7 @@ mod stamp;
 mod starts;
 mod tier_settings;
 mod triggers;
+mod turn_counters;
 mod verify;
 mod worker_identity;
 mod worktree;
