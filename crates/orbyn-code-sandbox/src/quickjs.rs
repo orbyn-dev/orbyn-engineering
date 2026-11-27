@@ -14,6 +14,7 @@ use std::pin::Pin;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
@@ -38,6 +39,9 @@ struct Shared {
     clock: Mutex<Clock>,
     cpu_hit: AtomicBool,
     heap_hit: AtomicBool,
+    /// Tool calls the script has started and not been answered for: the only work outside the
+    /// engine that can run the script again.
+    in_flight: AtomicUsize,
     calls: AtomicUsize,
     logs: Mutex<Logs>,
 }
@@ -52,6 +56,12 @@ impl Shared {
 
     fn resume_clock(&self) {
         self.clock.lock().expect("clock").since = Some(Instant::now());
+    }
+
+    /// Whether the heap is what holds the script: the allocator refused a request and no tool call
+    /// is outstanding, so nothing outside the engine can run the script again.
+    fn heap_stalled(&self) -> bool {
+        self.heap_hit.load(Ordering::SeqCst) && self.in_flight.load(Ordering::SeqCst) == 0
     }
 
     fn log(&self, text: String, limits: &Limits) {
@@ -183,6 +193,175 @@ struct QuickJsRun {
     shared: Arc<Shared>,
 }
 
+/// Whether a tool call answering or a deadline reached woke the script while `drive` polled it. A
+/// poll that parks and leaves the waker alone has no work left that could run the script again.
+#[derive(Default)]
+struct Woken(AtomicBool);
+
+impl Woken {
+    fn woken(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// The waker `drive` waits with: it records that the script woke itself and passes the wake-up on to
+/// the caller, so a tool reply or a timer still resumes the run.
+struct Forward {
+    woken: AtomicBool,
+    caller: Waker,
+}
+
+impl Forward {
+    fn new(caller: Waker) -> Self {
+        Self {
+            woken: AtomicBool::new(false),
+            caller,
+        }
+    }
+
+    fn woken(&self) -> bool {
+        self.woken.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for Forward {
+    fn wake(self: Arc<Self>) {
+        self.woken.store(true, Ordering::SeqCst);
+        self.caller.wake_by_ref();
+    }
+}
+
+/// What a poll of the script while `drive` waits found.
+enum Waiting {
+    /// The script finished.
+    Done(Step),
+    /// The poll parked, woke nothing, and the heap is what holds the script.
+    HeapStalled,
+}
+
+/// Polls the script while `drive` waits, so every poll is also a check of whether the heap holds the
+/// run. Waiting in `timeout_at` alone checks once, before the wait: a script that catches a heap
+/// refusal after a tool replies can then await a promise that never settles, and nothing would review
+/// it again until the deadline.
+struct Watched<'a> {
+    job: &'a mut Job,
+    shared: &'a Shared,
+}
+
+impl Future for Watched<'_> {
+    type Output = Waiting;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Waiting> {
+        let this = self.get_mut();
+        let forward = Arc::new(Forward::new(cx.waker().clone()));
+        let waker = Waker::from(forward.clone());
+        let mut context = Context::from_waker(&waker);
+        match this.job.as_mut().poll(&mut context) {
+            Poll::Ready(step) => Poll::Ready(Waiting::Done(step)),
+            Poll::Pending if !forward.woken() && this.shared.heap_stalled() => {
+                Poll::Ready(Waiting::HeapStalled)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl QuickJsRun {
+    fn finish(&mut self, step: Step) -> Step {
+        self.finished = Some(step.clone());
+        step
+    }
+
+    /// The heap limit as the run's end, with the logs kept so far.
+    fn heap_step(&mut self) -> Step {
+        let (logs, truncated) = self.shared.take_logs();
+        self.finish(Step::Failed {
+            error: heap_limit_error(),
+            logs,
+            truncated,
+        })
+    }
+
+    /// Polls the script once, with no deadline, and ends it when the heap is what holds it.
+    ///
+    /// A heap the limit refused can leave the script with nothing that can run it: with the heap
+    /// full the engine cannot always allocate the job that would settle the promise the script
+    /// awaits, so the future stays pending forever and only the wall clock would end the run.
+    /// A single poll tells the two apart: parked without waking itself, with `heap_hit` set and no
+    /// tool call outstanding, no later poll can make progress either.
+    fn poll_held_by_the_heap(&mut self) -> Option<Step> {
+        let woken = Arc::new(Woken::default());
+        let waker = Waker::from(woken.clone());
+        let mut context = Context::from_waker(&waker);
+        match self.job.as_mut().poll(&mut context) {
+            Poll::Ready(step) => Some(self.finish(step)),
+            Poll::Pending if !woken.woken() && self.shared.heap_stalled() => Some(self.heap_step()),
+            Poll::Pending => None,
+        }
+    }
+}
+
+#[async_trait]
+impl Run for QuickJsRun {
+    async fn drive(&mut self, until: Instant) -> Step {
+        if let Some(step) = &self.finished {
+            return step.clone();
+        }
+        // Ask first whether the heap is holding the script: the heap can be refused during this
+        // very poll, and the caller's deadline may be the whole budget, so the verdict is taken
+        // here rather than only when an earlier poll already recorded the refusal.
+        if let Some(step) = self.poll_held_by_the_heap() {
+            return step;
+        }
+        let wall_over = self.wall_deadline <= until;
+        let stop = tokio::time::Instant::from_std(until.min(self.wall_deadline));
+        let watched = Watched {
+            job: &mut self.job,
+            shared: &self.shared,
+        };
+        match tokio::time::timeout_at(stop, watched).await {
+            Ok(Waiting::Done(step)) => self.finish(step),
+            // Every poll of the wait checks the heap as well, so a refusal the script caught after a
+            // tool replied and a promise it can never settle end the run here instead of at the clock.
+            Ok(Waiting::HeapStalled) => self.heap_step(),
+            // Reaching this deadline with the heap still holding the run is the heap's ending, not
+            // the clock's. The wall clock stays the backstop for every other run that stops moving.
+            Err(_) if self.shared.heap_stalled() => self.heap_step(),
+            Err(_) if wall_over => {
+                let (logs, truncated) = self.shared.take_logs();
+                let step = Step::Failed {
+                    error: limit_error("The run took longer than its time limit.".into()),
+                    logs,
+                    truncated,
+                };
+                self.finish(step)
+            }
+            Err(_) => Step::Yielded,
+        }
+    }
+}
+
+fn limit_error(message: String) -> RunError {
+    RunError {
+        kind: ErrorKind::Limit,
+        message,
+        line: None,
+        code: None,
+    }
+}
+
+/// The heap limit as a run reports it, whichever rule reached it: `classify` reading the error the
+/// engine threw, or `drive` finding the script held by the heap.
+fn heap_limit_error() -> RunError {
+    limit_error("The script used more than its memory limit (heap).".into())
+}
+
 #[async_trait]
 impl CodeExecutor for QuickJsExecutor {
     async fn prepare(
@@ -212,6 +391,7 @@ impl CodeExecutor for QuickJsExecutor {
             }),
             cpu_hit: AtomicBool::new(false),
             heap_hit: AtomicBool::new(false),
+            in_flight: AtomicUsize::new(0),
             calls: AtomicUsize::new(0),
             logs: Mutex::new(Logs::default()),
         });
@@ -245,43 +425,6 @@ impl CodeExecutor for QuickJsExecutor {
             wall_deadline,
             shared,
         }))
-    }
-}
-
-#[async_trait]
-impl Run for QuickJsRun {
-    async fn drive(&mut self, until: Instant) -> Step {
-        if let Some(step) = &self.finished {
-            return step.clone();
-        }
-        let wall_over = self.wall_deadline <= until;
-        let stop = tokio::time::Instant::from_std(until.min(self.wall_deadline));
-        match tokio::time::timeout_at(stop, &mut self.job).await {
-            Ok(step) => {
-                self.finished = Some(step.clone());
-                step
-            }
-            Err(_) if wall_over => {
-                let (logs, truncated) = self.shared.take_logs();
-                let step = Step::Failed {
-                    error: limit_error("The run took longer than its time limit.".into()),
-                    logs,
-                    truncated,
-                };
-                self.finished = Some(step.clone());
-                step
-            }
-            Err(_) => Step::Yielded,
-        }
-    }
-}
-
-fn limit_error(message: String) -> RunError {
-    RunError {
-        kind: ErrorKind::Limit,
-        message,
-        line: None,
-        code: None,
     }
 }
 
@@ -489,7 +632,7 @@ fn classify(caught: &rquickjs::CaughtError<'_>, shared: &Shared) -> RunError {
     if engine_says("InternalError", "out of memory")
         || (shared.heap_hit.load(Ordering::SeqCst) && carries_no_reason(caught, thrown.as_ref()))
     {
-        return limit_error("The script used more than its memory limit (heap).".into());
+        return heap_limit_error();
     }
     if engine_says("RangeError", "Maximum call stack size exceeded") {
         return limit_error("The script used more than its stack limit.".into());
@@ -507,6 +650,23 @@ fn classify(caught: &rquickjs::CaughtError<'_>, shared: &Shared) -> RunError {
     }
 }
 
+/// A tool call the script is waiting on, counted until its reply is ready however it ends. The
+/// count is what tells a run the heap holds from one that is still waiting on the outside.
+struct InFlight<'a>(&'a AtomicUsize);
+
+impl<'a> InFlight<'a> {
+    fn begin(calls: &'a AtomicUsize) -> Self {
+        calls.fetch_add(1, Ordering::SeqCst);
+        Self(calls)
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 async fn host_call(
     host: Arc<dyn ToolHost>,
     shared: Arc<Shared>,
@@ -515,6 +675,7 @@ async fn host_call(
     name: String,
     args: String,
 ) -> String {
+    let _in_flight = InFlight::begin(&shared.in_flight);
     let failure =
         |code: &str, message: String| json!({ "err": { "code": code, "message": message } });
     if shared.calls.fetch_add(1, Ordering::SeqCst) >= max_calls {

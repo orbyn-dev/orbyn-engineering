@@ -6,6 +6,19 @@ export const plain = (text: unknown, max = 80): string => {
   return whole.length > max ? `${whole.slice(0, max)}…` : whole;
 };
 
+const EXPORT_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * The name an export file gets: `orbyn-library-<day>.json`, with the day the service stamped the document (`exported_at`, an RFC 3339
+ * instant) or today's when it carries none a file name can use. A name only: the browser saves it where downloads go, so the
+ * filter keeps a hostile answer from naming a path.
+ */
+export function exportFileName(exportedAt: unknown, now: Date = new Date()): string {
+  const stamped = typeof exportedAt === "string" ? exportedAt.slice(0, 10) : "";
+  const day = EXPORT_DAY.test(stamped) ? stamped : now.toISOString().slice(0, 10);
+  return `orbyn-library-${day}.json`;
+}
+
 /** A command or a prompt body for display: cut at the contract's own cap plus a little, so a hostile answer cannot grow the page. */
 export const capped = (text: unknown, max: number): { text: string; cut: boolean } => {
   const whole = typeof text === "string" ? text : "";

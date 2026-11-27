@@ -15,7 +15,7 @@
 //! is what makes the two directions of counting right at once: re-reading a window writes the same
 //! rows again instead of adding more, and a window that holds two events is stored as two.
 //!
-//! **The window that was read is its own fact** (`billed_reads`, migration 90), because a read that
+//! **The window that was read is its own fact** (`billed_reads`, migration 91), because a read that
 //! found no spend writes no event: the rows cannot say whether a day was looked at and came back
 //! empty. `record_account_report` records the events and the window in one transaction, so a window
 //! is never claimed without what the read reported. A day the window covers whole is what that day

@@ -8,7 +8,13 @@ export type ThreadRepo = { repo_id: string, name: string,
 /**
  * The thread's own branch in this repository.
  */
-branch: string, added: number, deleted: number, trusted: boolean, 
+branch: string, 
+/**
+ * The branch the thread's branch was cut from here: the base the person chose when the thread started, or
+ * the branch checked out when the repository was added later. Absent for a repository whose base was not
+ * recorded (one stored before the column existed); it is then not known and is never guessed.
+ */
+base_branch?: string | null, added: number, deleted: number, trusted: boolean, 
 /**
  * The changed files, relative to the repository root; at most 200.
  */

@@ -1,11 +1,20 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createLibraryMock, libraryFixtures, suggestionFixtures } from "../../../mock/library";
+import { ApiFailure } from "../../api/client";
 import { useUi } from "../../product/state/ui";
 import { useWorkspace } from "../../product/state/workspace";
 import { LibraryPanel } from "./LibraryPanel";
 import { setLibraryApi } from "./api";
+
+// The toolbar's Export hands the file to the browser; the test keeps what it would have saved.
+const saved = vi.hoisted(() => ({ files: [] as { name: string; blob: Blob }[] }));
+vi.mock("../../lib/download", () => ({
+  REVOKE_AFTER_MS: 1000,
+  saveBlob: vi.fn((name: string, blob: Blob) => { saved.files.push({ name, blob }); }),
+  saveTextFile: vi.fn(),
+}));
 
 const typed = vi.hoisted(() => ({ calls: [] as string[], ok: true }));
 const typeIn = (_thread: string, text: string) => { if (typed.ok) typed.calls.push(text); return typed.ok; };
@@ -13,6 +22,7 @@ const typeIn = (_thread: string, text: string) => { if (typed.ok) typed.calls.pu
 beforeEach(() => {
   typed.calls.length = 0;
   typed.ok = true;
+  saved.files.length = 0;
   useWorkspace.setState({ threads: { t1: { id: "t1", project_id: "p1" } as never } });
   useUi.getState().setDraft("t1", "");
 });
@@ -509,4 +519,69 @@ it("treats a keychain_unavailable on a value save as the Planned note, with the 
   expect(screen.queryByLabelText(/Value for API_TOKEN/)).toBeNull();
   expect(document.body.textContent).not.toContain("tok-12345");
   expect(mock.writes).toEqual([]);
+});
+
+it("exports every kind as one JSON file from the toolbar, saving it with no write and no new screen", async () => {
+  const mock = createLibraryMock();
+  const request = vi.spyOn(mock, "exportLibrary");
+  const { user } = await mount(mock);
+  await user.click(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(saved.files).toHaveLength(1));
+  expect(request).toHaveBeenCalledWith();
+  expect(mock.writes).toEqual([]);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  const file = saved.files[0]!;
+  expect(file.name).toBe("orbyn-library-2026-11-22.json");
+  const document = JSON.parse(await file.blob.text()) as { format: string; version: number; exported_at: string; profiles: unknown[]; workflows: unknown[]; prompts: unknown[]; env_sets: { name: string; keys: string[] }[] };
+  expect(document).toMatchObject({ format: "orbyn-library", version: 1, exported_at: "2026-11-22T00:00:00Z" });
+  for (const kind of ["profiles", "workflows", "prompts", "env_sets"] as const) expect(document[kind]).toEqual(expect.any(Array));
+  expect(document.workflows).toHaveLength(2);
+  // A set goes by name and key names only, so the file never carries a value.
+  expect(document.env_sets[0]).toEqual({ name: "work-laptop", description: "", keys: ["API_BASE", "API_TOKEN"] });
+  expect(await screen.findByText("Exported the library to a JSON file. It holds every kind; an env set goes by key name only, never a value.")).toBeVisible();
+});
+
+it("exports once for a double click on the button", async () => {
+  const mock = createLibraryMock({ delayMs: 30 });
+  const request = vi.spyOn(mock, "exportLibrary");
+  const { user } = await mount(mock);
+  await user.dblClick(screen.getByRole("button", { name: "Export" }));
+  await waitFor(() => expect(saved.files).toHaveLength(1));
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+it("ignores the second click of a double click that lands after the first export finished", async () => {
+  const mock = createLibraryMock();
+  const request = vi.spyOn(mock, "exportLibrary");
+  const { user } = await mount(mock);
+  const button = screen.getByRole("button", { name: "Export" });
+  await user.click(button);
+  await waitFor(() => expect(saved.files).toHaveLength(1));
+  // The same gesture's second click, once the first request has already finished: one gesture, one file.
+  fireEvent.click(button, { detail: 2 });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(saved.files).toHaveLength(1);
+  // A new click gesture still exports.
+  fireEvent.click(button, { detail: 1 });
+  await waitFor(() => expect(saved.files).toHaveLength(2));
+});
+
+it("says an older service has no export instead of failing silently, and saves nothing", async () => {
+  const mock = createLibraryMock();
+  mock.exportLibrary = async () => { throw new ApiFailure("not_found", "No such route.", 404); };
+  const { user } = await mount(mock);
+  await user.click(screen.getByRole("button", { name: "Export" }));
+  expect(await screen.findByText("This service has no library export. Update Orbyn, then try again.")).toBeVisible();
+  expect(saved.files).toEqual([]);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("says the export failed for another reason, with the service's words, and saves nothing", async () => {
+  const mock = createLibraryMock();
+  mock.exportLibrary = async () => { throw new ApiFailure("tool_failed", "The library could not be read.", 500); };
+  const { user } = await mount(mock);
+  await user.click(screen.getByRole("button", { name: "Export" }));
+  expect(await screen.findByText("Couldn’t export the library. The library could not be read.")).toBeVisible();
+  expect(saved.files).toEqual([]);
 });

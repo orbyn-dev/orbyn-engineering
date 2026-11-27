@@ -269,6 +269,7 @@ async fn the_live_read_is_exactly_what_the_close_tries() {
     let live = w.core.crew_lead_live(&w.lead).unwrap();
     let shown: Vec<String> = live.tasks.iter().map(|task| task.id.clone()).collect();
     assert_eq!(shown, vec![first.clone(), second.clone()]);
+    // Order is the contract here: the live read is oldest first, so the front row is the first task.
     assert_eq!(live.tasks[0].state, "running");
     assert_eq!(
         live.tasks[0].name, "First task.",

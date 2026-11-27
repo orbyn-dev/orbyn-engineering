@@ -195,3 +195,42 @@ fn run_fixture(mode: &str) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// The Windows twin of the Unix descendant test. A job object holds every descendant (no
+/// breakaway is allowed), so dropping the owner ends the whole tree, not just the leader.
+#[tokio::test]
+async fn dropping_the_owner_kills_descendants() {
+    use crate::testing::{TempDir, assert_process_reaped, process_alive, sleeper_pid};
+
+    let dir = TempDir::new();
+    let pid_file = dir.path().join("pid");
+    let comspec =
+        std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".into());
+    // The leader is the owner's direct child; the child it starts sleeps, so only a tree kill ends it.
+    // Both paths travel in the environment: a temporary folder can hold an apostrophe that would
+    // end a PowerShell literal, and the pid file would then never be written.
+    let script = "$p = Start-Process -FilePath $env:ORBYN_DESCENDANT_COMSPEC -ArgumentList '/d','/c','ping -n 60 127.0.0.1 >nul' -PassThru -WindowStyle Hidden; Set-Content -LiteralPath $env:ORBYN_DESCENDANT_PID_FILE -Value $p.Id; Start-Sleep -Seconds 60";
+    let command = resolve("powershell").expect("Windows process tests require PowerShell");
+    let mut process = engine_command(
+        &command,
+        &[
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-Command".into(),
+            script.into(),
+        ],
+        dir.path(),
+    );
+    process
+        .env("ORBYN_DESCENDANT_COMSPEC", &comspec)
+        .env("ORBYN_DESCENDANT_PID_FILE", &pid_file);
+    let child = ManagedChild::spawn(process).unwrap();
+    assert!(
+        child.tree.job.is_some(),
+        "the owner must hold its job object"
+    );
+    let descendant = sleeper_pid(&pid_file).await;
+    assert!(process_alive(descendant), "the descendant must be running");
+    drop(child);
+    assert_process_reaped(descendant, "its owner").await;
+}

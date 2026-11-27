@@ -6,7 +6,8 @@
  * are held in a private map that no read returns, as the real keychain does: `present` is the only thing a read says.
  */
 import { ApiFailure } from "../src/api/client.ts";
-import type { Copied, EnvSet, EnvSetDraft, ImportAnswer, LibraryApi, LibraryLimits, LibrarySummary, Param, ProfileGrant, Prompt, PromptDraft, Suggestions, Workflow, WorkflowDraft } from "../src/features/library/contract.ts";
+import { EXPORT_KINDS } from "../src/features/library/contract.ts";
+import type { Copied, EnvSet, EnvSetDraft, ImportAnswer, LibraryApi, LibraryDocument, LibraryLimits, LibrarySummary, Param, ProfileGrant, Prompt, PromptDraft, Suggestions, Workflow, WorkflowDraft } from "../src/features/library/contract.ts";
 
 const NOW = "2026-11-22T00:00:00Z";
 const stamp = { revision: 1, created_at: NOW, updated_at: NOW };
@@ -108,6 +109,18 @@ export function createLibraryMock(init: { fixtures?: ReturnType<typeof libraryFi
     async workflows() { await wait(); return [...workflows.values()]; },
     async prompts() { await wait(); return [...prompts.values()]; },
     async envSets() { await wait(); return [...sets.values()].map(presentOf); },
+    // The export document: every kind by default, names only for sets, values never. A read: nothing is recorded in `writes`.
+    async exportLibrary(kinds = EXPORT_KINDS): Promise<LibraryDocument> {
+      await wait();
+      const wanted = new Set<string>(kinds);
+      const namesOf = (ids: readonly string[]) => ids.flatMap((id) => { const set = sets.get(id); return set ? [set.name] : []; });
+      return {
+        format: "orbyn-library", version: 1, exported_at: NOW, profiles: [],
+        workflows: wanted.has("workflows") ? [...workflows.values()].map((one) => ({ name: one.name, description: one.description, command: one.command, params: one.params, env_set_names: namesOf(one.env_set_ids) })) : [],
+        prompts: wanted.has("prompts") ? [...prompts.values()].map((one) => ({ name: one.name, description: one.description, body: one.body, params: one.params })) : [],
+        env_sets: wanted.has("env_sets") ? [...sets.values()].map((one) => ({ name: one.name, description: one.description, keys: one.keys.map((key) => key.name) })) : [],
+      };
+    },
     async renderWorkflow(id, values) { await wait(); const one = workflows.get(id) ?? refuse("not_found"); return { command: fill(one.command, one.params, values) }; },
     async renderPrompt(id, values) { await wait(); const one = prompts.get(id) ?? refuse("not_found"); return { text: fill(one.body, one.params, values) }; },
     async createWorkflow(draft: WorkflowDraft) {

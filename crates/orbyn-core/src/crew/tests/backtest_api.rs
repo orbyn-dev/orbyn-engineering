@@ -72,6 +72,21 @@ fn found(fingerprint: &str, file: &str) -> ReplayedFinding {
     }
 }
 
+/// The report's lane named `lane`: the run owns its lane order, so a test does not, and a report
+/// with any other number of lanes fails here with the lanes attached.
+fn lane_named<'a>(run: &'a wire::BacktestRun, lane: &str) -> &'a wire::BacktestLaneRun {
+    assert_eq!(
+        run.lanes.len(),
+        1,
+        "the run replayed one lane: {:?}",
+        run.lanes
+    );
+    run.lanes
+        .iter()
+        .find(|replayed| replayed.lane == lane)
+        .unwrap_or_else(|| panic!("the run replayed the {lane} lane: {:?}", run.lanes))
+}
+
 #[tokio::test]
 async fn with_the_flag_off_nothing_exists() {
     let w = world(false, Arc::new(|_, _| Turn::Hang)).await;
@@ -321,8 +336,12 @@ async fn a_start_view_serves_the_projects_newest_run() {
     let run = view.run.expect("a run");
     assert_eq!(run.id, second.id, "the project's newest run");
     assert_eq!(run.lanes.len(), 1);
-    assert_eq!(run.lanes[0].lane, "correctness");
-    assert_eq!(run.lanes[0].kind, Some(wire::BacktestLaneKind::Review));
+    let lane = run
+        .lanes
+        .iter()
+        .find(|replayed| replayed.lane == "correctness")
+        .expect("the newest run's correctness lane");
+    assert_eq!(lane.kind, Some(wire::BacktestLaneKind::Review));
 }
 
 #[tokio::test]
@@ -353,7 +372,7 @@ async fn a_measured_log_scores_the_lane() {
         .unwrap();
     core.crew_backtest_join().await;
     let run = core.crew_backtest_report(&started.id).unwrap();
-    let lane = &run.lanes[0];
+    let lane = lane_named(&run, "security");
     assert_eq!(lane.outcome, wire::BacktestLaneOutcome::Scored);
     let score = lane.score.as_ref().unwrap();
     // One escape, caught: below 5 escapes and 10 findings only the counts show.
@@ -413,7 +432,8 @@ async fn a_second_start_while_one_runs_is_refused_and_a_stop_ends_the_run_as_sto
     let run = core.crew_backtest_report(&started.id).unwrap();
     assert_eq!(run.state, wire::BacktestState::Stopped);
     assert_eq!(run.stop_reason.as_deref(), Some(STOPPED_BY_PERSON));
-    assert_eq!(run.lanes[0].state, wire::BacktestLaneState::Stopped);
+    let lane = lane_named(&run, "security");
+    assert_eq!(lane.state, wire::BacktestLaneState::Stopped);
     // It replayed the one pull request it was on and no other.
     assert_eq!(runner.calls.lock().unwrap().len(), 1);
     // A stop on a run that ended changes nothing, and another run may start now.
@@ -543,8 +563,13 @@ async fn a_run_left_running_by_a_crash_becomes_interrupted_when_the_core_opens()
     assert_eq!(crashed.stop_reason.as_deref(), Some("interrupted"));
     assert!(crashed.finished_unix.is_some());
     let lanes = core.store.crew_backtest_lanes("crashed").unwrap();
-    assert_eq!(lanes[0].state, LaneState::Failed);
-    assert_eq!(lanes[0].tokens_used, 40);
+    assert_eq!(lanes.len(), 1, "the one lane the crash left");
+    let lane = lanes
+        .iter()
+        .find(|replayed| replayed.lane == "security")
+        .expect("the interrupted lane");
+    assert_eq!(lane.state, LaneState::Failed);
+    assert_eq!(lane.tokens_used, 40);
     // Runs that had ended are left as they were, and nothing is running, so a new run may start.
     let done = core.store.crew_backtest_run("done").unwrap();
     assert_eq!(
@@ -607,7 +632,8 @@ async fn a_finished_backtest_does_not_change_the_routers_choice() {
         .unwrap();
     core.crew_backtest_join().await;
     let run = core.crew_backtest_report(&started.id).unwrap();
-    assert_eq!(run.lanes[0].outcome, wire::BacktestLaneOutcome::Scored);
+    let lane = lane_named(&run, "security");
+    assert_eq!(lane.outcome, wire::BacktestLaneOutcome::Scored);
 
     assert_eq!(ask().await, before);
 }
