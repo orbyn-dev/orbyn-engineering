@@ -1903,7 +1903,7 @@ On the web, one shared needs-you read draws the Inbox's watch and could-not-stop
 | KC5 lessons | store and write path with brief injection, migrations 80 and 81 (#1350, #1359) | list (#1345) and card (#1349), hidden on a 404 | the lessons routes (slice 3) and EvalHistory samples (slice 4) |
 | KC6 watches | slices 1 to 3 (#1343, #1353) | watch pages and Inbox rows (#1363) | a run route for "Open the run" |
 | KC7 listeners | plumbing and `issue_label` (#1364) | none needed | `dependency_update` needs a reader feed (#1360) |
-| KC8 resume | merged (#1344); the second death's Inbox item names `stop_detail: worker_stopped_twice` (migration 86) | card line (#1340) | the web Inbox row |
+| KC8 resume | merged (#1344); the second death's Inbox item names `stop_detail: worker_stopped_twice` (migration 86) | card line (#1340) and the Inbox row (#1470) | a real macOS run (Crew workers are macOS-only in the beta) |
 | KC9 skill proposals | the `skills-local` area and its one writer (#1366, #1411); native discovery of the local skills for Claude (per-run read-only copy, built after this snapshot) | Skills group, proposals, review page, read error (#1358, #1409), hidden on a 404 | a Windows junction check (#1406) |
 | KC10 notifications | the once-per-item claim, migration 83 (#1418) | not built | the notification, its settings switch |
 
