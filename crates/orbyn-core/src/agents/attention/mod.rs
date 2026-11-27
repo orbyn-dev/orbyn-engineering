@@ -197,6 +197,14 @@ pub(crate) fn enabled(value: &Value) -> bool {
     value.as_bool().unwrap_or(true)
 }
 
+/// Whether detection is on now. It is read from the store, not from the console's
+/// start, so turning the setting off stops new items on a console that is already
+/// open (#1764). A setting that cannot be read counts as off, as at the console's open.
+fn detection_on(store: &Store) -> bool {
+    crate::settings::preferences::stored_preference(store, ENABLED_PREFERENCE, None)
+        .is_ok_and(|value| enabled(&value))
+}
+
 /// Appends one notice to its thread's log and tells the windows where the log grew.
 /// The excerpt is already redacted. Nothing logs the text: the line names the
 /// terminal and the event's byte count.
@@ -586,14 +594,11 @@ impl Core {
             .collect())
     }
 
-    /// Starts the one watcher for the thread's engine console. It runs only while
-    /// the setting is on and a redactor was obtained; a plain shell never comes here.
+    /// Starts the one watcher for the thread's engine console. It starts only while
+    /// the setting is on and a redactor was obtained, and it reads the setting again
+    /// each time it would report; a plain shell never comes here.
     pub(crate) fn watch_engine_console(self: &Arc<Self>, thread_id: &str, info: &TerminalInfo) {
-        let on = match self.preference(ENABLED_PREFERENCE, None) {
-            Ok(value) => enabled(&value),
-            Err(_) => return,
-        };
-        if !on {
+        if !detection_on(&self.store) {
             return;
         }
         let redactor = match self.redactor(Surface::Terminal, None) {
@@ -755,6 +760,12 @@ async fn run(watch: Watch) {
             }
             _ = ticks.tick() => {
                 if !printed || last_output.elapsed() < quiet {
+                    continue;
+                }
+                // The setting can be turned off while this console stays open, so it is
+                // read again here, where a report would be made (#1764). A clear still
+                // follows the terminal's own input, output or end.
+                if !detection_on(&store) {
                     continue;
                 }
                 let text =

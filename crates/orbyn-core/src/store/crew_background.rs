@@ -888,19 +888,20 @@ impl Store {
         })
     }
 
-    /// The newest schedule bucket this crew has fired (claimed), or none. A bucket at or before it never fires again, so a clock
-    /// that moves back cannot re-fire a bucket the crew already had, and a bucket that was only claimed counts as fired.
+    /// The newest schedule window start (in unix seconds) this crew has fired (claimed), or none. A start at or before it
+    /// never fires again, so a clock that moves back cannot re-fire a window the crew already had, and a window that was only
+    /// claimed counts as fired.
     pub fn latest_schedule_bucket(&self, crew: &str) -> Result<Option<i64>> {
         self.latest_bucket("schedule", crew)
     }
 
-    /// The newest watch bucket this crew has checked (claimed), or none: the same rule as a schedule's bucket, so a watch checks
-    /// once per bucket and a clock that moves back checks nothing again.
+    /// The newest watch window start (in unix seconds) this crew has checked (claimed), or none: the same rule as a
+    /// schedule's start, so a watch checks once per window and a clock that moves back checks nothing again.
     pub fn latest_watch_bucket(&self, crew: &str) -> Result<Option<i64>> {
         self.latest_bucket("watch", crew)
     }
 
-    /// The newest bucket claimed for a crew under `prefix` (`schedule` or `watch`).
+    /// The newest window start claimed for a crew under `prefix` (`schedule` or `watch`).
     fn latest_bucket(&self, prefix: &str, crew: &str) -> Result<Option<i64>> {
         let low = format!("{prefix}:{crew}:");
         // ':' is followed by ';' in byte order, so this range is every identity that starts with `low`.

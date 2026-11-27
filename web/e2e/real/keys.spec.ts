@@ -14,6 +14,31 @@ const fresh = async (page: Page, prompt = "[scene:usage] hello") => {
   await expect(page).toHaveURL(/#\/threads\//);
 };
 
+/**
+ * Waits for the drawer's socket to open before keys are typed: the terminal sends a key only on an open socket
+ * (`TerminalPanel.tsx`), so a command typed while it connects is partly lost and the shell waits on the rest.
+ */
+const connected = async (page: Page) => {
+  await expect(page.locator(".terminal-panel .pill")).toHaveText("Connected");
+};
+
+/**
+ * Three hundred numbered lines for the scrollback test. The terminal runs the platform's own shell
+ * (`host/terminal.rs` `windows_shell`): Windows PowerShell has no POSIX `for`/`seq`, so it prints the same lines with a
+ * range and `ForEach-Object`; elsewhere the POSIX loop is unchanged.
+ */
+const scrollbackCommand = process.platform === "win32"
+  ? '1..300 | ForEach-Object { "line$_" }\n'
+  : "for i in $(seq 1 300); do echo line$i; done\n";
+
+/**
+ * The address line the link test follows. PowerShell has no `printf`, so `Write-Output` and a single-quoted string
+ * print it; elsewhere the POSIX `printf` is unchanged. Both print the same `http://localhost:1/x` line under test.
+ */
+const addressCommand = process.platform === "win32"
+  ? "Write-Output 'http://localhost:1/x'\n"
+  : "printf 'http://%s\\n' localhost:1/x\n";
+
 test.beforeAll(async () => {
   ({ service, projectId } = await startProject({ scenes: true }));
 });
@@ -64,10 +89,11 @@ test("Shift+PageUp reads scrollback without leaving the terminal", async ({ page
   await page.getByRole("button", { name: "Terminal" }).click();
   const input = page.locator(".terminal-drawer-body .xterm-helper-textarea").first();
   const rows = page.locator(".terminal-drawer-body .xterm-rows").first();
-  // A shell still starting can lose what is typed, so this tries again until it answers.
+  await connected(page);
+  // The shell can still be starting when a command is typed, so this tries again until it answers.
   await expect(async () => {
     await input.focus();
-    await page.keyboard.type("for i in $(seq 1 300); do echo line$i; done\n");
+    await page.keyboard.type(scrollbackCommand);
     await expect(rows).toContainText("line300", { timeout: 4000 });
   }).toPass({ timeout: 25_000 });
   await input.focus();
@@ -84,10 +110,11 @@ test("an address in the terminal opens in the Browser panel", async ({ page }) =
   await page.getByRole("button", { name: "Terminal" }).click();
   const input = page.locator(".terminal-drawer-body .xterm-helper-textarea").first();
   const line = page.locator(".terminal-drawer-body .xterm-rows > div").filter({ hasText: /^http:\/\/localhost:1\/x/ }).first();
-  // A shell still starting can lose what is typed, so this tries again until it answers.
+  await connected(page);
+  // The shell can still be starting when a command is typed, so this tries again until it answers.
   await expect(async () => {
     await input.focus();
-    await page.keyboard.type("printf 'http://%s\\n' localhost:1/x\n");
+    await page.keyboard.type(addressCommand);
     await expect(line).toBeVisible({ timeout: 4000 });
   }).toPass({ timeout: 25_000 });
   // The shell can still be printing (a lost first attempt scrolls the rows), so the line is measured once it has stopped moving.
