@@ -74,7 +74,7 @@ export function escape(selector: string) {
   // ruleid: orbyn-js-regex-escape-skips-backslash
   const t = selector.replace(/[a\-z]/g, '\\$&');
   // ruleid: orbyn-js-regex-escape-skips-backslash
-  const u = selector.replace(/[\-\]]/g, '\\$&');
+  const u = selector.replace(/[.[\-\]]/g, '\\$&');
   // ruleid: orbyn-js-regex-escape-skips-backslash
   const v = selector.replace(/[\-\x41]/g, '\\$&');
   // A leading hyphen is a literal too, so it separates no range.
