@@ -280,3 +280,70 @@ fn a_watched_file_that_differs_never_describes_the_folder_again() {
         "the folder resolved elsewhere"
     );
 }
+
+/// Points `folder/.git` at `target` with a link the platform can make without a privilege: a
+/// symlink on Unix, and on Windows a junction, which needs none either.
+fn point_git_at(folder: &Path, target: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, folder.join(".git")).unwrap();
+    #[cfg(windows)]
+    {
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(folder.join(".git"))
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(made.success(), "a junction could not be made");
+    }
+}
+
+/// Drops the link at `folder/.git`, which is the link and not what it points at, so the next
+/// [`point_git_at`] retargets the same path.
+fn drop_git_link(folder: &Path) {
+    #[cfg(unix)]
+    std::fs::remove_file(folder.join(".git")).unwrap();
+    #[cfg(windows)]
+    std::fs::remove_dir(folder.join(".git")).unwrap();
+}
+
+/// A `.git` link retargeted at another repository changes no file the answer read, because Git
+/// names the directory it resolved to, so the folder has to be observed again.
+#[tokio::test]
+async fn a_git_link_retargeted_at_another_repository_is_observed_again() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let alpha = dir.path().join("alpha");
+    repository(&alpha);
+    configure(&alpha, "origin", "git@host:Owner/Alpha.git");
+    let beta = dir.path().join("beta");
+    repository(&beta);
+    configure(&beta, "origin", "git@host:Owner/Beta.git");
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    point_git_at(&checkout, &alpha.join(".git"));
+    core.add_project(checkout.to_str().unwrap()).await.unwrap();
+    let first = read(&core).await;
+    assert_eq!(
+        only_member(&first).repository_label.as_deref(),
+        Some("Owner/Alpha"),
+        "the checkout is read as the repository its link names"
+    );
+    drop_git_link(&checkout);
+    point_git_at(&checkout, &beta.join(".git"));
+    let watched = std::slice::from_ref(&checkout);
+    let before = spawns(watched);
+    let second = read(&core).await;
+    assert_eq!(
+        since(&before, watched),
+        [2],
+        "the link names another repository now, so the folder is observed again"
+    );
+    assert_eq!(
+        only_member(&second).repository_label.as_deref(),
+        Some("Owner/Beta"),
+        "the repository the answer names follows the link"
+    );
+}

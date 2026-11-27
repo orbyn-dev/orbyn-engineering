@@ -11,8 +11,10 @@
 //! the repository the first remote names, and a digest of each file the answer rests
 //! on (the work tree's `.git` link, and the git directory's `HEAD`, `config`,
 //! `config.worktree` and `commondir`). `HEAD` is watched although the answer never
-//! contains it, so a commit or a branch switch is observed rather than ignored. Any
-//! file that differs, any folder that now holds a `.git` where discovery found none,
+//! contains it, so a commit or a branch switch is observed rather than ignored. The
+//! work tree's `.git` is kept by the location it resolved to, because Git names the
+//! directory it resolved: a link retargeted at another repository leaves those files
+//! as they were. Any file that differs, any folder that now holds a `.git` where discovery found none,
 //! and any resolution that changed makes the next read observe the folder again: a
 //! folder that was deleted, moved, made a repository, or given another remote is
 //! never answered from what it used to be. An observation that cannot be watched (a
@@ -193,8 +195,10 @@ impl Snapshot {
 enum Seen {
     /// Nothing is there, which is how a file Git would have read is remembered.
     Absent,
-    /// A directory is there, which is what a work tree's `.git` is.
-    Directory,
+    /// A directory is there, which is what a work tree's `.git` is; it is remembered by where it
+    /// resolved, because a link retargeted at another directory is otherwise that same directory,
+    /// and Git names the repository it resolved to.
+    Directory(PathBuf),
     /// A file of this length, hashing to this digest.
     File { len: u64, digest: String },
     /// A file too large to read on every settings read.
@@ -204,7 +208,9 @@ enum Seen {
 impl Seen {
     fn read(path: &Path) -> Self {
         match std::fs::metadata(path) {
-            Ok(meta) if meta.is_dir() => Self::Directory,
+            Ok(meta) if meta.is_dir() => Self::Directory(
+                crate::util::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+            ),
             Ok(meta) if meta.len() > MAX_WATCHED_BYTES => Self::Oversize,
             Ok(_) => match std::fs::read(path) {
                 Ok(bytes) => Self::File {
@@ -224,7 +230,9 @@ impl Seen {
                 std::fs::metadata(path),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound
             ),
-            Self::Directory => std::fs::metadata(path).is_ok_and(|meta| meta.is_dir()),
+            Self::Directory(resolved) => {
+                crate::util::canonicalize(path).is_ok_and(|now| now == *resolved)
+            }
             Self::File { len, digest } => {
                 std::fs::metadata(path).is_ok_and(|meta| !meta.is_dir() && meta.len() == *len)
                     && std::fs::read(path).is_ok_and(|bytes| sha256_hex(&bytes) == *digest)
