@@ -65,7 +65,9 @@ describe("the lessons mock's failing writes", () => {
 
   it("fails the card's edit save with a 500 of its own and leaves the lesson as it was", () => {
     const mock = api("crew-lessons-save-fails");
-    const before = lessonOf(mock, "les-dates");
+    // Copied: the mock hands back its stored row, and a save that wrote before it failed would
+    // move `before` with it, leaving both assertions below passing on a changed lesson.
+    const before = structuredClone(lessonOf(mock, "les-dates"));
     const failed = mock.handle("PATCH", "/api/crew/lessons/les-dates", {
       text: "Date formatting goes through the one formatter, and the tests check it.",
       rev: before.rev,
