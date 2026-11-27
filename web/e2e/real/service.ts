@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
 import { once } from "node:events";
 import { SCRIPTED_ENGINE, USAGE_ENGINE } from "./engine-scripts";
 import { editForgeState, readForgeState } from "./forge-state";
+import type { WireThreadEvent } from "../../src/api/types";
 
 const WEB = resolve(import.meta.dirname, "../..");
 const BIN = process.env.ORBYN_BIN ?? resolve(WEB, "../target/debug/orbynd");
@@ -35,8 +36,13 @@ function previewBrowser(dir: string): string {
   const wrapper = join(dir, "preview-browser");
   // Linux runners restrict user namespaces, which the shell's sandbox needs; Playwright drops it the same way.
   const flags = process.platform === "linux" ? "--in-process-gpu --no-sandbox" : "--in-process-gpu";
+  // The service gets a scrubbed environment, and the build box keeps the shell's libnss3 and libnspr4 outside
+  // the loader's paths, so the wrapper hands the shell the library path the test process was given.
+  const libs = process.env.LD_LIBRARY_PATH
+    ? `export LD_LIBRARY_PATH='${process.env.LD_LIBRARY_PATH.replace(/'/g, "'\\''")}'\n`
+    : "";
   // Kept only in a startup-failure diagnostic, so CI can verify the wrapper's actual flags.
-  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\nexec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
+  writeFileSync(wrapper, `#!/bin/sh\nprintf '%s\\n' 'E2E preview flags: ${flags}' >&2\n${libs}exec "${shell}" ${flags} "$@"\n`, { mode: 0o755 });
   return wrapper;
 }
 
@@ -200,6 +206,13 @@ export interface Service {
   ghEdit(number: number, patch: Record<string, unknown>): void;
   /** The stand-in's bare remote, for specs that read what was pushed. */
   remote: string;
+  /** The protocol double this launch's engines are (crates/orbynd/src/bin/orbyn-fake-engine). */
+  fakeEngine: string;
+  /**
+   * The thread's own event log, read from the service over SSE until `stop` matches: the replay and the live
+   * frames the page's stream receives, straight from the service rather than from the page.
+   */
+  events(threadId: string, stop: (event: WireThreadEvent) => boolean, timeoutMs?: number): Promise<WireThreadEvent[]>;
 }
 
 export interface ServiceOptions {
@@ -344,6 +357,7 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
     folder,
     repo,
     remote: join(dir, "github.com/o/r.git"),
+    fakeEngine: fake,
     personKey: ready.person_key,
     ghPull: (number) =>
       readForgeState(forge?.state ?? "").pulls.find((pull) => pull.number === number) ?? {},
@@ -370,6 +384,42 @@ export async function startService(options: ServiceOptions = {}): Promise<Servic
       if (!response.ok) throw new Error(`${method} ${path}: ${response.status} ${await response.text()}`);
       const text = await response.text();
       return (text ? JSON.parse(text) : undefined) as T;
+    },
+    async events(threadId, stop, timeoutMs = 20_000) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const frames: WireThreadEvent[] = [];
+      try {
+        // A fresh stream with no Last-Event-ID replays from the thread's first event, then follows live.
+        const response = await fetch(`${ready.url}/api/threads/${encodeURIComponent(threadId)}/events`, {
+          signal: controller.signal,
+          headers: { Authorization: `Bearer ${ready.token}`, Accept: "text/event-stream" },
+        });
+        if (!response.ok || !response.body) throw new Error(`events ${threadId}: ${response.status}`);
+        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += value;
+          for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
+            const line = buffer.slice(0, at).replace(/\r$/, "");
+            buffer = buffer.slice(at + 1);
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            const event = JSON.parse(payload) as WireThreadEvent;
+            frames.push(event);
+            if (stop(event)) {
+              controller.abort();
+              return frames;
+            }
+          }
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+      throw new Error(`the service's log for thread ${threadId} did not reach the expected event (${frames.length} frames)`);
     },
     async stop() {
       const children = [service, ...(vite ? [vite] : [])];
