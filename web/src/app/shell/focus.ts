@@ -77,26 +77,34 @@ export function useRouteFocus(
       // closing Settings restores the opener only while it names the page that is showing.
       opener.current = { element: active && active !== document.body ? active : null, key: coveredKey };
     }
-    // A Settings session that ended before its screen arrived left its opener behind, and the next one
-    // would never be recorded; closing the session that completed is the other branch's to read.
-    if (routeName !== "settings" && before.name !== "settings") opener.current = null;
-    if (!ready) return;
+    // Settings was left on this commit, so the session it recorded is read once here: the page it covered
+    // takes the opener back if it is the page showing again, and any other ending drops it, so the next
+    // session records its own instead of keeping an opener nobody can return to.
+    const back = routeName === "settings" ? null : opener.current;
+    if (!ready) {
+      // Nothing on the page can take the focus yet, so nothing is handed back. A session whose screen was
+      // on the page waits for the page behind to arrive; one whose screen never arrived left with its
+      // route, and its opener is dropped rather than outliving it.
+      if (back !== null && before.name !== "settings") opener.current = null;
+      return;
+    }
+    // The session is over, so its opener is settled on this commit either way.
+    if (back !== null) opener.current = null;
     const root = main.current;
+    if (back !== null && back.element instanceof HTMLElement && back.key === routeKey && back.element.isConnected && !back.element.closest("[hidden]")) {
+      // Closing settings returns to what opened it, if it is still there and the page behind is showing.
+      // That holds whether or not the screen arrived: Escape while its chunk is still coming closes it from
+      // the page that never left, so the wait must not cost the person the control they opened it from.
+      previous.current = { key: routeKey, name: routeName };
+      back.element.focus({ preventScroll: true });
+      return;
+    }
     if (!root) return;
     // The screen only became ready: the phone's sheet closed over the same page, so nothing moved and
     // focus stays where it was given (the title bar button, or the sheet's own Close). A page that
     // changed is followed below.
     if (!first.current && before.key === routeKey && before.name === routeName) return;
     previous.current = { key: routeKey, name: routeName };
-    if (routeName !== "settings" && before.name === "settings") {
-      // Closing settings returns to what opened it, if it is still there and the page behind is showing.
-      const back = opener.current;
-      opener.current = null;
-      if (back?.element instanceof HTMLElement && back.element.isConnected && back.key === routeKey && !back.element.closest("[hidden]")) {
-        back.element.focus({ preventScroll: true });
-        return;
-      }
-    }
     // A page kept mounted behind settings is hidden, so it never takes the focus.
     const visible = (selector: string) => [...root.querySelectorAll<HTMLElement>(selector)].find((element) => !element.closest("[hidden]")) ?? null;
     const target = visible("[data-autofocus]") ?? (first.current ? null : visible("[data-page-title]"));

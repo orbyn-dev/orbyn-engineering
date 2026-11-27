@@ -67,6 +67,30 @@ it("records the Settings opener as the route enters it, not once the screen arri
   expect(document.activeElement).toBe(opener);
 });
 
+it("returns to the Settings opener when a close lands before its screen arrived", () => {
+  const main = screen("Screen title");
+  const ref = { current: main };
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/threads/t-1", name: "thread", ready: true, covered: "#/threads/t-1" } },
+  );
+  const opener = control("Open settings");
+  const tabbedTo = control("Another control");
+  act(() => opener.focus());
+
+  // Settings is chosen from the control while its first chunk is still arriving.
+  view.rerender({ key: "#/settings", name: "settings", ready: false, covered: "#/threads/t-1" });
+  // Tabbing during that wait moves the keyboard to a control the shell keeps on every page.
+  act(() => tabbedTo.focus());
+  expect(document.activeElement).toBe(tabbedTo);
+
+  // Escape closes Settings before its screen arrived: the page it covered is the page showing again, and
+  // the wait moved nothing, so the focus goes back to what opened Settings rather than staying on the tab.
+  view.rerender({ key: "#/threads/t-1", name: "thread", ready: true, covered: "#/threads/t-1" });
+  expect(document.activeElement).toBe(opener);
+});
+
 it("records the page Settings covers, not the last page focus completed on", () => {
   const main = screen("Screen title");
   const ref = { current: main };
