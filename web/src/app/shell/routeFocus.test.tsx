@@ -172,6 +172,33 @@ it("drops the kept opener when the covered page is left before it arrives", () =
   expect(document.activeElement?.textContent).toBe("Screen title");
 });
 
+it("spends the first focus handoff when it restores an opener on a cold load", () => {
+  const main = screen("Screen title");
+  // The shell's `#main` is focusable, so a skip past the title lands on the page itself.
+  main.tabIndex = -1;
+  const ref = { current: main };
+  // A cold load: the first screen's chunk is still arriving, so nothing on it can take the focus yet.
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/usage", name: "usage", ready: false, covered: "#/usage" } },
+  );
+  const opener = control("Open settings");
+  act(() => opener.focus());
+
+  // Settings opens and closes before either screen paints, so its opener waits for the page it covered.
+  view.rerender({ key: "#/settings", name: "settings", ready: false, covered: "#/usage" });
+  view.rerender({ key: "#/usage", name: "usage", ready: false, covered: "#/usage" });
+  // Usage arrives: the opener is handed back, and that is the first handoff this load has made.
+  view.rerender({ key: "#/usage", name: "usage", ready: true, covered: "#/usage" });
+  expect(document.activeElement).toBe(opener);
+
+  // That handoff is spent, so a destination chosen afterwards takes its own title like every later page;
+  // it must not still be treated as the first, where the title is skipped and the page itself takes focus.
+  view.rerender({ key: "#/pulls", name: "pulls", ready: true, covered: "#/pulls" });
+  expect(document.activeElement).toBe(main.querySelector("[data-page-title]"));
+});
+
 it("records a second opener after a session that ended before its screen arrived", () => {
   const main = screen("Screen title");
   const ref = { current: main };

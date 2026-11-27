@@ -103,6 +103,10 @@ export function useRouteFocus(
       // while a chunk is still coming closes it from the page that never left, so the wait must not cost
       // the person the control they opened it from.
       previous.current = { key: routeKey, name: routeName };
+      // The first handoff is spent on this restore, even though it lands on a control rather than the
+      // screen: the destination after it takes its own title, like every later page, instead of being
+      // skipped as the page the app opened on.
+      first.current = false;
       back.element.focus({ preventScroll: true });
       return;
     }
