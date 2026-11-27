@@ -472,8 +472,9 @@ into them, so they are **data**, never instructions to an engine, and never reac
 
 T3 Code at `9168ca73d` (`issue.ts`: `IssueListSort`, `IssueUpdateInput`, `IssueSetStateInput`,
 `IssueCandidates`) has all of these, so they are in the beta, built after the read routes above. `update`,
-`state`, `candidates` and the list's `sort` are built for GitHub (R15 PR3) and GitLab (R15 PR4); the other three
-trackers keep them Planned, answer `422 unsupported` and say so in their own section below. Each write is
+`state` and `candidates` are built for GitHub (R15 PR3) and GitLab (R15 PR4), and the list's `sort` for GitHub
+only: every other tracker accepts it without ordering by it. The other three trackers keep all four Planned,
+answer `422 unsupported` and say so in their own section below. Each write is
 Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the updated `IssueDetail`.
 
 | Route | Person | Answers |
@@ -545,7 +546,9 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   issue does not offer is `400 invalid` with nothing sent.
 - **`candidates`** answers the project's labels (`GET /projects/{path}/labels`, 100 a page) and its members, inherited
   ones included (`GET /projects/{path}/members/all`, 100 a page): at most 200 of each, `truncated` when a full second
-  page may have more. A label carries its colour. An assignee's `id` is the numeric member id, which is what the write
+  page may have more. A label carries its colour. A label whose name is longer than a write can carry (200 characters,
+  where GitLab allows up to 255) is left out rather than cut, so the picker never offers a shorter, different name, and
+  `truncated` says the answer is partial. An assignee's `id` is the numeric member id, which is what the write
   sends, and its `name` is the person's own when GitLab reports one.
 - **`states`** is `Some` for every GitLab detail, its create answer and both write answers: `Open` and `Closed`. The
   other three trackers answer `None` and keep their State row as Planned.

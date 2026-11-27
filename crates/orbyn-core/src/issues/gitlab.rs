@@ -876,8 +876,15 @@ impl IssueSource for GitLab {
                     truncated = true;
                     break;
                 }
+                // A label Orbyn cannot write in full is not offered as a shorter, different one: GitLab allows
+                // names up to 255 characters and the write contract 200, so the cut name would create and assign a
+                // label the person did not choose. It is left out, and the answer says the list is partial.
+                if name.chars().count() > super::MAX_LABEL_CHARS {
+                    truncated = true;
+                    continue;
+                }
                 labels.push(IssueCandidateLabel {
-                    name: clip(name, MAX_LABEL),
+                    name: name.to_owned(),
                     color: row
                         .get("color")
                         .and_then(Value::as_str)
