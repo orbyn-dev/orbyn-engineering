@@ -8,10 +8,13 @@
 //!
 //! What is kept is what Git reported and what it read to report it: the folder as it
 //! resolved, the folders discovery passed on the way to the work tree root, the root,
-//! the repository the first remote names, and a digest of each file the answer rests
-//! on (the work tree's `.git` link, and the git directory's `HEAD`, `config`,
-//! `config.worktree` and `commondir`). `HEAD` is watched although the answer never
-//! contains it, so a commit or a branch switch is observed rather than ignored. The
+//! the repository the first remote names, and what the answer rests on (the work tree's
+//! `.git` link, the git directory's `HEAD`, `config`, `config.worktree` and `commondir`,
+//! and the `objects` and `refs` directories Git requires before it accepts any of it as a
+//! repository, watched where `commondir` names them). `HEAD` is watched although the
+//! answer never contains it, so a commit or a branch switch is observed rather than
+//! ignored, and `objects` and `refs` are watched for what Git finds at them rather than
+//! for their contents, so renaming either is a repository Git no longer finds. The
 //! work tree's `.git` is kept by the location it resolved to, because Git names the
 //! directory it resolved: a link retargeted at another repository leaves those files
 //! as they were. What the answer rests on is watched before the configuration is read
@@ -101,18 +104,24 @@ impl GitFacts {
     }
 }
 
-/// What an answer rests on: the folders Git passed and the files it read.
+/// What an answer rests on: the folders Git passed and the paths it found in the directory it
+/// resolved.
 #[derive(Clone)]
 pub(super) struct Watch {
     /// Folders discovery looked in and passed, which must still be passed.
     passed: Vec<Passed>,
-    /// The files whose bytes decided what Git reported.
+    /// What the answer rests on: the bytes of the files Git read, and the directories it found.
     files: Vec<Snapshot>,
 }
 
 /// The names Git reads in a folder to decide that the folder itself is a repository, which
 /// it does before it passes to the parent: a bare repository has no `.git` at all.
 const REPOSITORY_NAMES: [&str; 3] = ["HEAD", "objects", "refs"];
+
+/// The signatures Git accepts in the common directory before it calls any of it a repository:
+/// it checks that both can be accessed, and reads neither. Renaming either ends the repository,
+/// however unchanged the files it read from there are.
+const REPOSITORY_SIGNATURES: [&str; 2] = ["objects", "refs"];
 
 /// One folder discovery looked in and passed: it held no `.git`, and nothing at it read as a
 /// repository of its own.
@@ -159,14 +168,17 @@ impl Watch {
         for name in ["HEAD", "config", "config.worktree", "commondir"] {
             files.push(Snapshot::read(git_dir.join(name)));
         }
+        // Git accepts the directory it resolved only while the common directory holds these
+        // signatures, which it checks for access and never reads. Renaming either one is a
+        // repository Git no longer finds, however unchanged everything above is.
+        let common = common_directory(git_dir)?;
+        for name in REPOSITORY_SIGNATURES {
+            files.push(Snapshot::read(common.join(name)));
+        }
         // A linked worktree keeps the shared configuration beside its `commondir`.
-        if let Ok(common) = std::fs::read_to_string(git_dir.join("commondir")) {
-            let common = common.trim();
-            if !common.is_empty() {
-                let common = git_dir.join(common);
-                for name in ["config", "config.worktree"] {
-                    files.push(Snapshot::read(common.join(name)));
-                }
+        if common.as_path() != git_dir {
+            for name in ["config", "config.worktree"] {
+                files.push(Snapshot::read(common.join(name)));
             }
         }
         Some(Self { passed, files })
@@ -193,6 +205,30 @@ impl Watch {
     }
 }
 
+/// The common directory Git resolved for `git_dir`: the path its `commondir` names, and the Git
+/// directory itself when it names none. Git drops a trailing newline and carriage return from
+/// that path and nothing else, so a name that ends in a space keeps it; trimming the path would
+/// watch a configuration the repository does not read. `None` when the path cannot be watched,
+/// as for any other file Git read.
+fn common_directory(git_dir: &Path) -> Option<PathBuf> {
+    let path = git_dir.join("commondir");
+    let named = match std::fs::metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Some(git_dir.to_path_buf());
+        }
+        Ok(meta) if meta.is_file() && meta.len() <= MAX_WATCHED_BYTES => {
+            std::fs::read(&path).ok()?
+        }
+        _ => return None,
+    };
+    let named = std::str::from_utf8(&named).ok()?;
+    let named = named.trim_end_matches(['\r', '\n']);
+    if named.is_empty() {
+        return Some(git_dir.to_path_buf());
+    }
+    Some(git_dir.join(named))
+}
+
 /// The folders between `real` and `root`, which Git passed on its way up.
 fn passed_folders(real: &Path, root: &Path) -> Option<Vec<PathBuf>> {
     let mut passed = Vec::new();
@@ -213,7 +249,7 @@ fn no_git(folder: &Path) -> bool {
     )
 }
 
-/// One file the answer read, as it was then.
+/// One path the answer rests on, as it was then.
 #[derive(Clone)]
 struct Snapshot {
     path: PathBuf,
@@ -226,7 +262,7 @@ impl Snapshot {
         Self { path, seen }
     }
 
-    /// Whether the path holds what the answer read. A file that is unreadable now, or
+    /// Whether the path holds what the answer read. A path that is unreadable now, or
     /// too large to read twice, never counts as the same.
     fn holds(&self) -> bool {
         self.seen.holds(&self.path)
@@ -238,9 +274,10 @@ impl Snapshot {
 enum Seen {
     /// Nothing is there, which is how a file Git would have read is remembered.
     Absent,
-    /// A directory is there, which is what a work tree's `.git` is; it is remembered by where it
-    /// resolved, because a link retargeted at another directory is otherwise that same directory,
-    /// and Git names the repository it resolved to.
+    /// A directory is there, which is what a work tree's `.git` and Git's repository
+    /// signatures are; it is remembered by where it resolved, because a link retargeted at
+    /// another directory is otherwise that same directory, and Git names the repository it
+    /// resolved to. It has to still be a directory: a signature replaced by a file is not one.
     Directory(PathBuf),
     /// A file of this length, hashing to this digest.
     File { len: u64, digest: String },
@@ -275,7 +312,8 @@ impl Seen {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound
             ),
             Self::Directory(resolved) => {
-                crate::util::canonicalize(path).is_ok_and(|now| now == *resolved)
+                std::fs::metadata(path).is_ok_and(|meta| meta.is_dir())
+                    && crate::util::canonicalize(path).is_ok_and(|now| now == *resolved)
             }
             Self::File { len, digest } => {
                 std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() == *len)

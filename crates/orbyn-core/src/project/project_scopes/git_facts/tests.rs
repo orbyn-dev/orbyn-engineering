@@ -452,3 +452,129 @@ async fn a_git_link_retargeted_at_another_repository_is_observed_again() {
         "the repository the answer names follows the link"
     );
 }
+
+/// Git accepts a directory as a repository only while its common directory holds `objects` and
+/// `refs`, both checked for access and never read. Renaming either leaves every file the answer
+/// was read from as it was, so the signatures are watched too.
+#[tokio::test]
+async fn a_repository_that_lost_a_signature_is_observed_again() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let folder = dir.path().join("repo");
+    repository(&folder);
+    configure(&folder, "origin", "git@host:Owner/Repo.git");
+    core.add_project(folder.to_str().unwrap()).await.unwrap();
+    let first = read(&core).await;
+    assert_eq!(
+        only_member(&first).repository_label.as_deref(),
+        Some("Owner/Repo")
+    );
+    let watched = std::slice::from_ref(&folder);
+    for name in ["objects", "refs"] {
+        let signature = folder.join(".git").join(name);
+        let moved = folder.join(".git").join(format!("{name}-moved"));
+        std::fs::rename(&signature, &moved).unwrap();
+        let before = spawns(watched);
+        let second = read(&core).await;
+        assert!(
+            since(&before, watched)[0] > 0,
+            "the repository Git no longer finds without its {name} is observed again"
+        );
+        assert!(
+            !only_member(&second).metadata_complete,
+            "a folder Git cannot read as a repository is left unobserved"
+        );
+        std::fs::rename(&moved, &signature).unwrap();
+        read(&core).await;
+        let before = spawns(watched);
+        let restored = read(&core).await;
+        assert_eq!(
+            since(&before, watched),
+            [0],
+            "the repository Git finds again, with its {name}, is kept again"
+        );
+        assert_eq!(
+            only_member(&restored).repository_label.as_deref(),
+            Some("Owner/Repo"),
+            "and it is the repository it was"
+        );
+    }
+}
+
+/// A linked worktree's own Git directory holds neither `objects` nor `refs`: Git finds the
+/// signatures in the common directory `commondir` names, and checks them there.
+#[tokio::test]
+async fn a_linked_worktree_whose_common_directory_lost_a_signature_is_observed_again() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let main = dir.path().join("main");
+    repository(&main);
+    configure(&main, "origin", "git@host:Owner/Main.git");
+    let checkout = dir.path().join("checkout");
+    run_git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "other",
+            checkout.to_str().unwrap(),
+        ],
+    );
+    core.add_project(checkout.to_str().unwrap()).await.unwrap();
+    let first = read(&core).await;
+    assert_eq!(
+        only_member(&first).repository_label.as_deref(),
+        Some("Owner/Main"),
+        "the worktree is read as the repository its common directory holds"
+    );
+    let objects = main.join(".git").join("objects");
+    std::fs::rename(&objects, main.join(".git").join("objects-moved")).unwrap();
+    let watched = std::slice::from_ref(&checkout);
+    let before = spawns(watched);
+    let second = read(&core).await;
+    assert!(
+        since(&before, watched)[0] > 0,
+        "the worktree whose common directory lost objects is observed again"
+    );
+    assert!(
+        !only_member(&second).metadata_complete,
+        "a worktree Git cannot read as a repository is left unobserved"
+    );
+}
+
+/// Git drops only a trailing newline and carriage return from `commondir`, so a common directory
+/// whose name ends in a space is another directory: the watch has to cover what Git resolved, or
+/// a remote changed there is never noticed. An ordinary Windows path cannot open a name ending in
+/// a space, so this pins the path watched rather than a read of it.
+#[test]
+fn a_common_directory_ending_in_a_space_is_watched_where_git_names_it() {
+    let dir = TempDir::new();
+    let folder = dir.path().join("worktree");
+    let git_dir = folder.join(".git");
+    std::fs::create_dir_all(&git_dir).unwrap();
+    let shared = dir.path().join("shared ");
+    let trimmed = dir.path().join("shared");
+    let real = crate::util::canonicalize(&folder).unwrap();
+    for ending in ["\n", "\r\n"] {
+        std::fs::write(
+            git_dir.join("commondir"),
+            format!("{}{ending}", shared.display()),
+        )
+        .unwrap();
+        let watch = super::Watch::work_tree(&real, &real, &real.join(".git")).unwrap();
+        let watched: Vec<PathBuf> = watch.files.iter().map(|file| file.path.clone()).collect();
+        for name in ["objects", "refs", "config", "config.worktree"] {
+            assert!(
+                watched.contains(&shared.join(name)),
+                "the {name} Git resolved in the common directory ending in a space is watched, \
+                 with a {ending:?} after it"
+            );
+            assert!(
+                !watched.contains(&trimmed.join(name)),
+                "the {name} of the directory the trailing space was trimmed to is not watched"
+            );
+        }
+    }
+}
