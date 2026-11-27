@@ -93,11 +93,12 @@ test("keyboard focus is visible and reduced motion stops animation", async ({ pa
   expect(Number.parseFloat(duration)).toBeLessThan(0.01);
 });
 
-test("first run opens on the draft flow with nothing to set up", async ({ page }) => {
+test("first run opens the welcome steps and leaves them for the Welcome page, with nothing to set up", async ({ page }) => {
   await page.goto("/__mock/scenario/first-run");
-  // The welcome steps open first and are never a gate: one click leaves them for the draft flow.
+  // The welcome steps open first and are never a gate: one click leaves them for the Welcome page.
   await page.getByRole("button", { name: "Skip for now" }).click();
-  await expect(page.getByRole("heading", { name: "Add your first project" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to Orbyn Engineering", level: 1 })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Projects" })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
   await expect(page.getByText(/set up/i)).toHaveCount(0);
 });
@@ -105,7 +106,7 @@ test("first run opens on the draft flow with nothing to set up", async ({ page }
 test("unavailable skills get a quiet line, never a blocking screen", async ({ page }) => {
   await page.goto("/__mock/scenario/no-skills");
   await page.getByRole("button", { name: "Skip for now" }).click();
-  await expect(page.getByRole("heading", { name: "Add your first project" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to Orbyn Engineering", level: 1 })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Skills aren't available right now" })).toBeVisible();
   // The empty home no longer offers a project-less start; its draft is still the scratch route.
   await page.evaluate(() => (location.hash = "#/new/scratch"));
@@ -493,7 +494,21 @@ test("the side panel starts with no tab, offers three choices, and the + opens a
   await expect(page.getByText("Nothing open")).toBeVisible();
   await expect(page.getByRole("button", { name: "Tab menu" })).toHaveCount(0);
   await page.getByRole("button", { name: "Open a tab" }).click();
-  await expect(page.getByRole("menuitem")).toHaveText([/^Changes/, /^Browser/, "Activity", "Side chat", "Tools"]);
+  // The launcher's shipped entries, in order: the panel's tabs (strip/tabs.ts), then Devices,
+  // Crew views (Planned) and Open file… (PanelHost.tsx, strip/launcher.tsx). Shortcuts, hints and
+  // pills follow each name, so match the name at the start of the row rather than its full text.
+  await expect(page.getByRole("menuitem")).toHaveText([
+    /^Changes/,
+    /^Browser/,
+    /^Activity/,
+    /^Side chat/,
+    /^Tools/,
+    /^Linked threads/,
+    /^Review and comments/,
+    /^Devices/,
+    /^Crew views/,
+    /^Open file/,
+  ]);
   await page.getByRole("menuitem", { name: "Browser" }).click();
   await expect(page.getByRole("tab", { name: "Browser" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator(".ctx-title b")).toHaveText("Browser");

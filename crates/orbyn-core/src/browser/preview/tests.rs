@@ -1023,3 +1023,77 @@ fn overlapping_profile_changes_lose_no_update() {
     let all = core.browser_profiles().unwrap();
     assert_eq!(all.len(), 1 + 8 * 10, "a create was lost: {all:?}");
 }
+
+/// A closed tab whose browser has already let go of its folder ends without one.
+#[tokio::test]
+async fn a_closed_tab_profile_is_removed() {
+    let dir = TempDir::new();
+    let profile = dir.path().join("preview-profile");
+    std::fs::create_dir_all(&profile).unwrap();
+    std::fs::write(profile.join("Default"), b"cookies").unwrap();
+    super::pump::remove_profile(&profile).await.unwrap();
+    assert!(!profile.exists(), "the profile outlived its tab");
+}
+
+/// A profile that is already gone is not an error: two owners of the same close both
+/// get to report success.
+#[tokio::test]
+async fn a_profile_that_is_already_gone_is_not_an_error() {
+    let dir = TempDir::new();
+    let profile = dir.path().join("missing-profile");
+    super::pump::remove_profile(&profile).await.unwrap();
+}
+
+/// A browser stopped a moment ago can still hold its profile's files. The removal is
+/// retried, so the profile still goes instead of leaking the folder.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_held_profile_is_removed_once_its_files_are_released() {
+    let dir = TempDir::new();
+    let profile = dir.path().join("held-profile");
+    std::fs::create_dir_all(&profile).unwrap();
+    let held = hold_against_deletion(&profile.join("DevToolsActivePort"));
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        drop(held);
+    });
+    super::pump::remove_profile(&profile)
+        .await
+        .expect("the retry must wait for the browser to release its files");
+    release.await.unwrap();
+    assert!(!profile.exists(), "the profile outlived its tab");
+}
+
+/// A profile that never stops being held is reported, so the caller logs its path and
+/// OS error instead of a folder leaking unmentioned.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_profile_that_stays_held_is_reported() {
+    let dir = TempDir::new();
+    let profile = dir.path().join("stuck-profile");
+    std::fs::create_dir_all(&profile).unwrap();
+    let held = hold_against_deletion(&profile.join("DevToolsActivePort"));
+    let error = super::pump::remove_profile(&profile)
+        .await
+        .expect_err("a folder that cannot be removed must not report success");
+    assert!(
+        profile.exists(),
+        "the reported failure still must not claim the folder went: {error}"
+    );
+    drop(held);
+}
+
+/// Opens a file the way a running browser holds its profile: shared for reading and
+/// writing, but not for deletion, so the system refuses to remove its folder.
+#[cfg(windows)]
+fn hold_against_deletion(path: &Path) -> std::fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_SHARE_READ_AND_WRITE: u32 = 0x1 | 0x2;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .share_mode(FILE_SHARE_READ_AND_WRITE)
+        .open(path)
+        .unwrap()
+}
