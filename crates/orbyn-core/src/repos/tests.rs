@@ -1523,6 +1523,48 @@ async fn a_turn_diff_reads_the_checkpoint_in_the_repository_its_scope_names() {
     assert_eq!(diff_paths(&files), ["second.txt"]);
 }
 
+/// A run with a checkpoint in each of a two-repository thread's worktrees, taken before either one changed.
+async fn seed_restore_checkpoints(
+    core: &Core,
+    thread: &str,
+    project: &str,
+    other_id: &str,
+    folder: &Path,
+    run: &str,
+    index: &Path,
+) {
+    for (repo_id, worktree) in [
+        (project, folder.join("main")),
+        (other_id, folder.join("other")),
+    ] {
+        let start = crate::source_control::git::snapshot(&worktree, None, index)
+            .await
+            .unwrap();
+        core.store
+            .add_repository_checkpoint(thread, run, repo_id, &start)
+            .unwrap();
+    }
+}
+
+/// A live thread in `project` whose folder is `cwd`: someone else's work in one of the folders a restore reads.
+fn neighbor(core: &Core, project: &str, cwd: &Path) -> String {
+    core.store
+        .create_thread(NewThread {
+            project_id: project.to_owned(),
+            title: "neighbor".into(),
+            engine: "codex".into(),
+            model: None,
+            cwd: path_text(cwd),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap()
+        .id
+}
+
 /// A restore moves every trusted worktree of a multi-repository thread, so it is refused while another live thread
 /// works in any one of them. The thread's own folder is the task folder here, so checking only that folder would
 /// move a repository another thread is working in.
@@ -1535,36 +1577,11 @@ async fn a_restore_moves_no_worktree_another_live_thread_is_working_in() {
         &project,
         &[(&project, "main", &main), (&other_id, "other", &other)],
     );
-    // A run with a checkpoint in each repository, taken before either worktree changed.
-    let index = dir.path().join("restore-index");
     let run = "run-shared-root";
-    for (repo_id, worktree) in [
-        (&project, folder.join("main")),
-        (&other_id, folder.join("other")),
-    ] {
-        let start = crate::source_control::git::snapshot(&worktree, None, &index)
-            .await
-            .unwrap();
-        core.store
-            .add_repository_checkpoint(&thread, run, repo_id, &start)
-            .unwrap();
-    }
+    let index = dir.path().join("restore-index");
+    seed_restore_checkpoints(&core, &thread, &project, &other_id, &folder, run, &index).await;
     // Another live thread works in the second repository's worktree, with a file of its own there.
-    let _neighbor = core
-        .store
-        .create_thread(NewThread {
-            project_id: project.clone(),
-            title: "neighbor".into(),
-            engine: "codex".into(),
-            model: None,
-            cwd: path_text(&folder.join("other")),
-            worktree: None,
-            skill_profile: None,
-            parent_thread_id: None,
-            relation: None,
-            scratch: false,
-        })
-        .unwrap();
+    let _neighbor = neighbor(&core, &project, &folder.join("other"));
     std::fs::write(folder.join("other/theirs.txt"), "theirs\n").unwrap();
     let error = core
         .restore_workspace(
@@ -1580,6 +1597,44 @@ async fn a_restore_moves_no_worktree_another_live_thread_is_working_in() {
     assert!(matches!(error, CoreError::SharedDirectory(_)), "{error:?}");
     assert_eq!(
         std::fs::read_to_string(folder.join("other/theirs.txt")).unwrap(),
+        "theirs\n",
+        "no worktree was moved"
+    );
+}
+
+/// The thread's own folder is checked as well: a multi-repository thread's folder is a task folder another live
+/// thread can be working in, though a restore never writes it.
+#[tokio::test]
+async fn a_restore_is_refused_while_another_live_thread_works_in_the_threads_folder() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let (thread, folder) = repo_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&other_id, "other", &other)],
+    );
+    let run = "run-shared-folder";
+    let index = dir.path().join("restore-index");
+    seed_restore_checkpoints(&core, &thread, &project, &other_id, &folder, run, &index).await;
+    let stored = core.store.thread(&thread).unwrap();
+    let _neighbor = neighbor(&core, &project, Path::new(&stored.cwd));
+    std::fs::write(folder.join("theirs.txt"), "theirs\n").unwrap();
+    let error = core
+        .restore_workspace(
+            &thread,
+            &RestoreWorkspace {
+                run_id: run.into(),
+                point: RestorePoint::Start,
+            },
+            "tester",
+        )
+        .await
+        .expect_err(
+            "a restore must not move files while another live thread works in the thread's folder",
+        );
+    assert!(matches!(error, CoreError::SharedDirectory(_)), "{error:?}");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("theirs.txt")).unwrap(),
         "theirs\n",
         "no worktree was moved"
     );

@@ -601,7 +601,7 @@ Restoring takes a safety snapshot first, then makes the files match, leaving HEA
 the index and ignored files alone. A multi-repository thread restores each trusted
 worktree to its own checkpoint, in that repository's Git objects; an ordinary
 thread restores the engine's own folder as before. It refuses while another live
-thread shares any folder it would move. A fork and an engine switch cannot carry an engine session, so each ends it
+thread shares its own folder or any folder it would move. A fork and an engine switch cannot carry an engine session, so each ends it
 and leaves a handoff of up to 16,000 characters, oldest text dropped first, for the
 next run. A rewind does the same unless the engine rolls its own session back. Dropping the session and writing the handoff share a transaction. It
 stays until a run that carried it completes, so a failed start, a stop or a restart

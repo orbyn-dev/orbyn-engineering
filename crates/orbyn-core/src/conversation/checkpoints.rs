@@ -162,17 +162,17 @@ impl Core {
     }
 
     /// Refuses a restore while another live thread works in a folder it would move, since that thread's work would
-    /// be overwritten without its knowledge. Every root is checked: a multi-repository thread moves each trusted
-    /// worktree, and one of them can be another thread's own folder (docs/multi-repo.md).
+    /// be overwritten without its knowledge. Every restore root is checked, and so is the thread's own folder: a
+    /// multi-repository thread's folder is a task folder another thread can be working in, and only the roots are
+    /// ever written (docs/multi-repo.md).
     fn refuse_shared_roots(
         &self,
-        thread_id: &str,
+        thread: &Thread,
         roots: &[(Option<String>, PathBuf)],
     ) -> Result<()> {
-        for (_, worktree) in roots {
-            let shared = self
-                .store
-                .threads_sharing_path(&worktree.to_string_lossy(), thread_id)?;
+        let own = PathBuf::from(&thread.cwd);
+        for path in std::iter::once(&own).chain(roots.iter().map(|(_, worktree)| worktree)) {
+            let shared = self.store.threads_sharing_path(path, &thread.id)?;
             if !shared.is_empty() {
                 return Err(CoreError::SharedDirectory(shared.len()));
             }
@@ -279,7 +279,7 @@ impl Core {
     ) -> Result<()> {
         let thread = self.idle_thread(thread_id)?;
         let roots = self.restore_roots(&thread)?;
-        self.refuse_shared_roots(&thread.id, &roots)?;
+        self.refuse_shared_roots(&thread, &roots)?;
         let mut restores = Vec::new();
         for (repo_id, worktree) in roots {
             let checkpoint =
@@ -377,7 +377,7 @@ impl Core {
     /// record of one.
     async fn restore_for_rewind(&self, thread: &Thread, run_id: &str, actor: &str) -> Result<()> {
         let roots = self.restore_roots(thread)?;
-        self.refuse_shared_roots(&thread.id, &roots)?;
+        self.refuse_shared_roots(thread, &roots)?;
         let mut restores = Vec::new();
         for (repo_id, worktree) in roots {
             let checkpoint = self

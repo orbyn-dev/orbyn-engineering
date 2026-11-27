@@ -182,14 +182,19 @@ impl Store {
         Ok(row.is_some())
     }
 
-    /// Other live threads working in the folder at `path`. A restore asks this of every folder it would move, which
+    /// Other live threads working in the folder at `path`. A restore asks this of the folder it would move, which
     /// in a multi-repository thread is each repository's worktree and may be another thread's own folder.
-    pub fn threads_sharing_path(&self, path: &str, thread_id: &str) -> Result<Vec<String>> {
+    pub fn threads_sharing_path(
+        &self,
+        path: &std::path::Path,
+        thread_id: &str,
+    ) -> Result<Vec<String>> {
         let conn = self.reader();
         let mut statement = conn.prepare(
             "SELECT id FROM threads WHERE cwd = ?1 AND id <> ?2 AND archived_at IS NULL",
         )?;
-        let rows = statement.query_map([path, thread_id], |row| row.get(0))?;
+        let path = path.to_string_lossy();
+        let rows = statement.query_map([path.as_ref(), thread_id], |row| row.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
