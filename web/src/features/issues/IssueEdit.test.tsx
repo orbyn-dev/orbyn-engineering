@@ -241,6 +241,19 @@ it("a candidates read that fails says so with Retry, and the retry reads again",
   expect(await within(picker).findByRole("checkbox", { name: "docs" })).toBeVisible();
 });
 
+it("a tracker that cannot edit says so in its own words at the label picker (issue-write-tracker-not-supported)", async () => {
+  const mock = createIssuesMock({ unsupportedCandidates: ["github"] });
+  setIssuesApi(mock);
+  const user = userEvent.setup();
+  open();
+  await user.click(await live("Change labels"));
+  const picker = await screen.findByRole("group", { name: "Change labels" });
+  expect(await within(picker).findByRole("alert")).toHaveTextContent("Couldn’t read the labels. GitHub issue edits arrive in a later update.");
+  expect(within(picker).getByRole("button", { name: "Apply" })).toBeDisabled();
+  // Reading the candidates wrote nothing.
+  expect(mock.writes).toEqual([]);
+});
+
 it("changes the assignees by the id the candidates carry, not the login", async () => {
   const sent: unknown[] = [];
   const mock = createIssuesMock();
