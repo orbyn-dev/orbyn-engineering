@@ -80,6 +80,54 @@ impl Core {
         outcome
     }
 
+    /// Replies inside one review thread and/or sets its resolved state: one write and one audit
+    /// row. A resolution that fails after the reply was posted says so, so a retry without the
+    /// body does not post it twice.
+    pub async fn respond_pull_thread(
+        &self,
+        project_id: &str,
+        number: u64,
+        thread: &str,
+        body: Option<&str>,
+        resolved: Option<bool>,
+        actor: &str,
+    ) -> Result<()> {
+        check_opaque(thread)?;
+        if body.is_some_and(|body| body.trim().is_empty()) {
+            return Err(CoreError::Invalid("Write a reply first.".into()));
+        }
+        if body.is_none() && resolved.is_none() {
+            return Err(CoreError::Invalid(
+                "Name a reply, a resolved value, or both.".into(),
+            ));
+        }
+        let (project, forge) = self.pull_site(project_id).await?;
+        self.scm_audit(actor, "git.pull_thread_respond", thread, None)?;
+        let cwd = Path::new(&project.path);
+        let outcome = async {
+            if let Some(body) = body {
+                forge::reply_to_thread(forge, cwd, number, thread, body).await?;
+            }
+            if let Some(resolved) = resolved
+                && let Err(error) =
+                    forge::set_thread_resolved(forge, cwd, number, thread, resolved).await
+            {
+                if body.is_some() {
+                    return Err(CoreError::Git(format!(
+                        "The reply was posted, but setting the thread {} failed: {} Retry without body.",
+                        if resolved { "resolved" } else { "unresolved" },
+                        error.public_message()
+                    )));
+                }
+                return Err(error);
+            }
+            Ok(())
+        }
+        .await;
+        self.scm_reads.pull_changed(project_id, number);
+        outcome
+    }
+
     pub async fn submit_pull_review(
         &self,
         project_id: &str,
@@ -215,16 +263,87 @@ impl Core {
         Ok(results)
     }
 
-    pub fn set_files_viewed(
+    /// Marks files viewed or unviewed. GitHub keeps the viewer's own state, so there the mark is
+    /// written to GitHub through its mutations; a mark GitHub refuses is kept by this service, and
+    /// the error says so. Another forge has no viewed state to write, so the service keeps it.
+    pub async fn set_files_viewed(
         &self,
         project_id: &str,
         number: u64,
         paths: &[String],
         viewed: bool,
+        actor: &str,
     ) -> Result<()> {
-        self.store.project(project_id)?;
-        self.store
-            .set_files_viewed(project_id, number, paths, viewed)
+        let (project, forge) = self.pull_site(project_id).await?;
+        if forge != forge::Forge::GitHub || paths.is_empty() {
+            return self
+                .store
+                .set_files_viewed(project_id, number, paths, viewed);
+        }
+        let cwd = Path::new(&project.path);
+        self.scm_audit(actor, "git.pull_viewed", &number.to_string(), None)?;
+        let node = match self.kept_pull_id(project_id, number) {
+            Some(id) => Ok(id),
+            None => forge::pull_node_id(forge, cwd, number).await,
+        };
+        let mut failed: Vec<(String, String)> = Vec::new();
+        for path in paths {
+            let outcome = match &node {
+                Ok(id) => forge::set_file_viewed(forge, cwd, id, path, viewed).await,
+                Err(error) => Err(CoreError::Git(error.public_message())),
+            };
+            match outcome {
+                Ok(()) => {
+                    // GitHub has the mark now, so a copy this service kept is no longer needed,
+                    // and the files read it kept already shows GitHub's new state.
+                    self.store.set_files_viewed(
+                        project_id,
+                        number,
+                        std::slice::from_ref(path),
+                        false,
+                    )?;
+                    self.file_viewed_changed(project_id, number, path, viewed);
+                }
+                Err(error) => {
+                    if viewed {
+                        // The person's mark is not lost: this service keeps it and the files read
+                        // shows it, though GitHub does not have it.
+                        self.store.set_files_viewed(
+                            project_id,
+                            number,
+                            std::slice::from_ref(path),
+                            true,
+                        )?;
+                    }
+                    failed.push((path.clone(), error.public_message()));
+                }
+            }
+        }
+        if failed.is_empty() {
+            return Ok(());
+        }
+        let names: Vec<String> = failed.iter().map(|(path, _)| path.clone()).collect();
+        let reason = failed
+            .first()
+            .map(|(_, message)| message.clone())
+            .unwrap_or_default();
+        let message = if viewed {
+            format!(
+                "GitHub did not save the viewed mark for {}. It is kept in Orbyn. {reason}",
+                names.join(", ")
+            )
+        } else {
+            format!(
+                "GitHub did not clear the viewed mark for {}. Orbyn keeps showing the mark it had. {reason}",
+                names.join(", ")
+            )
+        };
+        Err(CoreError::Refused {
+            status: 502,
+            code: "viewed_unsynced",
+            message,
+            detail: json!({ "paths": names, "viewed": viewed }),
+        })
     }
 }
 

@@ -84,6 +84,53 @@ const issueView = (entry, requested) => {
 const commentById = (id) =>
   state.pulls.flatMap((entry) => [...(entry.issueComments ?? []), ...(entry.threads ?? []).flatMap((thread) => thread.comments.nodes)]).find((comment) => String(comment.id ?? comment.databaseId) === id);
 
+/** One connection page as GitHub answers it: the nodes after the cursor and the pageInfo beside them. */
+const connection = (name, nodes, body) => {
+  // A connection may name further arguments (`writersOnly:true`), so only `first` and `after` are read.
+  const call = new RegExp(`${name}\\(first:(\\d+)([^)]*)\\)`).exec(body);
+  if (!call) return undefined;
+  // The cursor is opaque to the service; this stand-in numbers its pages, so a fixture that
+  // outgrows one page is read to the end instead of being reported as the whole list.
+  const after = /after:"([^"]*)"/.exec(call[2]);
+  const start = after ? Number(after[1]) : 0;
+  const page = nodes.slice(start, start + Number(call[1]));
+  const end = start + page.length;
+  const more = end < nodes.length;
+  return { pageInfo: { hasNextPage: more, endCursor: more ? String(end) : null }, nodes: page };
+};
+
+/** The reviews a fixture pull request holds: each review thread stands in for the review that left its comments. */
+const reviewsOf = (entry) =>
+  (entry.threads ?? []).map((thread) => ({
+    state: "COMMENTED",
+    author: thread.comments?.nodes?.[0]?.author ?? null,
+    comments: { totalCount: thread.comments?.nodes?.length ?? 0 },
+  }));
+
+/** The fields of one pull request's batched GraphQL answer, before its review connections are paged. */
+const detailsOf = (entry) => {
+  const reviews = reviewsOf(entry);
+  const latest = entry.latestReviews ?? reviews.filter((review) => review.author !== null).map(({ author, state }) => ({ author, state }));
+  const requestedReviewers = (entry.reviewers ?? []).map((name) => ({
+    requestedReviewer: name.startsWith("team/") ? { __typename: "Team", slug: name.slice(5) } : { __typename: "User", login: name },
+  }));
+  return {
+    createdAt: entry.createdAt ?? "2026-09-01T00:00:00Z",
+    // A draft has no merge state yet; every other fixture pull request merges cleanly.
+    mergeable: entry.mergeable ?? (entry.isDraft ? "UNKNOWN" : "MERGEABLE"),
+    comments: { totalCount: (entry.issueComments ?? []).length },
+    reviews: {
+      totalCount: reviews.length,
+      pageInfo: { hasNextPage: false },
+      nodes: reviews.map((review) => ({ comments: review.comments })),
+    },
+    // The opinionated reviews are paged at the asked limit, so a count above it is incomplete.
+    approvals: latest.map(({ state }) => ({ state })),
+    latest,
+    requestedReviewers,
+  };
+};
+
 /** REST and GraphQL through `gh api`. Field flags are `key=value` strings. */
 function apiCall() {
   const field = (name) => {
@@ -105,25 +152,67 @@ function apiCall() {
   }
   if (path === "graphql") {
     const query = field("query") ?? "";
-    if (query.includes("reviewRequests")) {
-      // The batched details query: one alias `p<number>` per pull request.
+    // GitHub's own viewed state: the files connection reads each changed file's
+    // `viewerViewedState`, and the mark mutations set or clear one path. The fixture holds it as
+    // `viewed: string[]`, the paths the viewer marked viewed.
+    if (query.includes("ViewedFiles")) {
       if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
-      const repository = {};
-      for (const [, number] of query.matchAll(/p(\d+):pullRequest/g)) {
-        const entry = state.pulls.find((candidate) => candidate.number === Number(number));
-        if (!entry) continue;
-        const inline = (entry.threads ?? []).flatMap((thread) => thread.comments.nodes).length;
-        repository[`p${number}`] = {
-          createdAt: entry.createdAt ?? "2026-09-01T00:00:00Z",
-          reviewRequests: {
-            nodes: (entry.reviewers ?? []).map((name) => ({
-              requestedReviewer: name.startsWith("team/") ? { __typename: "Team", slug: name.slice(5) } : { __typename: "User", login: name },
-            })),
+      const entry = pull(field("number"));
+      return out({
+        data: {
+          repository: {
+            pullRequest: {
+              id: `PR_${entry.number}`,
+              files: {
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: (entry.files ?? []).map((file) => ({
+                  path: file.filename,
+                  viewerViewedState: (entry.viewed ?? []).includes(file.filename) ? "VIEWED" : "UNVIEWED",
+                })),
+              },
+            },
           },
-          latestReviews: { nodes: entry.latestReviews ?? [] },
-          comments: { totalCount: (entry.issueComments ?? []).length },
-          reviews: { nodes: [{ comments: { totalCount: inline } }] },
-        };
+        },
+      });
+    }
+    if (query.includes("ViewedId")) {
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const entry = pull(field("number"));
+      return out({ data: { repository: { pullRequest: { id: `PR_${entry.number}` } } } });
+    }
+    if (query.includes("MarkFileAsViewed") || query.includes("UnmarkFileAsViewed")) {
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const entry = pull(String(field("id")).replace("PR_", ""));
+      const path = field("path");
+      const viewed = (entry.viewed ?? []).filter((name) => name !== path);
+      if (query.includes("MarkFileAsViewed")) viewed.push(path);
+      entry.viewed = viewed;
+      save();
+      return out({ data: { [query.includes("MarkFileAsViewed") ? "markFileAsViewed" : "unmarkFileAsViewed"]: { pullRequest: { id: `PR_${entry.number}` } } } });
+    }
+    if (query.includes("reviewRequests") || query.includes("latestReviews")) {
+      // The batched details query and its review-connection follow-ups (#1544): one alias
+      // `p<number>` per pull request, each connection carrying the pageInfo and counts GitHub
+      // sends. A follow-up names only the connection it pages, reviewRequests or latestReviews.
+      // The service reads a connection without pageInfo as an unknown one, so an answer
+      // missing them leaves the row without a comment count, reviewers or merge state.
+      if (state.rateLimited) return fail("GraphQL: API rate limit already exceeded");
+      const aliases = [...query.matchAll(/p(\d+):pullRequest\(number:\d+\)\{/g)].map((match, at, all) => ({
+        number: Number(match[1]),
+        body: query.slice((match.index ?? 0) + match[0].length, all[at + 1]?.index),
+      }));
+      const repository = {};
+      for (const { number, body } of aliases) {
+        const entry = state.pulls.find((candidate) => candidate.number === number);
+        if (!entry) continue;
+        const { approvals, latest, requestedReviewers, ...answer } = detailsOf(entry);
+        const requests = connection("reviewRequests", requestedReviewers, body);
+        if (requests) answer.reviewRequests = requests;
+        const reviews = connection("latestReviews", latest, body);
+        if (reviews) answer.latestReviews = reviews;
+        const opinionated = connection("latestOpinionatedReviews", approvals, body);
+        if (opinionated) answer.latestOpinionatedReviews = { totalCount: approvals.length, ...opinionated };
+        repository[`p${number}`] = answer;
       }
       return out({ data: { viewer: { login: state.viewer ?? "me" }, repository } });
     }
@@ -137,6 +226,39 @@ function apiCall() {
   }
   const local = path.replace("repos/{owner}/{repo}/", "");
   let match;
+  // The Issues client names the repository's own scope in the endpoint (`repos/o/r/…`) rather than the pull requests'
+  // `{owner}/{repo}` placeholders, so the candidates read and the three edit writes (#1593) are answered here from the
+  // same fixture: the assignable people, one PATCH of the issue's own fields or state, and one comment POST.
+  const named = /^repos\/[^/]+\/[^/]+\/(.*)$/.exec(path)?.[1] ?? "";
+  const [namedRoute] = named.split("?");
+  if (namedRoute === "assignees") return out(state.people.map((login) => ({ login })));
+  if ((match = /^issues\/(\d+)$/.exec(namedRoute)) && method === "PATCH") {
+    const entry = issue(match[1]);
+    const patch = JSON.parse(readFileSync(0, "utf8"));
+    if (typeof patch.title === "string") entry.title = patch.title;
+    if (typeof patch.body === "string") entry.body = patch.body;
+    if (Array.isArray(patch.labels)) entry.labels = patch.labels.map((name) => ({ name }));
+    if (Array.isArray(patch.assignees)) entry.assignees = patch.assignees.map((login) => ({ login }));
+    if (patch.state === "open" || patch.state === "closed") {
+      entry.state = patch.state.toUpperCase();
+      entry.stateReason = patch.state === "closed" ? String(patch.state_reason ?? "").toUpperCase() : "";
+      entry.closedAt = patch.state === "closed" ? new Date().toISOString() : "";
+    }
+    // GitHub moves `updatedAt` on every write, as the Issues list sorts on.
+    entry.updatedAt = new Date().toISOString();
+    save();
+    return out({});
+  }
+  if ((match = /^issues\/(\d+)\/comments$/.exec(namedRoute)) && method === "POST") {
+    const entry = issue(match[1]);
+    const body = JSON.parse(readFileSync(0, "utf8")).body;
+    const id = state.next++;
+    const createdAt = new Date().toISOString();
+    // Stored as `gh issue view` reads a comment back, answered with the REST shape the service parses.
+    entry.comments = [...(entry.comments ?? []), { id: `IC_${id}`, author: { login: state.viewer ?? "me" }, body, createdAt }];
+    save();
+    return out({ id, node_id: `IC_${id}`, user: { login: state.viewer ?? "me" }, body, created_at: createdAt });
+  }
   if (local.startsWith("assignees")) return out(state.people.map((login) => ({ login })));
   if ((match = /^issues\/(\d+)\/comments/.exec(local))) return out(pull(match[1]).issueComments ?? []);
   if ((match = /^issues\/(\d+)\/timeline/.exec(local))) return out(pull(match[1]).timeline ?? []);
@@ -192,9 +314,17 @@ switch (route) {
     save();
     out(`https://github.com/o/${args[2]}`);
     break;
-  case "label list":
-    out(state.labels.map((name) => ({ name, description: `About ${name}` })));
+  // The labels as the fixture holds them: a name, a real GitHub colour and a description, narrowed to the fields the
+  // call asked for, as `gh label list --json` does (the Issues candidates read asks name,color; a pull request asks
+  // name,description).
+  case "label list": {
+    const asked = (flag("--json") ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+    out(state.labels.map((entry) => {
+      const label = typeof entry === "string" ? { name: entry } : entry;
+      return asked.length === 0 ? label : Object.fromEntries(asked.filter((name) => name in label).map((name) => [name, label[name]]));
+    }));
     break;
+  }
   // The issue reads the service makes through `gh`: a listing with its four filters, and one issue as a detail.
   case "issue list": {
     const labels = args.reduce((all, arg, at) => (arg === "--label" && at + 1 < args.length ? [...all, args[at + 1]] : all), []);
@@ -227,6 +357,10 @@ switch (route) {
     break;
   }
   case "pr list":
+    // A project whose repository cannot be read fails the call the way real gh does: its own message on stderr and a
+    // non-zero exit. The service reports that in the list's per-project `failed` rows instead of failing the whole
+    // read. Off by default; set and cleared through the service's `ghEdit(0, …)` helper, like `delayMs`.
+    if (state.pullListError) fail(state.pullListError);
     out(state.pulls.filter((entry) => (flag("--state") === "all" ? true : entry.state.toLowerCase() === flag("--state"))));
     break;
   case "pr view":
