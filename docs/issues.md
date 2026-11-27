@@ -116,8 +116,9 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
   (`timelineItems(last: 50, itemTypes: [CLOSED_EVENT, REOPENED_EVENT])`, through the person's own `gh`), best effort:
   a timeline the account cannot read, or a `gh` that does not answer, leaves `activity` empty — no event known, never
   "nothing happened" — and the issue is still shown. At most 50 events are kept. The other four trackers report no
-  timeline, so they answer `[]`. It rides on `IssueDetail`: no route and no stored field. These events are tracker
-  text like the rest and never reach an engine ("Issue text is untrusted").
+  timeline, so the field is left out of their answer (an absent `activity` means no event known, never an empty `[]`).
+  It rides on `IssueDetail`: no route and no stored field. These events are tracker text like the rest and never reach an
+  engine ("Issue text is untrusted").
 - A link keeps an `IssueRef` snapshot beside the thread (table `issue_links`; the migration takes the next
   free number at merge time), so a chip draws with the tracker offline. A read of the issue refreshes it.
 
