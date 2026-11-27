@@ -222,6 +222,18 @@ impl Core {
 
     /// One work task zoomed: its lanes, findings, gates and rounds.
     pub fn crew_flow_task(&self, id: &str) -> Result<wire::FlowTaskDetail> {
+        Ok(self.task_and_commits(id)?.0)
+    }
+
+    /// The zoom, and each lane's stored commit keyed by the review task that ran it.
+    ///
+    /// The lane row shows the scrubbed commit, while a lane read's Git read needs the stored revision: redaction
+    /// may have changed the shown one, and a repository ref that is not a revision cannot be read, which would
+    /// report a readable change as unreadable. Both come out of one read, so the review is not derived twice.
+    fn task_and_commits(
+        &self,
+        id: &str,
+    ) -> Result<(wire::FlowTaskDetail, BTreeMap<String, String>)> {
         self.crew_preview_only()?;
         valid_id(id)?;
         let Some(task) = self.store.crew_task(id)? else {
@@ -252,6 +264,7 @@ impl Core {
             .cloned()
             .unwrap_or_default();
         let mut lanes = Vec::new();
+        let mut commits = BTreeMap::new();
         for (lane, round, state, task) in latest_rounds(&facts.review) {
             let mine = |f: &&Value| f["lane"] == lane.as_str() && f["round"] == round;
             let of = |check: &str| {
@@ -273,6 +286,12 @@ impl Core {
                         .any(|why| why.code.as_str() == "same_engine_as_author")
             });
             let shown = scrub.text(&lane, 60);
+            // The commit the lane's run read, from the review's own row: the row carries the scrubbed one below,
+            // and the stored one is what a lane read's Git read needs.
+            let commit = lane_commit(&facts.review, &task);
+            if let Some(commit) = commit {
+                commits.insert(task.clone(), commit.to_owned());
+            }
             lanes.push(wire::FlowLane {
                 group: if is_security(&lane) {
                     "security"
@@ -286,15 +305,8 @@ impl Core {
                 engine: route.as_ref().map(|r| r.engine.as_str().to_owned()),
                 model: route.as_ref().map(|r| scrub.text(r.model.as_str(), 80)),
                 tier: route.as_ref().map(|r| wire_name(&r.tier)),
-                // The commit the lane's run read, from the review's own row.
-                commit: facts.review["lanes"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .flat_map(|l| l["rounds"].as_array().into_iter().flatten())
-                    .find(|r| r["task"] == task.as_str())
-                    .and_then(|r| r["commit"].as_str())
-                    .map(|c| scrub.text(c, 64)),
+                // The commit the lane's run read, scrubbed for the response; the stored one is in `commits`.
+                commit: commit.map(|c| scrub.text(c, 64)),
                 same_engine,
                 same_engine_allowed_by: route
                     .as_ref()
@@ -411,7 +423,7 @@ impl Core {
             )),
             (None, None) => None,
         };
-        Ok(wire::FlowTaskDetail {
+        let detail = wire::FlowTaskDetail {
             crew: facts.task.crew_id.clone(),
             brief: wire::FlowBrief {
                 purpose: facts
@@ -457,7 +469,8 @@ impl Core {
             }),
             row,
             truncated,
-        })
+        };
+        Ok((detail, commits))
     }
 
     /// One reviewer lane of a work task: the row the task zoom shows, what the lane was given (the work's purpose, the
@@ -471,7 +484,7 @@ impl Core {
             return Err(CoreError::Invalid("that is not a lane name".into()));
         }
         // The zoom already builds the row, the checks cell and every finding, so a lane reads the same values it shows.
-        let detail = self.crew_flow_task(id)?;
+        let (detail, commits) = self.task_and_commits(id)?;
         let crew = detail.crew.clone();
         let row = detail
             .lanes
@@ -498,7 +511,10 @@ impl Core {
         let person = self.display_redactor()?;
         let scrub = Scrub::of_crew(self, &person, &crew)?;
         let (rule, rule_absent) = lane_rule(checkout, base, lane, &scrub).await;
-        let (diff, diff_absent) = lane_diff(checkout, base, row.commit.as_deref(), &scrub).await;
+        // The response shows the lane's scrubbed commit (`row.commit`); Git needs the stored revision, which redaction
+        // may have changed, so the change is read from the commit the lane's own round recorded.
+        let stored = commits.get(&row.task).map(String::as_str);
+        let (diff, diff_absent) = lane_diff(checkout, base, stored, &scrub).await;
         Ok(wire::FlowLaneDetail {
             crew,
             task: detail.row.id,
@@ -521,6 +537,18 @@ impl Core {
 
 /// The longest path a rule's condition shows, in characters.
 const RULE_PATH_MAX: usize = 400;
+
+/// The commit one lane's round read, as stored: the review's own row for the task that ran the lane.
+///
+/// The lane row a response shows carries the scrubbed commit, while a Git read needs this stored revision.
+fn lane_commit<'a>(review: &'a Value, task: &str) -> Option<&'a str> {
+    review["lanes"]
+        .as_array()?
+        .iter()
+        .flat_map(|lane| lane["rounds"].as_array().into_iter().flatten())
+        .find(|round| round["task"] == task)
+        .and_then(|round| round["commit"].as_str())
+}
 
 /// The repository rule that asked for `lane`, read at `base`, the commit the work started from: `.orbyn/crew.json`'s
 /// `lanes`, the same file the review that started the lane read. A rule that names no paths always asks for the lane; one

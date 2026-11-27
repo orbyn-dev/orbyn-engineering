@@ -417,6 +417,72 @@ async fn a_lane_read_serves_its_rule_and_the_change_it_read_alone() {
 }
 
 #[tokio::test]
+async fn a_redacted_commit_still_reads_the_change_the_lane_saw() {
+    // The response shows the lane's commit scrubbed, while the change is read from the stored revision: a scrubbed
+    // value is not a revision, so reading the shown one would report a readable change as unreadable.
+    use orbyn_contracts::{PatternKind, PatternScope, RedactionPatternInput};
+
+    let w = crew(arc(|n, root| match n {
+        0 => {
+            let turn = built(root);
+            commit_all(root, "the work");
+            turn
+        }
+        _ => reviewed(vec![finding(
+            "src/lib.txt",
+            1,
+            "It wraps on a large value.",
+        )]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    for lane in &lanes {
+        w.until_state(lane, "passed").await;
+    }
+    let first = w
+        .core
+        .crew_flow_lane(&subject, "correctness")
+        .await
+        .unwrap();
+    let commit = first.given.commit.clone().expect("the lane's commit");
+    assert_eq!(first.given.diff_absent, None);
+    // A personal pattern that matches the commit itself: the row's commit is scrubbed, the revision is not.
+    w.core
+        .save_redaction_pattern(
+            "local",
+            None,
+            &RedactionPatternInput {
+                name: "A commit".into(),
+                pattern: commit.clone(),
+                kind: PatternKind::Text,
+                applies_to: PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let redacted = w
+        .core
+        .crew_flow_lane(&subject, "correctness")
+        .await
+        .unwrap();
+    let shown = redacted.given.commit.clone().unwrap_or_default();
+    assert!(
+        shown != commit && shown.contains("A commit"),
+        "the response shows the person's own mask over the commit: {shown}"
+    );
+    assert_eq!(
+        redacted.given.diff_absent, None,
+        "the change is still read, from the stored revision"
+    );
+    let diff = redacted.given.diff.expect("the change the lane read");
+    assert!(
+        diff.files.iter().any(|file| file.path == "src/lib.txt"),
+        "the change is the one the lane read"
+    );
+}
+
+#[tokio::test]
 async fn the_answer_key_and_a_checks_text_are_never_in_a_read() {
     let w = crew(arc(|n, root| match n {
         0 => built(root),
