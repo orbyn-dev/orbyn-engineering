@@ -21,18 +21,18 @@ Design note. Status: PR 1 (the `manual` event, Run now through the core), PR 2 (
 ### 2a. The listeners as built (PR 3)
 
 - One owned future, `run_crew_background_listeners`, behind the Preview flag and an interval (`ORBYN_CREW_BACKGROUND_WATCH_INTERVAL_SECS`, 60s to 24h). **No interval means no pass**, not even at startup. With one, a pass runs at startup and then once per interval.
-- Only crews that are on are read from the forge or claimed. A crew that is off costs no forge call and spends no event: a CI crew turned on later sees the branch head as a new event, and a schedule crew the current bucket; an issue-label crew keeps its baseline across a turn-off, so a label added while it was off fires once per pass when it is back on (one start per pass), unless the issue's label set was already claimed. The start's own refusal stays as the second guard.
+- Only crews that are on are read from the forge or claimed. A crew that is off costs no forge call and spends no event: a CI crew turned on later sees the branch head as a new event, and a schedule crew the current window; an issue-label crew keeps its baseline across a turn-off, so a label added while it was off fires once per pass when it is back on (one start per pass), unless the issue's label set was already claimed. The start's own refusal stays as the second guard.
 - Claims (table `crew_background_events`, migration 59, first write wins; the claim is the dedupe and the refusal is never retried):
 
 | Event | Claim identity | `PausedTrigger` key |
 | --- | --- | --- |
-| schedule | `schedule:<crew>:<bucket>` | `<crew>:schedule:<bucket>` |
+| schedule | `schedule:<crew>:<start>` | `<crew>:schedule:<start>` |
 | CI failure | `ci:<crew>:<head>:<name hash>` | `<crew>:ci:<head>:<name hash>` |
 | issue label baseline | `issue_label:<crew>:baseline:<label hash>` | (none: the baseline starts nothing) |
 | issue label | `issue_label:<crew>:<tracker>:<scope>:<key>:<label hash>:<label-set hash>` | `<crew>:issue_label:<scope hash>:<key hash>:<label hash>` |
 | dependency update | `dependency_update:<crew>:<update hash>` (the path a reader feed takes) | `<crew>:dependency_update:<update hash>` |
 
-  `<bucket>` is the Unix time divided by `every_hours`; a bucket at or before the newest one claimed for the crew never fires, so a clock that moves back starts nothing. `<name hash>` is 16 hex characters of the failing check's SHA-256, so a long check name cannot break the held row's 128-character key.
+  `<start>` is the Unix time, in seconds, at the start of the `every_hours` window the pass is in (`now` divided by `every_hours * 3600`, rounded down, times `every_hours * 3600` again), so it is the same kind of number whatever the interval. A start at or before the newest one claimed for the crew never fires, so a clock that moves back starts nothing, and a person who changes `every_hours` is not held back by the old interval's claims: a bucket number counted in `every_hours` would grow smaller as the interval grew, leave the old claim above every later one, and strand the crew. A claim an older build left as a bucket number is below every start, so the first pass after an upgrade fires once in the current window and keeps its start from then on. `<name hash>` is 16 hex characters of the failing check's SHA-256, so a long check name cannot break the held row's 128-character key.
 - At most one start attempt per crew per pass. A head with several failing checks fires the first (by name) and leaves the rest unclaimed for a later pass.
 - A pass watches at most 64 CI crews, reads at most 64 issue-label crews and separately at most 64 dependency-update crews, each from the pass's rotating start, so a store with more is covered over a few passes and a store full of crews cannot turn one pass into unbounded forge or tracker traffic.
 - Refused for capacity, the daily budget, an untrusted folder, no engine, a run in progress or a crew that was turned off meanwhile: dropped, never retried. One code-owned audit row (`crew.background.listener.refused`: the crew, the listener, a fixed reason word) records it, and capacity also leaves its held row.

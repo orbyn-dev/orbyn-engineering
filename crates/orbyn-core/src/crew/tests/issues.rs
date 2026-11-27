@@ -116,6 +116,7 @@ impl IssueSource for Fake {
             comments: vec![],
             linked_pull_requests: vec![],
             linked_threads: vec![],
+            activity: vec![],
             reactions: None,
             states: None,
         })
@@ -1658,6 +1659,7 @@ mod writes {
                 comments: vec![],
                 linked_pull_requests: vec![],
                 linked_threads: vec![],
+                activity: vec![],
                 reactions: None,
                 states: self.states.clone(),
             }
@@ -1745,6 +1747,7 @@ mod writes {
                 comments: vec![],
                 linked_pull_requests: vec![],
                 linked_threads: vec![],
+                activity: vec![],
                 reactions: None,
                 states: None,
             })
@@ -1781,6 +1784,7 @@ mod writes {
                 comments: vec![],
                 linked_pull_requests: vec![],
                 linked_threads: vec![],
+                activity: vec![],
                 reactions: Some(vec![orbyn_contracts::IssueReactionCount {
                     content: format!("{reaction:?}"),
                     count: u32::from(on),
