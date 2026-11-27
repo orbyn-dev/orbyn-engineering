@@ -13,7 +13,7 @@ fn threads(w: &super::harness::World) -> usize {
 
 /// The worker's one prompt saying a check failed, found by the sentence that starts it rather than
 /// by its place among the thread's turns: a missing or repeated one fails here.
-fn failure_prompt<'a>(prompts: &'a [String]) -> &'a str {
+fn failure_prompt(prompts: &[String]) -> &str {
     let mut failed = prompts
         .iter()
         .filter(|prompt| prompt.contains("Verification failed."));
