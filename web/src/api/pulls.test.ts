@@ -57,6 +57,27 @@ describe("pullsApi.creditsSetting", () => {
   });
 });
 
+describe("pullsApi.mergeMethodSetting", () => {
+  const read = async (rows: unknown) => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(rows), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const value = await pullsApi.mergeMethodSetting("p 1");
+    return { value, url: (fetchMock.mock.calls[0] as unknown as [string])[0] };
+  };
+
+  it("reads the method as it applies to the project", async () => {
+    const { value, url } = await read([{ key: "pull_request_merge_method", value: "rebase" }]);
+    expect(value).toBe("rebase");
+    expect(url).toContain("/api/preferences?project_id=p%201");
+  });
+
+  it("treats Ask, a missing key and an unknown method as no default", async () => {
+    expect((await read([{ key: "pull_request_merge_method", value: "" }])).value).toBeNull();
+    expect((await read([{ key: "other", value: "merge" }])).value).toBeNull();
+    expect((await read([{ key: "pull_request_merge_method", value: "fast-forward" }])).value).toBeNull();
+  });
+});
+
 describe("the thread pull request calls and repo_id", () => {
   const calls = () => {
     const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
