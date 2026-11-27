@@ -1841,26 +1841,13 @@ mod writes {
         );
     }
 
+    /// An edit replaces the whole set, so both writes must reach GitLab: the one carrying the new labels and people,
+    /// and the one carrying nothing that clears them. A test that only inspects a `PUT` when one arrives would pass if
+    /// `update` answered the read alone and wrote nothing, so the writes are counted and their bodies checked in order.
     #[tokio::test]
     async fn an_edit_writes_labels_and_assignees_as_the_whole_new_set() {
         let server = Server::start(|req| {
             let base = base_of(req);
-            if req.line.starts_with("PUT") {
-                let body = req.json().unwrap_or_default();
-                // The page sends the full set, so a set with nothing in it clears both.
-                let clearing = body
-                    .get("assignee_ids")
-                    .and_then(Value::as_array)
-                    .map(|ids| ids.is_empty())
-                    .unwrap_or(true);
-                let wanted = if clearing {
-                    json!({ "labels": "", "assignee_ids": [] })
-                } else {
-                    json!({ "labels": "bug,ui", "assignee_ids": [12, 13] })
-                };
-                assert_eq!(body, wanted, "labels travel by name, people by id");
-                return Reply::json(&issue(&base, 21));
-            }
             if req.path().ends_with("/notes") {
                 return Reply::json(&json!([]));
             }
@@ -1897,6 +1884,20 @@ mod writes {
             )
             .await
             .unwrap();
+        let writes: Vec<Value> = server
+            .seen()
+            .into_iter()
+            .filter(|req| req.line.starts_with("PUT"))
+            .map(|req| req.json().expect("a write carries its body as JSON"))
+            .collect();
+        assert_eq!(
+            writes,
+            [
+                json!({ "labels": "bug,ui", "assignee_ids": [12, 13] }),
+                json!({ "labels": "", "assignee_ids": [] }),
+            ],
+            "two writes, in order: the whole new set first, then the empty set that clears it, labels by name and people by id"
+        );
     }
 
     #[tokio::test]
@@ -2089,6 +2090,72 @@ mod writes {
         assert!(
             candidates.truncated,
             "a label left out makes the answer partial"
+        );
+    }
+
+    /// A label travels by name, so the name the picker shows is the name a write must send. A name longer than the 80
+    /// characters a login is kept to is offered whole and written whole: a cut prefix is a different label, and GitLab
+    /// would create or assign that one instead. The picker keeps label names to `LABEL_NAME_MAX`
+    /// (`web/src/features/issues/edit.ts`), the same 200 this reader's `MAX_LABEL` is, so neither side cuts below what
+    /// the other offers.
+    #[tokio::test]
+    async fn a_long_label_name_is_offered_and_written_whole() {
+        // Longer than the 80 the app keeps a login to, and the longest name this reader offers whole.
+        let long = "n".repeat(100);
+        let longest = "m".repeat(MAX_LABEL - 1);
+        let listed = json!([
+            { "id": 1, "name": "bug", "color": "#d9534f" },
+            { "id": 2, "name": &long },
+            { "id": 3, "name": &longest },
+        ]);
+        let server = Server::start(move |req| {
+            let base = base_of(req);
+            if req.path() == "/api/v4/projects/grp%2Fproj/labels" {
+                return Reply::json(&listed);
+            }
+            if req.path() == "/api/v4/projects/grp%2Fproj/members/all" {
+                return Reply::json(&json!([]));
+            }
+            if req.path().ends_with("/notes") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        let gitlab = reader(&server);
+        let candidates = gitlab.candidates("grp/proj").await.unwrap();
+        assert_eq!(
+            candidates
+                .labels
+                .iter()
+                .map(|label| label.name.clone())
+                .collect::<Vec<_>>(),
+            ["bug".to_owned(), long.clone(), longest.clone()],
+            "a name the picker can show in full is offered in full, however long it is"
+        );
+        let picked = vec![long.clone()];
+        gitlab
+            .update(
+                "grp/proj",
+                "21",
+                &IssueEdit {
+                    title: None,
+                    body: None,
+                    labels: Some(&picked),
+                    assignees: None,
+                },
+            )
+            .await
+            .unwrap();
+        let write = server
+            .seen()
+            .into_iter()
+            .find(|req| req.line.starts_with("PUT"))
+            .expect("the edit wrote");
+        assert_eq!(
+            write.json().and_then(|body| body.get("labels").cloned()),
+            Some(json!(&long)),
+            "the write names the whole label, not the 80-character prefix that would be a different label"
         );
     }
 
