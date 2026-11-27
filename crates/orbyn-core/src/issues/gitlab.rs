@@ -7,13 +7,15 @@ use super::frame::cut;
 use super::host::validate_host;
 use super::query::{AssigneeFilter, IssueQuery, MAX_LIMIT, StateFilter};
 use super::{
-    IssueSource, MAX_SCOPE_BYTES, MAX_TEMPLATE_BODY_BYTES, MAX_TEMPLATES, NewIssue, ScopeList,
+    IssueEdit, IssueSource, MAX_SCOPE_BYTES, MAX_TEMPLATE_BODY_BYTES, MAX_TEMPLATES, NewIssue,
+    ScopeList,
 };
 use crate::error::{CoreError, Result};
 use async_trait::async_trait;
 use orbyn_contracts::{
-    IssueActor, IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueReaction,
-    IssueReactionCount, IssueState, IssueStateCategory, IssueSummary, IssueTemplate, TrackerKind,
+    IssueActor, IssueAssigneeCandidate, IssueCandidateLabel, IssueCandidates, IssueCloseReason,
+    IssueComment, IssueCounts, IssueDetail, IssueLabel, IssueReaction, IssueReactionCount,
+    IssueState, IssueStateCategory, IssueSummary, IssueTemplate, TrackerKind,
 };
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, StatusCode, Url, redirect};
@@ -29,8 +31,14 @@ const MAX_RESPONSE: usize = 2 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
 const MAX_PAGE: u32 = 1000;
 const MAX_TITLE: usize = 256;
+/// GitLab's label ceiling, and the app's (`web/src/features/issues/edit.ts`, `LABEL_NAME_MAX`): a label travels by name,
+/// so a name at this length has no form one read could carry whole and `candidates` leaves it out rather than offer a
+/// shortened, different label for a write to create.
 const MAX_LABEL: usize = 200;
-const MAX_LOGIN: usize = 100;
+/// A login kept as the app keeps it (`web/src/features/issues/edit.ts`, 80 characters): the picker keys an assignee row
+/// by this login and looks the id a write sends up by it, so a login this long or longer is the form the app shows, and
+/// a second member sharing it could never be told apart from the first.
+const MAX_LOGIN: usize = 80;
 const MAX_URL: usize = 2048;
 const MAX_LABELS: usize = 100;
 const MAX_ASSIGNEES: usize = 50;
@@ -42,6 +50,14 @@ const MAX_SEGMENTS: usize = 20;
 /// One issue's reactions are read back at most this deep: a removal needs the reader's own award id.
 const MAX_AWARD_PAGES: u32 = 5;
 const MAX_AWARDS_PER_PAGE: usize = 100;
+/// The most labels and the most people one candidates read answers (docs/issues.md, "Issue writes and list
+/// controls"); the route caps the answer again, so a reader cannot exceed it.
+const MAX_CANDIDATES: usize = 200;
+/// GitLab's own page size for labels and members, and the pages one candidates read takes (two cover the 200).
+const CANDIDATE_PAGE: usize = 100;
+const CANDIDATE_PAGES: u32 = 2;
+/// A label colour is a short hex word; anything longer is the tracker's text and is cut like the rest.
+const MAX_COLOR: usize = 32;
 
 pub(crate) struct GitLab {
     /// `https://host[/prefix]`, validated, no trailing slash.
@@ -187,6 +203,36 @@ impl GitLab {
             body.extend_from_slice(&chunk);
         }
         Ok(Fetched { headers, body })
+    }
+
+    /// One `PUT` of the issue's own fields, the person's text in the body's field values and never in the address.
+    /// The answer is not read here: the caller reads the issue back for the shape a detail read has.
+    async fn put_issue(&self, project: &str, key: &str, payload: &Value) -> Result<()> {
+        let path = format!("/api/v4/projects/{project}/issues/{key}");
+        self.send(Method::PUT, &path, &[], Some(payload), "issue")
+            .await?;
+        Ok(())
+    }
+
+    /// The sets of the issue GitLab holds that are longer than one read returns, which is what makes every copy of it
+    /// the app can hold the cut form (docs/issues.md, "Issue writes and list controls"). A detail read carries the
+    /// description but not these answers, so a write that would replace the description, the labels or the assignees
+    /// reads the stored issue first.
+    async fn stored_clipped(&self, project: &str, key: &str) -> Result<StoredClipped> {
+        let path = format!("/api/v4/projects/{project}/issues/{key}");
+        let got = self.fetch(&path, &[], "issue").await?;
+        let value = parse(&got.body)?;
+        let count = |name: &str| {
+            value
+                .get(name)
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        };
+        Ok(StoredClipped {
+            description: text(&value, "description").len() > MAX_BODY_BYTES,
+            labels: count("labels") > MAX_LABELS,
+            assignees: count("assignees") > MAX_ASSIGNEES,
+        })
     }
 
     /// The tracker's totals, before any filter. Best effort: no answer means no totals, never a failed list.
@@ -474,6 +520,45 @@ fn actor(value: &Value) -> Option<IssueActor> {
         })
 }
 
+/// The state a GitLab issue is in, in GitLab's own words. GitLab has one closed state and keeps no reason for it,
+/// so a closed issue and the closed state its detail offers are the same name.
+fn named_state(closed: bool) -> IssueState {
+    IssueState {
+        category: if closed {
+            IssueStateCategory::Closed
+        } else {
+            IssueStateCategory::Open
+        },
+        name: if closed { "Closed" } else { "Open" }.to_owned(),
+        close_reason: None,
+    }
+}
+
+/// The states a GitLab issue can move to (docs/issues.md, "Issue writes and list controls"): the two names a read
+/// reports, so the state a closed issue shows is the one the detail offered.
+fn gitlab_states() -> Vec<IssueState> {
+    vec![named_state(false), named_state(true)]
+}
+
+/// Whether this state name closes the issue. A name GitLab does not offer is refused rather than guessed at.
+fn closing(state: &str) -> Result<bool> {
+    match state {
+        "Open" => Ok(false),
+        "Closed" => Ok(true),
+        _ => Err(CoreError::Invalid(
+            "That state is not one GitLab offers.".into(),
+        )),
+    }
+}
+
+/// One page of a candidates read, at GitLab's own page size.
+fn candidate_page(page: u32) -> [(&'static str, String); 2] {
+    [
+        ("per_page", CANDIDATE_PAGE.to_string()),
+        ("page", page.to_string()),
+    ]
+}
+
 fn summary(host: &str, scope: &str, value: &Value) -> Option<IssueSummary> {
     let iid = value.get("iid").and_then(Value::as_u64)?;
     let closed = text(value, "state").eq_ignore_ascii_case("closed");
@@ -493,15 +578,7 @@ fn summary(host: &str, scope: &str, value: &Value) -> Option<IssueSummary> {
         title: clip(&text(value, "title"), MAX_TITLE),
         url,
         author: value.get("author").and_then(actor),
-        state: IssueState {
-            category: if closed {
-                IssueStateCategory::Closed
-            } else {
-                IssueStateCategory::Open
-            },
-            name: if closed { "Closed" } else { "Open" }.to_owned(),
-            close_reason: None,
-        },
+        state: named_state(closed),
         created_at: text(value, "created_at"),
         updated_at: text(value, "updated_at"),
         closed_at: Some(text(value, "closed_at")).filter(|t| !t.is_empty()),
@@ -607,6 +684,18 @@ fn note_id_ok(comment: &str) -> Result<()> {
     Ok(())
 }
 
+/// The sets of a stored issue that one read returns only in part, so a write that replaces one of them would drop what
+/// lies past the cut.
+#[derive(Default)]
+struct StoredClipped {
+    /// The description is longer than [`MAX_BODY_BYTES`].
+    description: bool,
+    /// The issue carries more than [`MAX_LABELS`] labels.
+    labels: bool,
+    /// The issue carries more than [`MAX_ASSIGNEES`] assignees.
+    assignees: bool,
+}
+
 /// The assignee ids a create sends: a candidate id is the numeric user id on GitLab, never a login typed by hand.
 fn assignee_ids(assignees: &[String]) -> Result<Vec<u64>> {
     assignees
@@ -633,6 +722,10 @@ fn template_segment(key: &str) -> Option<String> {
 #[async_trait]
 impl IssueSource for GitLab {
     fn can_write(&self) -> bool {
+        true
+    }
+
+    fn can_edit(&self) -> bool {
         true
     }
 
@@ -665,8 +758,9 @@ impl IssueSource for GitLab {
             comments: Vec::new(),
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
-            states: None,
+            states: Some(gitlab_states()),
         })
     }
 
@@ -747,6 +841,219 @@ impl IssueSource for GitLab {
         let mut detail = self.get(scope, key).await?;
         detail.reactions = self.issue_reactions(&project, key).await;
         Ok(detail)
+    }
+
+    /// Writes the present fields in one `PUT` and answers the issue as a detail read has it, so the reply carries the
+    /// comments and the states a read does (docs/issues.md, "Issue writes and list controls"). GitLab takes `labels`
+    /// as one comma-separated value and `assignees` by numeric user id.
+    async fn update(&self, scope: &str, key: &str, edit: &IssueEdit<'_>) -> Result<IssueDetail> {
+        let project = project_segment(scope)?;
+        key_ok(key)?;
+        // A write replaces a whole set, and every one of those sets is cut by the read: the description at 64 KiB, the
+        // labels at 100 and the assignees at 50. The checks that need no request run first, so a write refused on the
+        // text alone is refused before anything is read.
+        if let Some(body) = edit.body
+            && body.len() + 4 > super::MAX_BODY_BYTES
+        {
+            // A body this close to the cap may be the cut form: writing it back would drop what GitLab holds past the
+            // cut, which cannot be recovered from here. Refused loudly; the description can be edited in GitLab.
+            return Err(CoreError::Invalid(
+                "A GitLab description of about 64 KiB cannot be written: the read may have cut it. Edit it in GitLab."
+                    .into(),
+            ));
+        }
+        if let Some(labels) = edit.labels {
+            // GitLab takes labels as one comma-separated value, so a name with a comma would silently become two.
+            if labels.iter().any(|label| label.contains(',')) {
+                return Err(CoreError::Invalid(
+                    "A GitLab label cannot contain a comma.".into(),
+                ));
+            }
+            // The read cuts a longer stored name to 200 characters and the picker seeds its selection from those
+            // names, so writing a name at that length could replace the real label with the cut form.
+            if labels
+                .iter()
+                .any(|label| label.chars().count() == MAX_LABEL)
+            {
+                return Err(CoreError::Invalid(
+                    "A GitLab label of 200 characters cannot be written: the read may have cut it. Rename it in GitLab."
+                        .into(),
+                ));
+            }
+        }
+        let assignees = edit.assignees.map(assignee_ids).transpose()?;
+        // A set shorter than the cap is no proof the read did not cut it: the person only ever saw what the read
+        // returned, so whatever they send was derived from it, and replacing the set would drop the entries past the
+        // cut. What GitLab holds is read before anything is written, and a stored set past the cut refuses the write
+        // whatever the values say or however much of them was edited.
+        if edit.body.is_some() || edit.labels.is_some() || edit.assignees.is_some() {
+            let stored = self.stored_clipped(&project, key).await?;
+            if stored.description && edit.body.is_some() {
+                return Err(CoreError::Invalid(
+                    "This GitLab description is longer than one read, so Orbyn only has its first 64 KiB: writing it back would drop the rest. Edit it in GitLab."
+                        .into(),
+                ));
+            }
+            if stored.labels && edit.labels.is_some() {
+                return Err(CoreError::Invalid(
+                    "This GitLab issue has more labels than one read, so Orbyn only has the first 100: writing the set back would drop the rest. Change them in GitLab."
+                        .into(),
+                ));
+            }
+            if stored.assignees && edit.assignees.is_some() {
+                return Err(CoreError::Invalid(
+                    "This GitLab issue has more assignees than one read, so Orbyn only has the first 50: writing the set back would drop the rest. Change them in GitLab."
+                        .into(),
+                ));
+            }
+        }
+        let mut payload = serde_json::Map::new();
+        if let Some(title) = edit.title {
+            payload.insert("title".into(), json!(title));
+        }
+        if let Some(body) = edit.body {
+            payload.insert("description".into(), json!(body));
+        }
+        if let Some(labels) = edit.labels {
+            payload.insert("labels".into(), json!(labels.join(",")));
+        }
+        if let Some(assignees) = assignees {
+            payload.insert("assignee_ids".into(), json!(assignees));
+        }
+        self.put_issue(&project, key, &Value::Object(payload))
+            .await?;
+        self.get(scope, key).await
+    }
+
+    /// Closes or reopens the issue and answers it as it is now stored. GitLab keeps no close reason, so the reason
+    /// a person chose is not stored and the answer's `IssueState.close_reason` says what it stored with `null`.
+    async fn set_state(
+        &self,
+        scope: &str,
+        key: &str,
+        state: &str,
+        _close_reason: Option<IssueCloseReason>,
+    ) -> Result<IssueDetail> {
+        let project = project_segment(scope)?;
+        key_ok(key)?;
+        let event = if closing(state)? { "close" } else { "reopen" };
+        self.put_issue(&project, key, &json!({ "state_event": event }))
+            .await?;
+        self.get(scope, key).await
+    }
+
+    /// The project's labels and its members, inherited ones included, at most 200 of each (docs/issues.md, "Issue
+    /// writes and list controls"). GitLab addresses a person by numeric user id, so an assignee candidate's `id` is
+    /// that id, which is what a write sends.
+    async fn candidates(&self, scope: &str) -> Result<IssueCandidates> {
+        let project = project_segment(scope)?;
+        let mut truncated = false;
+        let mut labels: Vec<IssueCandidateLabel> = Vec::new();
+        let labels_path = format!("/api/v4/projects/{project}/labels");
+        for page in 1..=CANDIDATE_PAGES {
+            let got = self
+                .fetch(&labels_path, &candidate_page(page), "project")
+                .await?;
+            let value = parse(&got.body)?;
+            let rows = value.as_array().ok_or_else(unreadable)?;
+            for row in rows {
+                let Some(name) = row
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())
+                else {
+                    continue;
+                };
+                if labels.len() >= MAX_CANDIDATES {
+                    truncated = true;
+                    break;
+                }
+                // A label Orbyn cannot write in full is not offered as a shorter, different one: GitLab allows
+                // names up to 255 characters and a write carries 200 at most, while the read cuts at 200, so the
+                // name shown could be a cut form and a name of exactly that length is one `update` refuses. Such
+                // labels are left out, and the answer says the list is partial.
+                if name.chars().count() >= super::MAX_LABEL_CHARS {
+                    truncated = true;
+                    continue;
+                }
+                labels.push(IssueCandidateLabel {
+                    name: name.to_owned(),
+                    color: row
+                        .get("color")
+                        .and_then(Value::as_str)
+                        .filter(|color| !color.is_empty())
+                        .map(|color| clip(color, MAX_COLOR)),
+                });
+            }
+            if rows.len() < CANDIDATE_PAGE {
+                break;
+            }
+            if page == CANDIDATE_PAGES {
+                truncated = true;
+            }
+        }
+        let mut assignees: Vec<IssueAssigneeCandidate> = Vec::new();
+        let members_path = format!("/api/v4/projects/{project}/members/all");
+        for page in 1..=CANDIDATE_PAGES {
+            let got = self
+                .fetch(&members_path, &candidate_page(page), "project")
+                .await?;
+            let value = parse(&got.body)?;
+            let rows = value.as_array().ok_or_else(unreadable)?;
+            for row in rows {
+                let Some(login) = row
+                    .get("username")
+                    .and_then(Value::as_str)
+                    .filter(|login| !login.is_empty())
+                else {
+                    continue;
+                };
+                let Some(id) = row.get("id").and_then(Value::as_u64) else {
+                    continue;
+                };
+                if assignees.len() >= MAX_CANDIDATES {
+                    truncated = true;
+                    break;
+                }
+                assignees.push(IssueAssigneeCandidate {
+                    login: clip(login, MAX_LOGIN),
+                    name: row
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .filter(|name| !name.is_empty())
+                        .map(|name| clip(name, MAX_LOGIN)),
+                    id: id.to_string(),
+                });
+            }
+            if rows.len() < CANDIDATE_PAGE {
+                break;
+            }
+            if page == CANDIDATE_PAGES {
+                truncated = true;
+            }
+        }
+        // The picker keys an assignee by the login the read shows and sends the id it looks up by that login. Two members
+        // whose kept login is the same word cannot be told apart by it, and the issue's own assignee read is that same
+        // word, so offering either would let Apply reassign the issue to the wrong person. Neither is offered and the
+        // answer says it is partial, as a label name the read would cut is left out rather than cut.
+        let mut distinct: Vec<IssueAssigneeCandidate> = Vec::with_capacity(assignees.len());
+        let mut shared: Vec<String> = Vec::new();
+        for who in assignees {
+            if shared.contains(&who.login) {
+                continue;
+            }
+            if let Some(index) = distinct.iter().position(|kept| kept.login == who.login) {
+                shared.push(distinct.remove(index).login);
+                truncated = true;
+                continue;
+            }
+            distinct.push(who);
+        }
+        Ok(IssueCandidates {
+            labels,
+            assignees: distinct,
+            truncated,
+        })
     }
 
     async fn templates(&self, scope: &str) -> Result<Vec<IssueTemplate>> {
@@ -912,8 +1219,9 @@ impl IssueSource for GitLab {
             comments,
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
-            states: None,
+            states: Some(gitlab_states()),
         })
     }
 }

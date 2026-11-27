@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMockFetch, setViewportWidth } from "../test-support";
 import { useUi } from "../product/state/ui";
 import { navigate } from "../product/state/route";
+import "./routeScreens.test-support";
 import { App } from "./App";
 import { useSidebarDrawer } from "../product/shell/sidebarDrawer";
 

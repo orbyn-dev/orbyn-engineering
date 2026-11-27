@@ -87,13 +87,18 @@ type ReposView = { repositories: RepoRow[]; clone_directory: string | null; max_
 type PublishInput = { name: string /* owner/name */; visibility: "private" | "public" };
 type StartThreadInput = { repos: { repo_id: string; base_branch: string }[]; engine: string;
                           model: string | null; permission_mode: PermissionMode; message?: string };
-type ThreadRepo = { repo_id; name; branch; added: number; deleted: number; trusted: boolean;
-                    files?: string[] };
+type ThreadRepo = { repo_id; name; branch; base_branch?: string | null; added: number; deleted: number;
+                    trusted: boolean; files?: string[] };
 ```
 
 - `ThreadRepo.files`: **confirmed.** The paths of this repository's changed files, relative to the
   repository root. A change in the Changes list carries `repo_id` and a repo-relative path, so two
   repositories can each have a `README.md`. Absent when the service has not read the changes yet.
+- `ThreadRepo.base_branch`: **confirmed.** The branch this repository's worktree branch was cut from: the
+  repository's `StartRepoChoice.base_branch` at the start, or the branch checked out in that repository when
+  it was added later. Absent only for a repository stored before the service recorded it (migration 90): the
+  base is then not known and is never guessed. The web app does not read it yet; a follow-up compares a
+  branch against it instead of the primary repository's base.
 - `StartThreadInput.permission_mode`: **confirmed.** The thread is created in that mode, checked against the
   engine's `permission_modes`; a mode the engine does not offer is `400 permission_mode_unsupported`
   (Cursor refuses what it cannot enforce, as for a single-repository thread). `model` of `null` is the
@@ -247,7 +252,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   repository. The service answers ONE repository's files per read (`?repo_id=`, absent is the primary) and `FileDiff` has no repository
   field. The panel now reads once per trusted repository of `GET .../repos` and marks each file itself; a thread with no repositories
   reads once, as before. An untrusted repository reports no changes (`files: null`) and its reads are `409 repo_untrusted`, so it is not
-  read; if every read fails the Changes show the error.
+  read; if every read fails the Changes show the error. A line comment made on one of those files names the repository the
+  file came from and carries its `repo_id` when that is another repository, so it is drawn only under that repository's file
+  and the message the agent receives says `<repo name>/<path>`; two repositories' files of one path keep their own comments.
+  The primary repository is the thread's own checkout, which carries no `repo_id` anywhere else either, so a comment on its
+  file names it without one and stays the same file as that tab's comments. An ordinary thread's comments name no repository.
 - **`ThreadRepo.files` is `string[] | null`** (null for an untrusted repository); `pull_request` does not exist. The menu on a
   repository's group therefore offers Commit, Push and Create pull request only (`POST .../git/action` with `repo_id`). Open, Merge
   and Review pull request are gone until the pull request routes take `repo_id`; they would have acted on the primary repository's
@@ -343,7 +352,8 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab, which draws it
   by what it holds; it is not dragged into the message, because the thread's composer chips name a checkout's path (its Open in editor,
   Open in browser, Reveal and line comments carry the `repo_id`, and a comment on another repository's file is context for the next
-  message, never a service write; the Changes panel's comments do not name a repository yet). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
+  message, never a service write; a line comment made in the Changes panel names its file's repository as well, so two repositories'
+  files of one path keep their own comments and the engine is told which repository the comment is about). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
   chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
   carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the
@@ -360,13 +370,19 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 
 ## As built: repo_id on Git and file calls
 
-Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path); a thread with no rows is
-an ordinary thread and nothing below changes for it. The rows are written by thread creation in the next slice.
+Behind the same flag. Migration 66 adds `thread_repos` (thread, repo id, position, name, branch, worktree path), and
+migration 90 adds the base branch each row's worktree was cut from; a thread with no rows is an ordinary thread and
+nothing below changes for it. The rows are written by thread creation in the next slice.
 
 - **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`,
   `PUT .../files/content`, `POST .../previews/file`, `POST .../files/open` and `POST .../paths/resolve` (`GitAction`,
   `CreateBranch`, `SwitchBranch`, `WriteFile`, `OpenPreviewFile`, `OpenInEditor`, `ResolveThreadPath`). Query: `GET .../commits`,
-  `GET .../diff`, `GET .../branches` and `GET .../files/content`. Absent is the primary repository (position 0).
+  `GET .../diff`, `GET .../branches`, `GET .../files/content` and `GET .../files/search`. Absent is the primary
+  repository (position 0). The file search is what the command palette's Go to file and Search in project read, so
+  both answer the repository the explorer's chip names, and a hit opens as that repository's tab. The palette reads the
+  thread's repository list before it searches, so a list still on its way cannot answer the primary while the chip names
+  another; a settled, ordinary or failed read searches the primary as before. The service's `409 repo_untrusted` is shown
+  in the palette with the shared trust prompt instead of an empty list.
 - **One resolver.** Every thread Git and file call reads the thread through one function that, for a multi-repository thread,
   returns it with its `cwd` set to the chosen repository's worktree. So the repository is the only thing that changes: the path of a
   file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
@@ -388,16 +404,20 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
   folder and the answer's `checkout_path` is relative to that repository's worktree. The request's `cwd` is the thread's own
   stored folder (the task folder) and so is the answer's: the thread's move is still `409 stale_owner`, and it is that folder,
   not a worktree, that a client fences against.
-- **Known limit: a task-folder reference.** A reference the engine writes relative to its task folder (a message link or a tool
-  result such as `planner/src/x.ts`) still resolves in the thread's primary repository: the task folder is not a checkout, and
-  its worktrees share no one path namespace. A repository-relative reference that names its `repo_id` resolves in that
-  repository; following a task-folder reference to the repository that owns it needs the link, chip or reveal intent to carry
-  the repository (issue #1581).
+- **A task-folder reference names its repository in its first segment.** A thread-basis reference is written relative to the
+  task folder, whose children are the repositories' worktrees: `planner/src/x.ts` is the thread's `planner` repository's
+  `src/x.ts`, never the primary repository's `planner/src/x.ts`. The resolver maps the first segment to the thread repository
+  whose worktree folder it is, with the platform's own case rules, and resolves the rest inside that worktree; an untrusted
+  repository among them answers `409 repo_untrusted`. The answer's `repo_id` names the repository the coordinates belong to
+  (absent for an ordinary thread, and for a repository that is not the thread's), so the web opens that repository's tab and
+  its read and write carry the `repo_id`; a reference under no repository's folder keeps its older meaning after the
+  repeated-workspace strip, which is the primary repository's worktree.
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
-- **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `added`, `deleted`, `trusted`, `files` at most
-  200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary thread.
+- **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `base_branch`, `added`, `deleted`, `trusted`,
+  `files` at most 200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary
+  thread.
 - **Pull requests per repository.** See "As built: pull requests and removal" below.
 
 ## As built: repository threads and the task folder
@@ -412,7 +432,8 @@ navigation coordinates.
   included, must be trusted, finished cloning and a Git repository: `409 repo_untrusted`, `400`, `409 not_git`. All of that is
   checked before anything is created. `permission_mode` must be one the engine offers (`400 permission_mode_unsupported`).
 - **Branch.** One name for every repository: `branch_name` (a valid branch name, at most 200 characters), else `orbyn/<first 8 characters
-  of the thread id>`. A repository that already has the name refuses the start (`400`), so nothing is overwritten.
+  of the thread id>`. A repository that already has the name refuses the start (`400`), so nothing is overwritten. Each stored row
+  records the base its worktree was cut from (`ThreadRepo.base_branch`, migration 90), so the choice survives the start.
 - **Folder.** `<data>/threads/<thread id>/`, one worktree per repository at `<folder>/<name>` made with
   `git worktree add -b <branch> -- <path> refs/heads/<base>`. The folder is not a repository. The thread's `cwd` is the folder, so the
   engine's working directory and write scope contain every worktree and approvals name the absolute worktree path as always. If any
@@ -424,7 +445,8 @@ navigation coordinates.
   `POST .../paths/resolve` takes it on the body, so a link to one repository's file resolves in that repository.
 - **Adding a repository** (`POST /api/threads/{id}/repos` `{ repo_id }`, `ThreadRepo`): a trusted repository of the project that is not
   in the thread, on the thread's branch cut from that repository's current branch (`400` when none is checked out, when it already has
-  the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class.
+  the branch name or is already in the thread; `409 repo_limit` at 8, `409 repo_untrusted`). Both writes are Person-class. The row
+  records that current branch as its `base_branch`, since it is the branch the worktree was cut from.
 - **Not built.** Per-repository settings.
 
 ## As built: pull requests and removal

@@ -15,6 +15,33 @@ fn alive(text: &str) -> bool {
     text.contains(NEEDLE)
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
+/// The delivery row a post to one member answers with, found by the recipient it names: one post answers one row per
+/// target, so a second row or a row for another member is a bug, not a place a test may read.
+fn delivered_to<'a>(sent: &'a Value, to: &str) -> &'a Value {
+    let delivered = sent["delivered"]
+        .as_array()
+        .expect("a post answers with its delivery rows");
+    assert_eq!(
+        delivered.len(),
+        1,
+        "one post to one member answers one delivery row: {sent}"
+    );
+    delivered
+        .iter()
+        .find(|row| row["to"].as_str() == Some(to))
+        .unwrap_or_else(|| panic!("no delivery to {to}: {sent}"))
+}
+
 /// A third task whose check command holds `NEEDLE`, so the crew's keys now cover it.
 async fn add_late_key(d: &Duo) {
     let mut late = key();
@@ -54,9 +81,9 @@ async fn a_crew_message_starts_no_turn_and_is_never_the_persons_input() {
     let (to_lead, _) = d
         .call(&d.ta, "crew_post", Duo::fact("lead", "for the lead"))
         .await;
-    assert_eq!(to_lead["delivered"][0]["mode"], "held");
+    assert_eq!(delivered_to(&to_lead, "lead")["mode"], "held");
     let (to_b, _) = d.call(&d.ta, "crew_post", Duo::fact(&d.mb, "for B")).await;
-    assert_eq!(to_b["delivered"][0]["mode"], "held");
+    assert_eq!(delivered_to(&to_b, &d.mb)["mode"], "held");
     // A refusal told to the lead takes the same road.
     assert_eq!(
         d.refused(
@@ -80,7 +107,7 @@ async fn a_crew_message_starts_no_turn_and_is_never_the_persons_input() {
 
     // A running turn that takes input is steered, under the crew's role.
     let (to_a, _) = d.call(&d.tb, "crew_post", Duo::fact(&d.ma, "for A")).await;
-    assert_eq!(to_a["delivered"][0]["mode"], "live");
+    assert_eq!(delivered_to(&to_a, &d.ma)["mode"], "live");
     let seen = roles(&d, &wa);
     assert_eq!(seen.len(), before + 1);
     // The worker's own first prompt is the lead's brief; what the bus added is the crew's.
@@ -108,7 +135,7 @@ async fn a_crew_message_starts_no_turn_and_is_never_the_persons_input() {
             Duo::fact(&d.ma, "too late for the turn"),
         )
         .await;
-    assert_eq!(late["delivered"][0]["mode"], "held");
+    assert_eq!(delivered_to(&late, &d.ma)["mode"], "held");
     assert_eq!(d.steered_to(&wa).len(), steered);
     assert!(d.queued(&wa).is_empty());
 
@@ -117,8 +144,9 @@ async fn a_crew_message_starts_no_turn_and_is_never_the_persons_input() {
         .call(&d.ta, "crew_board_read", json!({ "key": "none" }))
         .await;
     let inbox = read["inbox"].as_array().unwrap();
+    let held = one(inbox, "held message in the inbox");
     assert!(
-        inbox[0].as_str().unwrap().contains("too late for the turn"),
+        held.as_str().unwrap().contains("too late for the turn"),
         "{read}"
     );
     let (again, _) = d
@@ -201,7 +229,8 @@ async fn text_stored_before_a_key_is_checked_again_when_it_leaves() {
     let (wa, crew) = (d.w.worker(&d.a), d.w.task(&d.a).crew_id);
     let body = format!("I ran echo {NEEDLE} and it passed");
     let (live, error) = d.call(&d.tb, "crew_post", Duo::fact(&d.ma, &body)).await;
-    assert!(!error && live["delivered"][0]["mode"] == "live", "{live}");
+    assert!(!error, "{live}");
+    assert_eq!(delivered_to(&live, &d.ma)["mode"], "live", "{live}");
     // A's task is verifying from here on, so what B sends A is held.
     d.w.core
         .store
@@ -214,7 +243,7 @@ async fn text_stored_before_a_key_is_checked_again_when_it_leaves() {
             Duo::fact(&d.ma, &format!("{body} for A")),
         )
         .await;
-    assert_eq!(for_a["delivered"][0]["mode"], "held");
+    assert_eq!(delivered_to(&for_a, &d.ma)["mode"], "held");
     let (held_one, _) = d.call(&d.ta, "crew_post", Duo::fact(&d.mb, &body)).await;
     let (held_two, _) = d
         .call(

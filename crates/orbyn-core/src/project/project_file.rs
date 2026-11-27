@@ -538,6 +538,67 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// The Windows twin: a junction is the directory reparse point Windows lets anyone make. At
+    /// the project file's name it is a present aliased first file, so it is reported and never
+    /// read through; the direct `t3.json` cannot silently become the defaults instead.
+    #[cfg(windows)]
+    #[test]
+    fn reparse_points_at_the_project_file_name_are_rejected_without_fallback() {
+        let dir = std::env::temp_dir().join(crate::util::new_id());
+        let root = dir.join("checkout");
+        std::fs::create_dir_all(&root).unwrap();
+        let root = crate::util::canonicalize(&root).unwrap();
+        std::fs::write(root.join("t3.json"), "{}").unwrap();
+        for target in [dir.join("outside"), root.join("inside")] {
+            // A junction needs a directory to point at; what it holds is never reached.
+            std::fs::create_dir_all(&target).unwrap();
+            let link = root.join("orbyn.json");
+            crate::testing::junction(&link, &target);
+            let view = read_project_file(&root);
+            assert_eq!(view.path.as_deref(), Some("orbyn.json"));
+            assert!(
+                view.problem.is_some(),
+                "aliased name must not become defaults"
+            );
+            assert!(view.file.is_none());
+            assert!(view.scripts.is_empty());
+            std::fs::remove_dir(&link).unwrap();
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The Windows twin of the parent replaced by an alias: a junction gets the same answer as
+    /// a symlink. The registered path stops matching the checkout, and the open handle's real
+    /// path is not the expected one, so no other bytes become defaults.
+    #[cfg(windows)]
+    #[test]
+    fn a_parent_replaced_by_a_junction_after_checkout_resolution_cannot_authorize_other_bytes() {
+        let dir = std::env::temp_dir().join(crate::util::new_id());
+        let root = dir.join("checkout");
+        let outside = dir.join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(
+            outside.join("orbyn.json"),
+            r#"{"defaultThreadEnvMode":"worktree"}"#,
+        )
+        .unwrap();
+        let expected = crate::util::canonicalize(&root).unwrap().join("orbyn.json");
+        std::fs::remove_dir(&root).unwrap();
+        crate::testing::junction(&root, &outside);
+        let view = read_project_file(expected.parent().unwrap());
+        assert!(view.problem.is_some());
+        assert!(view.file.is_none());
+        assert!(view.scripts.is_empty());
+
+        assert_eq!(
+            parse_file(&expected).unwrap_err(),
+            "This project file must be a direct file in the checkout."
+        );
+        std::fs::remove_dir(&root).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn the_file_is_read_leniently_and_a_bad_one_is_reported() {
         let dir = std::env::temp_dir().join(crate::util::new_id());

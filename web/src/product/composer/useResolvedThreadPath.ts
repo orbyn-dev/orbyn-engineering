@@ -14,10 +14,10 @@ interface Resolution {
 
 /**
  * The reference's repository: a multi-repository thread's file is named relative to the repository it
- * is in, and the service resolves it there; absent is the thread's primary repository. Only a caller
- * that knows the repository names it: the reveal intents that feed this hook (a markdown link, an
- * engine tool result, a file chip) are written relative to the task folder, so they name none yet; the
- * diff panel's open path names one and sends it without this hook (issue #1581).
+ * is in, and the service resolves it there and answers the repository its coordinates belong to; absent
+ * is the thread's primary repository. Only a caller that knows the repository names it: the reveal intents
+ * that feed this hook (a markdown link, an engine tool result, a file chip) are written relative to the
+ * task folder, so they name none and the answer's `repo_id` says where they landed.
  */
 interface Reference {
   threadId: string;

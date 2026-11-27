@@ -4,4 +4,9 @@ export type ResolvedThreadPath = {
 /**
  * The thread's stored folder, which the request fenced against.
  */
-cwd: string, checkout_path: string | null, repository_path: string | null, };
+cwd: string, checkout_path: string | null, repository_path: string | null, 
+/**
+ * The repository the coordinates are in: the one asked for, or the one a task-folder
+ * reference names; absent is an ordinary thread (docs/multi-repo.md).
+ */
+repo_id?: string, };

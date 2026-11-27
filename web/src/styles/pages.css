@@ -705,6 +705,11 @@ button.folder-row:hover {
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
+    /* The chips keep their place: the box grows 4 px each way (cancelled by the margin) so a tabbed chip's 2 px ring
+       and its 2 px offset stay inside this scroller's clip, and scroll-padding keeps the same room at either end. */
+    margin: -4px;
+    padding: 4px;
+    scroll-padding: 4px;
   }
   .settings-nav::-webkit-scrollbar {
     display: none;

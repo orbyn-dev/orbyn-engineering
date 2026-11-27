@@ -1179,8 +1179,11 @@ Only existing safe files inside the checkout receive a checkout path; missing tr
 files and sibling Git patches may retain repository coordinates for diff navigation.
 A multi-repository thread resolves the reference in the repository its `repo_id`
 names, the primary repository when it is absent, so a worktree is the checkout and
-the task folder is never one; the request's and the answer's `cwd` stay the thread's
-stored folder, so a thread that moved meanwhile is still refused as stale. Ordinary
+the task folder is never one; a thread-basis reference whose first segment is a
+repository's worktree folder in that task folder resolves in that repository, and
+the answer's `repo_id` names the repository its coordinates are in. The request's
+and the answer's `cwd` stay the thread's stored folder, so a thread that moved
+meanwhile is still refused as stale. Ordinary
 file reads/writes and engine scope remain bounded to thread cwd. File and diff reveal
 intents are transient, capture thread/cwd before resolution, and consume only their
 own nonce. Route/cwd changes and newer navigation invalidate stale responses,
@@ -3024,7 +3027,9 @@ Unchanged ignored caches do not require broader scope or data removal; ignored n
 remain an accepted blind spot, pending isolated-checkout work (#436).
 Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
 checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
-other Git reads keep their settings. Those checks need Git 2.40 or later, which
+other Git reads keep the checkout's own conversion, because they compare a working tree against its index and
+forcing the conversion off would publish a clean `core.autocrlf=true` checkout as changed
+(`hardened_reads_keep_the_checkouts_line_ending_conversion`). Those checks need Git 2.40 or later, which
 honours `GIT_ATTR_SOURCE`, so a checkout's own `.gitattributes` stays out of the
 read; older Git errors them rather than pass bytes it did not compare.
 Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
@@ -4032,7 +4037,7 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/files?path=&repo_id=` | `FileEntry[]`, one folder; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `GET /api/threads/:id/files/metadata?path=` | `FileMetadata`: one entry's own kind, size, mode, modified time and whether a final link stays inside; no bytes read; `exists: false` for a missing path |
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
-| `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
+| `GET /api/threads/:id/files/search?q=&content=&repo_id=` | `SearchHit[]` by name or by line; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
 | `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |

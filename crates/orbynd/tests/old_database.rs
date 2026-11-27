@@ -37,6 +37,19 @@ fn old_database(dir: &TempDir) -> std::path::PathBuf {
     data
 }
 
+/// The schema versions a database records, ascending: one row per applied migration.
+fn recorded_versions(data: &std::path::Path) -> Vec<i64> {
+    let conn = rusqlite::Connection::open(data.join("orbyn.sqlite3")).unwrap();
+    let mut statement = conn
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .unwrap();
+    statement
+        .query_map([], |row| row.get::<_, i64>(0))
+        .unwrap()
+        .map(|version| version.unwrap())
+        .collect()
+}
+
 fn start(data: &std::path::Path) -> Service {
     Service::start(
         data,
@@ -121,6 +134,14 @@ async fn a_database_from_before_the_account_owner_is_upgraded_at_start_and_keeps
     let data = old_database_with_rows(&dir, 34);
 
     let service = start(&data);
+    // The upgrade records every migration this build knows, once each. The migration list is the
+    // assertion, not a row count against the newest version: those two say the same thing only
+    // while the versions stay contiguous, and a wrong recorded version keeps the count right.
+    assert_eq!(
+        recorded_versions(&data),
+        support::migration_versions(),
+        "the upgrade must record every migration once"
+    );
     let info = service.json("/api/info").await;
     assert_eq!(info["database_upgrade"]["from"], 34, "{info}");
     assert_eq!(
@@ -178,14 +199,12 @@ async fn a_database_from_before_the_account_owner_is_upgraded_at_start_and_keeps
     );
     service.stop().await;
 
-    // Every migration is recorded exactly once, with none applied again by the second start.
-    let conn = rusqlite::Connection::open(data.join("orbyn.sqlite3")).unwrap();
-    let recorded: i64 = conn
-        .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(recorded, support::latest_schema());
+    // Every migration stays recorded exactly once, and the second start applied none of them again.
+    assert_eq!(
+        recorded_versions(&data),
+        support::migration_versions(),
+        "a second start must not apply a migration again"
+    );
 }
 
 #[tokio::test]
