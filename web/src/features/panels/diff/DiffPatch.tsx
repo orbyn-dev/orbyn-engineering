@@ -57,9 +57,11 @@ export function Patch({ lines, path, threadId, origin, needle, current, full, sp
   threadId: string;
   origin: string;
   /** The repository the file is in, so a comment made here names it and belongs to that repository's file alone. Set for
-   *  every file of a multi-repository thread, the thread's primary repository included; an ordinary thread names none. */
+   *  another repository of a multi-repository thread; absent for the thread's primary repository, whose file is the thread's
+   *  own checkout, and for an ordinary thread. */
   repoId?: string;
-  /** That repository's name, said in the comment and in what the engine receives; set only with `repoId`. */
+  /** That repository's name, said in the comment and in what the engine receives. Set without `repoId` for the thread's
+   *  primary repository, which a comment names while it still belongs to the thread's own checkout. */
   repoName?: string;
   /** The lower-cased find text, or "" when nothing is searched. */
   needle: string;

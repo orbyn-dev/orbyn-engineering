@@ -261,7 +261,7 @@ it("a line comment on another repository's file carries that repository, and sho
   expect(await screen.findByRole("note", { name: "Review comment orbyn-planner/auth/redirect.ts:15" })).toBeInTheDocument();
 });
 
-it("a line comment on the primary repository's file names it too, and is not shown on another repository's same path", async () => {
+it("a line comment on the primary repository's file names it without a repo_id, and is not shown on another repository's same path", async () => {
   const user = userEvent.setup();
   useComposerChips.setState({ chips: {}, sent: {} });
   setReposApi(createReposMock({ threads: { t: repos } }));
@@ -269,7 +269,13 @@ it("a line comment on the primary repository's file names it too, and is not sho
   render(<DiffPanel threadId="t" />);
   await pickFile(user, "app");
   await commentOn(user, await screen.findByRole("group", { name: "Patch" }), "Primary only");
-  expect(useComposerChips.getState().chips.t?.[0]).toMatchObject({ repoId: "p", repoName: "app" });
+  // The primary repository is the thread's own checkout, which names no repository anywhere else: the comment names it but
+  // carries no repo_id, so it is the same file as the one a tab of this repository comments on and follows its edits.
+  const chip = useComposerChips.getState().chips.t?.[0];
+  expect(chip).toMatchObject({ kind: "review", path: "auth/redirect.ts", line: 15, repoName: "app" });
+  expect("repoId" in chip!).toBe(false);
+  expect(chipLabel(chip!)).toBe("app/auth/redirect.ts:15");
+  expect(chipPrompt(chip!)).toContain("app/auth/redirect.ts:15");
   expect(screen.getByRole("note", { name: "Review comment app/auth/redirect.ts:15" })).toBeInTheDocument();
   await pickFile(user, "orbyn-planner");
   expect(screen.queryByRole("note", { name: /^Review comment/ })).toBeNull();

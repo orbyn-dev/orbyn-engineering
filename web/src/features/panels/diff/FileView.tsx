@@ -71,8 +71,9 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   edits?: { revert(path: string, hunk: Hunk, repoId?: string): Promise<void>; saveLine(path: string, number: number, was: string, next: string, repoId?: string): Promise<boolean> };
   /** The file's repository when it is not the thread's primary one: sent as `repo_id` on the read and the write of an edit. Absent for the primary. */
   repoId?: string;
-  /** The file's repository in a multi-repository thread, the primary one included: a comment made here names it and stays
-   *  on this repository's file, where `repoId` above is only what a service call names. Absent on an ordinary thread. */
+  /** The file's repository when it is not the thread's primary one: a comment made here names it and stays on this
+   *  repository's file, where `repoId` above is only what a service call names. Absent for the primary, whose file belongs to
+   *  the thread's own checkout, and on an ordinary thread. */
   fileRepoId?: string;
   narrow?: boolean;
 }) {

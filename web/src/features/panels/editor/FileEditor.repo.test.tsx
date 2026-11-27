@@ -253,3 +253,21 @@ it("moves a repository's file comment with its line on save, and leaves another 
   expect(chips.find((chip) => chip.id === "mine")).toMatchObject({ line: 2, endLine: 2, sourceRevision: "r2", comment: "here" });
   expect(chips.find((chip) => chip.id === "primary")).toMatchObject({ line: 1, sourceRevision: "r-planner", comment: "primary" });
 });
+
+it("moves a comment the Changes panel made on the primary repository's file with its line on save", async () => {
+  const served = serve();
+  const key = fileKey("t", "/repo", "notes.txt");
+  render(<><EditorTitleExtras threadId="t" tabId="main" onSave={() => void saveSession(key)} /><Viewer threadId="t" tabId="main" path="notes.txt" line={null} /></>);
+  const box = await planner();
+  await waitFor(() => expect(box).toHaveValue("primary text\n"));
+  act(() => {
+    // What the Changes panel makes for the primary repository: it names the repository and carries no repo_id, because the
+    // primary is the thread's own checkout. The save therefore finds and moves it, as it does an ordinary file comment's.
+    useComposerChips.getState().add("t", { id: "changes", kind: "review", path: "notes.txt", line: 1, endLine: 1, comment: "from changes", excerpt: "primary text", sourceRevision: "r-primary", sourceCwd: "/repo", repoName: "app" });
+  });
+  act(() => useEditorSessions.getState().patch(key, { text: `// header\nprimary text\n` }));
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(served.puts).toHaveLength(1));
+  expect(useComposerChips.getState().chips.t?.find((chip) => chip.id === "changes")).toMatchObject({ line: 2, endLine: 2, sourceRevision: "r2", repoName: "app", comment: "from changes" });
+  expect("repoId" in useComposerChips.getState().chips.t!.find((chip) => chip.id === "changes")!).toBe(false);
+});

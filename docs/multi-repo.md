@@ -247,9 +247,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   repository. The service answers ONE repository's files per read (`?repo_id=`, absent is the primary) and `FileDiff` has no repository
   field. The panel now reads once per trusted repository of `GET .../repos` and marks each file itself; a thread with no repositories
   reads once, as before. An untrusted repository reports no changes (`files: null`) and its reads are `409 repo_untrusted`, so it is not
-  read; if every read fails the Changes show the error. A line comment made on one of those files carries the repository the file came
-  from (`repo_id` and name), so it is drawn only under that repository's file and the message the agent receives says
-  `<repo name>/<path>`; two repositories' files of one path keep their own comments. An ordinary thread's comments name no repository.
+  read; if every read fails the Changes show the error. A line comment made on one of those files names the repository the
+  file came from and carries its `repo_id` when that is another repository, so it is drawn only under that repository's file
+  and the message the agent receives says `<repo name>/<path>`; two repositories' files of one path keep their own comments.
+  The primary repository is the thread's own checkout, which carries no `repo_id` anywhere else either, so a comment on its
+  file names it without one and stays the same file as that tab's comments. An ordinary thread's comments name no repository.
 - **`ThreadRepo.files` is `string[] | null`** (null for an untrusted repository); `pull_request` does not exist. The menu on a
   repository's group therefore offers Commit, Push and Create pull request only (`POST .../git/action` with `repo_id`). Open, Merge
   and Review pull request are gone until the pull request routes take `repo_id`; they would have acted on the primary repository's
