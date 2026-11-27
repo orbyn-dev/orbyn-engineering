@@ -270,8 +270,12 @@ test("the Git menu commits in the chosen repository only", async ({ page }) => {
   await expect(repositoryChip(page.locator(".repos-scope"), secondName)).toBeVisible();
   await page.keyboard.press("Escape");
 
-  // A change of the second repository's own for the menu to commit.
+  // A change of the second repository's own for the menu to commit, and one pending in the primary that the commit must
+  // leave alone: with the primary clean, an implementation that also staged it there could pass every assertion.
   writeFileSync(join(secondWorktree, "picker.txt"), "Committed through the Git menu of the chosen repository.\n");
+  writeFileSync(join(primaryWorktree, "primary-only.txt"), "Another repository's commit neither stages nor commits this.\n");
+  const primaryHead = git(primaryWorktree, "rev-parse", "HEAD");
+  const primaryStatus = git(primaryWorktree, "status", "--porcelain");
   const subject = `From the picker ${randomUUID().slice(0, 6)}`;
   await page.getByRole("button", { name: "Git", exact: true }).click();
   await page.getByRole("menuitem", { name: "Commit", exact: true }).click();
@@ -287,4 +291,7 @@ test("the Git menu commits in the chosen repository only", async ({ page }) => {
   // The commit is that repository's: its worktree holds it, and the primary's history does not.
   expect(git(secondWorktree, "log", "-1", "--format=%s")).toBe(subject);
   expect(git(primaryWorktree, "log", "-1", "--format=%s")).not.toBe(subject);
+  // The primary's own pending change is still pending: the write neither staged it nor committed it.
+  expect(git(primaryWorktree, "rev-parse", "HEAD")).toBe(primaryHead);
+  expect(git(primaryWorktree, "status", "--porcelain")).toBe(primaryStatus);
 });
