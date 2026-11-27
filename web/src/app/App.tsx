@@ -5,7 +5,7 @@ import { adoptEnvironmentTheme } from "./environmentTheme";
 import { toFailure } from "../lib/useAsync";
 import { useUi, applyTheme } from "../product/state/ui";
 import { ErrorState, Splash } from "../product/ui/states";
-import { onShellEvent, Shell } from "./shell";
+import { onShellEvent, ScreenBoundary, Shell } from "./shell";
 import { useConnection, watchConnection } from "../product/state/connection";
 import { upgradeToast } from "../product/state/healthToasts";
 import { AttentionPreview, attentionPreviewRoute, CommandBlocksPreview, commandBlocksPreviewRoute, PreviewWindow, previewWindowRoute } from "../features/panels";
@@ -156,11 +156,14 @@ function BootedApp() {
         <Splash label="Connecting to Orbyn" />
       );
     case "sign-in":
-      // Sign-in is its own chunk, so the boot screen keeps the splash until its code arrives.
+      // Sign-in is its own chunk, so the boot screen keeps the splash until its code arrives, and a chunk
+      // that does not arrive is answered by the boundary rather than by a blank window.
       return (
-        <Suspense fallback={<Splash label="Connecting to Orbyn" />}>
-          <SignIn onSignedIn={start} />
-        </Suspense>
+        <ScreenBoundary>
+          <Suspense fallback={<Splash label="Connecting to Orbyn" />}>
+            <SignIn onSignedIn={start} />
+          </Suspense>
+        </ScreenBoundary>
       );
     case "failed":
       return (

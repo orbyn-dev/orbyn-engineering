@@ -4,6 +4,7 @@ import { useUi } from "../../product/state/ui";
 import { Empty, Loading } from "../../product/ui/states";
 import { LinkButton } from "../../ui/controls";
 import { routeHref, type Route } from "../../product/state/route";
+import { ScreenBoundary } from "./ScreenBoundary";
 
 export type PageRoute = Exclude<Route, { name: "settings" }>;
 
@@ -59,13 +60,17 @@ export function RouteView({
   onScreen: (key: string) => void;
 }) {
   const page = (
-    // The boundary sits inside the page's own frame, so the file panel, the title bar and the
-    // sidebar stay put while a screen's chunk loads, and Loading draws nothing at all unless the
-    // wait outlasts 400 ms.
-    <Suspense fallback={<Loading label="Opening the page" />}>
-      <PageScreen route={route} needsProject={needsProject} />
-      <ScreenPainted screenKey={routeHref(route)} onScreen={onScreen} />
-    </Suspense>
+    // The boundary sits outside Suspense, so a chunk that does not arrive is answered here instead of taking
+    // the whole app down, and it is keyed by the address, so moving to another screen tries that one.
+    <ScreenBoundary key={routeHref(route)}>
+      {/* The boundary sits inside the page's own frame, so the file panel, the title bar and the
+          sidebar stay put while a screen's chunk loads, and Loading draws nothing at all unless the
+          wait outlasts 400 ms. */}
+      <Suspense fallback={<Loading label="Opening the page" />}>
+        <PageScreen route={route} needsProject={needsProject} />
+        <ScreenPainted screenKey={routeHref(route)} onScreen={onScreen} />
+      </Suspense>
+    </ScreenBoundary>
   );
   return route.name === "home" || route.name === "new" || route.name === "project" ? (
     <WithFilePanel>{page}</WithFilePanel>

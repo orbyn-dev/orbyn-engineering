@@ -27,9 +27,31 @@ import { useGlobalKeys } from "./keys";
 import { BackgroundAnnouncer, useThreadNotifications } from "./notifications";
 import { useRouteFocus, useToastClearance } from "./focus";
 import { RouteView, ScreenPainted, type PageRoute } from "./routes";
+import { ScreenBoundary } from "./ScreenBoundary";
 
 /** Settings is a route screen too, drawn by the shell over the page it covers. */
 const SettingsPage = lazy(() => import("../../features/settings").then((module) => ({ default: module.SettingsPage })));
+
+/**
+ * What the Settings chunk draws while it arrives. Nothing of Settings is mounted yet, so the page's own
+ * Escape-to-close listener is not there either, and a chunk slow to arrive would hold a person on Settings
+ * with no way back: this answers Escape itself, with the page's own guard for a dialog, which owns the key
+ * even when its focused button has just been disabled. The page takes over the moment it is on the page.
+ * Exported for its test, which presses the key.
+ */
+export function SettingsLoading({ onClose }: { onClose(): void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (document.querySelector("dialog[open], [aria-modal='true']")) return;
+      event.preventDefault();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return <Loading label="Opening Settings" />;
+}
 
 export function Shell() {
   const route = useRoute();
@@ -212,10 +234,12 @@ export function Shell() {
         // The page under the phone's sheet stays mounted, so its scroll and its terminal survive.
         <main id="main" ref={main} tabIndex={-1} className="main" hidden={phone && drawerOpen}>
           {route.name === "settings" ? (
-            <Suspense fallback={<Loading label="Opening Settings" />}>
-              <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => closeSettings(underneath)} />
-              <ScreenPainted screenKey={routeKey} onScreen={setSettingsOnPage} />
-            </Suspense>
+            <ScreenBoundary>
+              <Suspense fallback={<SettingsLoading onClose={() => closeSettings(underneath)} />}>
+                <SettingsPage section={route.section} sub={route.sub} unknown={route.unknown} row={route.row} onClose={() => closeSettings(underneath)} />
+                <ScreenPainted screenKey={routeKey} onScreen={setSettingsOnPage} />
+              </Suspense>
+            </ScreenBoundary>
           ) : null}
           {/* The page behind settings stays mounted, so a terminal, preview or scroll position survives. `hidden` takes it out of the
               accessibility tree and the tab order while Settings is open, so the open page owns the only h1. Not `inert`: the theme
