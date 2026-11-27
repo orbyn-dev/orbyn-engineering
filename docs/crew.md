@@ -1446,15 +1446,15 @@ in, always waits for the person, never for a timer or an agent's answer. The aut
 facts; the code, the builder's notes and messages and its worktree are never given, and a strengthening round adds only
 the survivors and the lines each changed. The gate runs the project's own mutation tool (cargo-mutants for Rust,
 Stryker for TypeScript, mutmut for Python, nothing else yet), which Crew runs only where the project has it installed and
-never installs: no tool, or a tool that is not installed, is Not measured, never a pass and never a zero. A key that
-kills no mutant is not an oracle, so the task does not pass on it; a key that kills at least one can catch a break,
-which is all a passed gate claims, not that the change is right and not that the survivors are harmless. One mutant can
-be killed by several checks, so the per-check kills can pass the killed total, and a check that kills none is listed
-with 0. A tool that stops part-way has no result: what ran is never counted as a partial one. A failed gate goes back to
-its author with the survivors for two rounds (Proposed), then Crew asks the person and merges nothing; a new check is
-proved only by failing on a survivor and passing on the real code. Only a passed gate removes "Answer key not
-validated". Only a fake runs the gate (`ScriptedGate`): no mutation tool starts, no engine is called, and no store,
-route or screen reads any of this yet.
+never installs: no tool, a tool that is not installed, or a tool that made no mutant at all, is Not measured, never a
+pass and never a zero. A key that kills no mutant is not an oracle, so the task does not pass on it; a key that kills
+at least one can catch a break, which is all a passed gate claims, not that the change is right and not that the
+survivors are harmless. One mutant can be killed by several checks, so the per-check kills can pass the killed total,
+and a check that kills none is listed with 0. A tool that stops part-way has no result: what ran is never counted as a
+partial one. A failed gate goes back to its author with the survivors for two rounds (Proposed), then Crew asks the
+person and merges nothing; a new check is proved only by failing on a survivor and passing on the real code. Only a
+passed gate removes "Answer key not validated". Only a fake runs the gate (`ScriptedGate`): no mutation tool starts, no
+engine is called, and no store, route or screen reads any of this yet.
 
 **As built (slice 4l, store, migration 47):** `store/crew_capacity.rs` keeps a project's review-capacity settings
 (`crew_capacity_settings`: limit, default 8, and sampling, default off), a task's `priority` (default `medium`) and

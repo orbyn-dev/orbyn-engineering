@@ -14,13 +14,15 @@ pub enum Language {
     Other,
 }
 
-/// Why the gate makes no mutant. Neither is a pass, and neither is a zero.
+/// Why the gate makes no mutant. None of these is a pass, and none is a zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NoGate {
     /// No tool Crew supports for the language ("No tool Crew supports yet").
     Unsupported,
     /// The language has a tool and the project does not have it installed. Crew never installs one.
     NotInstalled,
+    /// The tool ran and made no mutant, so there is nothing to run the key against.
+    NoMutant,
 }
 
 /// The tool the gate will run, and the version the project reports for it.

@@ -84,7 +84,7 @@ pub enum Verdict {
 /// Why a gate has no result at all. A stale or partial kill count is never reported as one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GateStop {
-    /// Nothing was measured: no tool for the language, or the tool is not installed in the project.
+    /// Nothing was measured: no tool for the language, the tool is not installed in the project, or the tool made no mutant.
     NotMeasured(NoGate),
     /// The tool stopped part-way, so there is no result: `ran` of `made` mutants ran before it stopped, and nothing it
     /// did is counted. `reason` is the tool's own, one line, and holds no file text.
@@ -235,7 +235,9 @@ pub trait MutationGate {
     fn run(&self, language: Language, checks: &[Check]) -> std::result::Result<Gate, GateStop>;
 }
 
-/// A gate whose mutants and kills are told to it, for tests and for everything this slice has: no tool runs.
+/// A gate whose mutants and kills are told to it, for tests and for everything this slice has: no tool runs. It answers the
+/// language the way the real gate does, so a language with no tool is Not measured whatever the script says, and it stops
+/// rather than passing a run that made no mutant.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Debug, Default)]
 pub struct ScriptedGate {
@@ -305,7 +307,12 @@ fn scripted_mutant(n: u32) -> Mutant {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MutationGate for ScriptedGate {
-    fn run(&self, _language: Language, checks: &[Check]) -> std::result::Result<Gate, GateStop> {
+    fn run(&self, language: Language, checks: &[Check]) -> std::result::Result<Gate, GateStop> {
+        // The fake stands in for the real gate, so it answers the language the way the real one does: a language with no tool
+        // makes no mutant, whatever it was told to script.
+        if super::tools::tool_for(language).is_none() {
+            return Err(GateStop::NotMeasured(NoGate::Unsupported));
+        }
         match &self.stop {
             Some(ScriptedStop::NotMeasured(why)) => return Err(GateStop::NotMeasured(*why)),
             Some(ScriptedStop::After { ran }) => {
@@ -316,6 +323,11 @@ impl MutationGate for ScriptedGate {
                 });
             }
             None => {}
+        }
+        // `Ok` always carries at least one mutant, so a run that made none is a stop: an empty gate would be a pass with
+        // nothing behind it.
+        if self.made == 0 {
+            return Err(GateStop::NotMeasured(NoGate::NoMutant));
         }
         let runs = (0..self.made)
             .map(|index| {
@@ -631,6 +643,28 @@ mod tests {
         assert_eq!(
             ScriptedGate::unsupported().run(Language::Other, &[check("c1")]),
             Err(GateStop::NotMeasured(NoGate::Unsupported))
+        );
+    }
+
+    #[test]
+    fn a_language_with_no_tool_stays_not_measured_with_an_ordinary_killing_script() {
+        // The fake answers the language the way the real gate does, so no tool means no mutant: the script cannot pass it.
+        assert_eq!(
+            ScriptedGate::killing(1, vec![vec!["c1"]]).run(Language::Other, &[check("c1")]),
+            Err(GateStop::NotMeasured(NoGate::Unsupported))
+        );
+    }
+
+    #[test]
+    fn a_gate_that_makes_no_mutant_is_a_stop_and_never_an_empty_pass() {
+        // `Ok` always carries at least one mutant: a fake told to make none is the same stop, not an empty gate.
+        assert_eq!(
+            ScriptedGate::surviving(0).run(Language::Rust, &[]),
+            Err(GateStop::NotMeasured(NoGate::NoMutant))
+        );
+        assert_eq!(
+            ScriptedGate::default().run(Language::Rust, &[]),
+            Err(GateStop::NotMeasured(NoGate::NoMutant))
         );
     }
 }
