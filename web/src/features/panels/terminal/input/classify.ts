@@ -84,10 +84,11 @@ const SECRET_PATTERNS: readonly RegExp[] = [
   // as a whole word, so `DB_PASS` counts and `BYPASS` does not, and `PASSPHRASE` is a name of its own. A quoted value is read
   // inside its quotes: `"$VAR"` and `"$(command)"` copy or run and an empty or blank `""` holds nothing, while `"hunter2"` and
   // `" hunter2"` are typed literals. An assignment whose value falls back to a default is read by `typedAssignment` below.
-  /\b[A-Z0-9_]*(?:PASSPHRASE|KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=(?:(?!["'$])(?!\s|$)\S+|"[ \t]*(?![$`"\s])\S|'[ \t]*(?!['\s])\S)/i,
+  /\b[A-Z0-9_]*(?:PASSPHRASE|KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=(?:(?![`"'$])(?!\s|$)\S+|"[ \t]*(?![$`"\s])\S|'[ \t]*(?!['\s])\S)/i,
   // A secret-named assignment with an ANSI-C literal value (`API_TOKEN=$'hunter2'`): the literal is typed, and what it
-  // holds is text even when it is a backtick or a `$` (`API_TOKEN=$'`id`'` holds the two backticks and runs nothing).
-  /\b[A-Z0-9_]*(?:PASSPHRASE|KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$'(?!['"$])/i,
+  // holds is text even when it is a backtick or a `$` (`API_TOKEN=$'`id`'` holds the two backticks and runs nothing). A
+  // literal of blanks alone holds nothing, the same as `""`, so it only counts when a typed character follows its blanks.
+  /\b[A-Z0-9_]*(?:PASSPHRASE|KEY|TOKEN|SECRET|PASSWORD|PASSWD|(?<![A-Z0-9])PASS(?![A-Z0-9]))[A-Z0-9_]*=["']?\$'[ \t]*(?![ \t]|['"$])/i,
   // A secret-named assignment with a locale-string value (`API_TOKEN=$"hunter2"`). A `$"..."` still expands what it
   // holds, so one that starts with a copy or a command is only that value (`PASSPHRASE=$"`id`"`, `PASSPHRASE=$" ${VAR}"`),
   // and one that starts with a typed character is the locale literal it says it is (`PASSPHRASE=$"hunter2"`).

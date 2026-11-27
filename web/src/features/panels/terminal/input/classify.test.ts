@@ -56,7 +56,11 @@ describe("looksSecret", () => {
     // unset-only default is the whole word, so the `:-` inside it must not hide the `-` that carries `hunter2`.
     "API_TOKEN=${TOKEN:-${OTHER-hunter2${COPY:-$X}}}",
     // bash: `unset arr; API_TOKEN=${arr[0]:-hunter2}` prints `hunter2` — the operator sits after the subscript.
-    "API_TOKEN=${arr[0]:-hunter2}"])("flags %j", (text) => expect(looksSecret(text)).toBe(true));
+    "API_TOKEN=${arr[0]:-hunter2}",
+    // bash: `PASSPHRASE=`printf RAN`hunter2` prints `RANhunter2` — the command runs and the typed `hunter2` follows it.
+    "PASSPHRASE=`printf RAN`hunter2",
+    // bash: `PASSPHRASE=$' hunter2'` prints a blank and then `hunter2`, which is typed text.
+    "PASSPHRASE=$' hunter2'"])("flags %j", (text) => expect(looksSecret(text)).toBe(true));
   it.each(["ls -la", "why is the build failing?", "git log --oneline", "export PATH=$PATH:/x", "echo $API_KEY", "how do I set an api key", "TOKEN=$(gh auth token)", "TOKEN=${VAR}", "TOKEN=${VAR:-$OTHER}", "TOKEN=${VAR:-}", "API_TOKEN=${TOKEN:-$(gh auth token)}", "PATH=${PATH:-/usr/local/bin}", "BYPASS=${BYPASS:-1}", "API_TOKEN=${TOKEN:-`gh auth token`}", "API_TOKEN=\"${TOKEN:-`gh auth token`}\"", "TOKEN=\"${VAR}\"", "TOKEN=\"$VAR\"", "TOKEN=\"$(gh auth token)\"", "API_TOKEN=${TOKEN:-${OTHER}}", "API_TOKEN=${TOKEN:-$OTHER}", "API_TOKEN=${TOKEN:- }", "TOKEN=\"\"", "TOKEN=\"`gh auth token`\"", "API_TOKEN=${TOKEN:-${OTHER:-$ANOTHER}}", "API_TOKEN=${TOKEN:-${OTHER:-${THIRD}}}", "API_TOKEN=${TOKEN:-${OTHER:- }}", "PASSPHRASE=$(op read op://vault/item)", "PASSPHRASE=${PASSPHRASE:-$OTHER}", "API_TOKEN=\"${TOKEN:-$OTHER}\"",
     // bash: `API_TOKEN="${TOKEN:-$(echo })}"` prints `}` — the `}` belongs to the command substitution, so the expansion
     // closes at the last `}` and the value is that command's output, never text someone typed.
@@ -83,5 +87,10 @@ describe("looksSecret", () => {
     // bash: `TOKEN=abcdefgh; API_TOKEN=${TOKEN:0:${COPY:-2}}` prints `ab`, and `${TOKEN#*:-hunter2}` prints `abcdefgh` —
     // the operator the shell acts on is the one after the parameter (or its subscript), and these words only cut a copy.
     "API_TOKEN=${TOKEN:0:${COPY:-2}}",
-    "API_TOKEN=${TOKEN#*:-hunter2}"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
+    "API_TOKEN=${TOKEN#*:-hunter2}",
+    // bash: `PASSPHRASE=`printf RAN`` and `PASSPHRASE=$(printf RAN)` print `RAN`, and `PASSPHRASE=$'   '` prints only
+    // blanks — a value the shell runs or that holds nothing is no text someone typed.
+    "PASSPHRASE=`printf RAN`",
+    "PASSPHRASE=$(printf RAN)",
+    "PASSPHRASE=$'   '"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
 });
