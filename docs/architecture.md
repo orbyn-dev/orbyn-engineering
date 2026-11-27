@@ -2573,7 +2573,9 @@ Worktrees sit beside the primary clone at `<repo>-wt/<purpose>/`, wherever that 
 lives, on a neutral `feat/<purpose>` branch, and a registered worktree for a purpose
 is reused. A writing crew worker's own checkout is one of these too, purpose
 `crew-<member>` on branch `crew-<member>`, built and off by default (docs/crew.md,
-"Isolation"). A custom worktree location is not offered or accepted by either settings
+"Isolation"); its checkout is reused only through that branch, never by the folder's
+name alone, and a folder Orbyn did not record making is left alone rather than cleared.
+A custom worktree location is not offered or accepted by either settings
 API. Earlier stored location preferences are left intact but ignored; they cannot
 redirect new worktrees. Existing Git-registered worktrees remain at their current
 paths, including earlier layouts, with no file migration or removal.

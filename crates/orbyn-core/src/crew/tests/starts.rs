@@ -1042,3 +1042,26 @@ async fn a_repository_that_declares_a_check_condition_refuses_the_start() {
     assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
     w.core.shutdown().await;
 }
+
+/// A created checkout is removed only when the worker's run is confirmed gone: a run still live in
+/// it keeps its folder, so a failed start never pulls the files out from under a running worker.
+#[tokio::test]
+async fn a_checkout_is_only_discarded_once_the_worker_is_confirmed_stopped() {
+    let w = quiet().await;
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let task = answer["task"].as_str().unwrap().to_owned();
+    // The worker's turn hangs, so its run is live and nothing confirms it stopped.
+    w.until("the worker's turn to run", |w| {
+        !w.core.worker_confirmed_stopped(&task)
+    })
+    .await;
+    // Once its run is gone and its queue is empty, the start may remove the checkout it made.
+    let run = w.core.store.crew_run(&task).unwrap().unwrap();
+    w.core.stop_crew_worker(Some(&run), "test").await.unwrap();
+    w.until("the worker to stop", |w| {
+        w.core.worker_confirmed_stopped(&task)
+    })
+    .await;
+    w.core.shutdown().await;
+}

@@ -318,10 +318,13 @@ async fn a_crashed_attempts_folder_is_cleared_instead_of_blocking_every_retry() 
     let lead = lead_of(&world);
     let repo = Path::new(&world.repo);
     let root = worktree_root(repo);
-    // A folder git no longer lists, left by a crash: Orbyn's own name in Orbyn's own root.
+    // A folder git no longer lists, left by a crash: Orbyn's own name in Orbyn's own root, with the
+    // record Orbyn writes beside it before the folder is made.
     let path = root.join("crew-worker-a");
     std::fs::create_dir_all(root.join("crew-worker-a/stale")).unwrap();
     std::fs::write(path.join("stale/left.txt"), "left behind\n").unwrap();
+    std::fs::create_dir_all(root.join(".orbyn")).unwrap();
+    std::fs::write(root.join(".orbyn/crew-worker-a"), path.to_str().unwrap()).unwrap();
     let made = world
         .core
         .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
@@ -334,6 +337,187 @@ async fn a_crashed_attempts_folder_is_cleared_instead_of_blocking_every_retry() 
         "the crashed attempt's files are gone, not inherited"
     );
     assert!(path.join("src/base.txt").is_file());
+}
+
+#[tokio::test]
+async fn a_folder_orbyn_did_not_make_is_kept_and_the_start_refused() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let repo = Path::new(&world.repo);
+    let root = worktree_root(repo);
+    // A folder with Orbyn's own name in Orbyn's own root, but no record that Orbyn made one there: it
+    // can hold a person's work, so it is kept whole and the start says what is in the way.
+    let path = root.join("crew-worker-a");
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("notes.txt"), "a person's work\n").unwrap();
+    let error = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .expect_err("a folder Orbyn cannot prove it made is refused, never deleted");
+    assert!(error.message.contains("did not make"), "{}", error.message);
+    assert!(
+        path.join("notes.txt").is_file(),
+        "the folder and what it held are kept"
+    );
+    assert_eq!(
+        listed(repo).len(),
+        1,
+        "nothing was made for the refused start"
+    );
+    assert_eq!(
+        git_out(repo, &["branch", "--list", "crew-worker-a"]),
+        "",
+        "no branch was started"
+    );
+}
+
+#[tokio::test]
+async fn a_checkout_on_another_branch_is_never_taken_for_the_workers() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let repo = Path::new(&world.repo);
+    let root = worktree_root(repo);
+    // A person's own checkout for another branch, at a path whose last part is the member's folder
+    // name: git reuses a registered worktree by that name, so it is never taken for the member's.
+    let manual = root.join("manual/crew-worker-a");
+    std::fs::create_dir_all(manual.parent().unwrap()).unwrap();
+    git_out(
+        repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/manual",
+            manual.to_str().unwrap(),
+        ],
+    );
+    let notes = manual.join("notes.txt");
+    std::fs::write(&notes, "in progress\n").unwrap();
+    let made = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .unwrap()
+        .expect("a brief that writes gets a worktree");
+    assert_eq!(
+        at(&made),
+        root.join("crew-worker-a"),
+        "the worker gets its own folder, never the person's checkout"
+    );
+    assert_eq!(
+        branch(&at(&made)),
+        "crew-worker-a",
+        "the worker is on the member's own branch"
+    );
+    assert!(
+        made.created,
+        "this start made that folder, so only it is ever removed"
+    );
+    // What the person's checkout held is where they left it.
+    assert!(notes.is_file(), "the person's checkout keeps what it held");
+    assert_eq!(branch(&manual), "feat/manual");
+    assert_eq!(
+        listed(repo).len(),
+        3,
+        "the clone, the person's checkout and the worker's: {:?}",
+        listed(repo)
+    );
+}
+
+#[tokio::test]
+async fn a_checkout_at_the_workers_path_on_another_branch_refuses_the_start() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let repo = Path::new(&world.repo);
+    let root = worktree_root(repo);
+    // The member's own folder name is already a person's checkout, on a branch the member does not
+    // own: it is never taken for the worker's, and never deleted to make room.
+    let path = root.join("crew-worker-a");
+    std::fs::create_dir_all(&root).unwrap();
+    git_out(
+        repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feat/manual",
+            path.to_str().unwrap(),
+        ],
+    );
+    let notes = path.join("notes.txt");
+    std::fs::write(&notes, "in progress\n").unwrap();
+    let error = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker-a"), None)
+        .await
+        .expect_err("a checkout on another branch is never taken for the worker's");
+    assert!(
+        error.message.contains("another checkout"),
+        "{}",
+        error.message
+    );
+    assert!(notes.is_file(), "the checkout and what it held are kept");
+    assert_eq!(
+        branch(&path),
+        "feat/manual",
+        "it stays the person's checkout"
+    );
+    assert_eq!(
+        listed(repo).len(),
+        2,
+        "the clone and that one checkout: {:?}",
+        listed(repo)
+    );
+}
+
+#[tokio::test]
+async fn an_id_that_cannot_name_a_checkout_is_refused() {
+    let world = setup().await;
+    let lead = lead_of(&world);
+    let repo = Path::new(&world.repo);
+    let root = worktree_root(repo);
+    // `worker.a` and `worker-a` are both member ids, and a name built by replacing what git does not
+    // keep would give both one folder and one branch: the id that cannot be its own name is refused
+    // a checkout instead, so two members can never share one.
+    let error = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member("worker.a"), None)
+        .await
+        .expect_err("an id that is not a checkout name is refused");
+    assert!(error.message.contains("lowercase"), "{}", error.message);
+    assert!(
+        !root.join("crew-worker-a").exists(),
+        "no folder is made for the refused id"
+    );
+    // The longest id a name holds works; one character more is refused rather than cut short, which
+    // would give it the folder and branch of the id cut to that length.
+    let longest = "a".repeat(59);
+    let made = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member(&longest), None)
+        .await
+        .unwrap()
+        .expect("a brief that writes gets a worktree");
+    assert_eq!(
+        at(&made).file_name().unwrap().to_string_lossy(),
+        format!("crew-{longest}")
+    );
+    let longer = "a".repeat(60);
+    let error = world
+        .core
+        .crew_writer_worktree(&lead, &writing(), &member(&longer), None)
+        .await
+        .expect_err("an id longer than the name is refused, never cut");
+    assert!(error.message.contains("59"), "{}", error.message);
+    assert_eq!(
+        listed(repo).len(),
+        2,
+        "the clone and the one checkout made: {:?}",
+        listed(repo)
+    );
 }
 
 #[tokio::test]

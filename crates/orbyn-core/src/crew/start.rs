@@ -887,10 +887,23 @@ impl Core {
             Ok(thread) => thread,
             Err(error) => {
                 // A worker that never started leaves no checkout behind, unless it was an existing one:
-                // the member's own checkout keeps what it already held.
+                // the member's own checkout keeps what it already held. A checkout this start made goes
+                // only once the worker is confirmed stopped: a run that may still be live in it keeps
+                // its folder, and the start says so instead of pulling the files out from under it.
                 if let Some(worktree) = &worktree
                     && worktree.created
                 {
+                    if !self.worker_confirmed_stopped(brief.id.as_str()) {
+                        let path = &worktree.worktree.path;
+                        tracing::warn!(%path, "keeping a crew writer's worktree: its worker did not stop");
+                        return Err(CrewError::new(
+                            ErrorCode::InvalidTransition,
+                            format!(
+                                "{} The worker did not stop, so its checkout was kept at {path}.",
+                                error.message
+                            ),
+                        ));
+                    }
                     self.discard_crew_worktree(lead, std::path::Path::new(&worktree.worktree.path))
                         .await;
                 }
@@ -898,6 +911,36 @@ impl Core {
             }
         };
         Ok(json!({ "thread": thread.id, "member": member }))
+    }
+
+    /// Whether a task's worker is confirmed gone, by the rule a stop confirms with: no run is left,
+    /// or its thread has no turn running and nothing queued. A checkout this start made is removed
+    /// only when this says so, so a worker that could not be stopped keeps the folder it runs in.
+    pub(super) fn worker_confirmed_stopped(&self, task_id: &str) -> bool {
+        let run = match self.store.crew_run(task_id) {
+            Ok(run) => run,
+            Err(error) => {
+                tracing::warn!(%error, "could not read the run of a crew task to confirm its worker stopped");
+                return false;
+            }
+        };
+        let Some(thread_id) = run.and_then(|run| run.worker_thread_id) else {
+            return true;
+        };
+        match self.store.thread(&thread_id) {
+            Err(crate::error::CoreError::NotFound(_)) => true,
+            Ok(thread) => {
+                thread.active_run.is_none()
+                    && self
+                        .store
+                        .list_queue(&thread_id)
+                        .is_ok_and(|queued| queued.is_empty())
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not read a crew worker's thread to confirm it stopped");
+                false
+            }
+        }
     }
 
     async fn attach_crew_worker_at(
