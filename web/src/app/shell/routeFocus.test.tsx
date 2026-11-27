@@ -199,6 +199,49 @@ it("spends the first focus handoff when it restores an opener on a cold load", (
   expect(document.activeElement).toBe(main.querySelector("[data-page-title]"));
 });
 
+it("hands focus to a page the route left and returned to while it was loading", () => {
+  const usage = screen("Screen title");
+  const ref = { current: usage };
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/usage", name: "usage", ready: true, covered: "#/usage" } },
+  );
+  // The person moves to the navigation control they use to change pages.
+  const nav = control("Skills");
+  act(() => nav.focus());
+  expect(document.activeElement).toBe(nav);
+
+  // Skills is chosen while its chunk is still arriving, so nothing on it can take the focus yet.
+  view.rerender({ key: "#/skills", name: "skills", ready: false, covered: "#/skills" });
+  expect(document.activeElement).toBe(nav);
+
+  // Back to Usage, which was already loaded: its screen mounts again, so the page follows the route a
+  // second time and takes the focus, rather than the return being read as the page that never changed.
+  const remounted = screen("Screen title");
+  usage.remove();
+  ref.current = remounted;
+  view.rerender({ key: "#/usage", name: "usage", ready: true, covered: "#/usage" });
+  expect(document.activeElement).toBe(remounted.querySelector("[data-page-title]"));
+});
+
+it("keeps the focus where it was given when the same page only becomes ready", () => {
+  const usage = screen("Screen title");
+  const ref = { current: usage };
+  const view = renderHook(
+    (props: { key: string; name: string; ready: boolean; covered: string }) =>
+      useRouteFocus(props.key, props.name, props.ready, ref, props.covered),
+    { initialProps: { key: "#/usage", name: "usage", ready: true, covered: "#/usage" } },
+  );
+  // The phone's sheet closed over the same page: the route never changed, so nothing moved and the focus
+  // stays where it was given (the title bar button, or the sheet's own Close).
+  const given = control("Close");
+  act(() => given.focus());
+  view.rerender({ key: "#/usage", name: "usage", ready: false, covered: "#/usage" });
+  view.rerender({ key: "#/usage", name: "usage", ready: true, covered: "#/usage" });
+  expect(document.activeElement).toBe(given);
+});
+
 it("records a second opener after a session that ended before its screen arrived", () => {
   const main = screen("Screen title");
   const ref = { current: main };

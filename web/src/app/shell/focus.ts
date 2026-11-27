@@ -70,7 +70,11 @@ export function useRouteFocus(
   const last = useRef(routeName);
   useEffect(() => {
     const before = previous.current;
-    const entering = routeName === "settings" && last.current !== "settings";
+    // A route that differs from the last commit is a departure, even when it is also the last page focus
+    // completed on: leaving a page while its screen was still arriving never reached `previous`, so
+    // coming back to it looked like the page that never changed.
+    const departed = last.current !== routeName;
+    const entering = routeName === "settings" && departed;
     last.current = routeName;
     // What opened Settings is recorded the moment the route enters it, never when its screen arrives:
     // the wait for a first chunk is exactly when tabbing moves the keyboard, and closing Settings must
@@ -113,8 +117,9 @@ export function useRouteFocus(
     if (!root) return;
     // The screen only became ready: the phone's sheet closed over the same page, so nothing moved and
     // focus stays where it was given (the title bar button, or the sheet's own Close). A page that
-    // changed is followed below.
-    if (!first.current && before.key === routeKey && before.name === routeName) return;
+    // changed is followed below, and a page the route left and came back to counts as changed even
+    // though it is the last page focus completed on too: its screen mounted again.
+    if (!first.current && !departed && before.key === routeKey && before.name === routeName) return;
     previous.current = { key: routeKey, name: routeName };
     // A page kept mounted behind settings is hidden, so it never takes the focus.
     const visible = (selector: string) => [...root.querySelectorAll<HTMLElement>(selector)].find((element) => !element.closest("[hidden]")) ?? null;
