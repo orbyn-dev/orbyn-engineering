@@ -1234,6 +1234,7 @@ impl IssueSource for Azure {
             comments: Vec::new(),
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
             states: None,
         })
@@ -1389,6 +1390,7 @@ impl IssueSource for Azure {
             comments,
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
             states: None,
         })
