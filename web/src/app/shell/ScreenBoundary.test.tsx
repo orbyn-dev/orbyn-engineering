@@ -78,4 +78,41 @@ describe("the boundary a deferred screen lands in", () => {
     fireEvent.keyDown(document, { key: "Enter" });
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it("leaves Escape to the sidebar's thread search, which answers it without claiming the key", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // The search field is beside Settings rather than under it, and it clears itself on Escape without
+    // calling preventDefault, so the page that would have answered the key keeps the same exclusion.
+    const search = document.createElement("input");
+    search.type = "search";
+    search.setAttribute("aria-label", "Search threads");
+    document.body.append(search);
+    const onClose = vi.fn();
+    render(
+      <ScreenBoundary screenKey="#/settings" onScreen={vi.fn()} onClose={onClose}>
+        <NoChunk />
+      </ScreenBoundary>,
+    );
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    search.remove();
+  });
+
+  it("leaves Escape to an open menu", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const menu = document.createElement("div");
+    menu.setAttribute("role", "menu");
+    const item = document.createElement("button");
+    menu.append(item);
+    document.body.append(menu);
+    const onClose = vi.fn();
+    render(
+      <ScreenBoundary screenKey="#/settings" onScreen={vi.fn()} onClose={onClose}>
+        <NoChunk />
+      </ScreenBoundary>,
+    );
+    fireEvent.keyDown(item, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    menu.remove();
+  });
 });
