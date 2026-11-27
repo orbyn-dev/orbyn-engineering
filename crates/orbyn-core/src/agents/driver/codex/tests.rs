@@ -275,26 +275,6 @@ fn finished(mapper: &mut TurnMapper, turn: Value) -> Option<EngineOutcome> {
 }
 
 #[test]
-fn a_completed_turn_with_another_id_does_not_end_the_run() {
-    let mut mapper = mapper();
-    mapper.set_turn("turn-mine");
-    assert!(
-        finished(
-            &mut mapper,
-            json!({ "id": "turn-old", "status": "failed", "error": { "message": "old" } })
-        )
-        .is_none()
-    );
-    assert!(matches!(
-        finished(
-            &mut mapper,
-            json!({ "id": "turn-mine", "status": "completed" })
-        ),
-        Some(EngineOutcome::Completed)
-    ));
-}
-
-#[test]
 fn only_the_matching_turn_reports_an_interrupt_or_failure() {
     let mut mapper = mapper();
     mapper.set_turn("turn-mine");
