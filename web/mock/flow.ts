@@ -120,7 +120,7 @@ function samples(): Sample[] {
           { id: "check-1", kind: "test", task: "task-redirect", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
           { id: "check-2", kind: "lint", task: "task-redirect", outcome: "fail", exit_code: 1, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
         ],
-        diff: SAMPLE_DIFF, diff_absent: null, truncated: false,
+        diff: SAMPLE_DIFF, diff_absent: null, head: RUN_COMMIT, head_absent: null, truncated: false,
       },
     },
     {
@@ -150,7 +150,7 @@ function samples(): Sample[] {
           { id: "check-2", kind: "test", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
           { id: "lead-repro-1", task: "task-failed", outcome: "fail", exit_code: 1, duration_ms: 1000, commit: RUN_COMMIT, artifacts: [] },
         ],
-        diff: SAMPLE_DIFF, diff_absent: null, truncated: false,
+        diff: SAMPLE_DIFF, diff_absent: null, head: RUN_COMMIT, head_absent: null, truncated: false,
       },
     },
     {
@@ -188,7 +188,7 @@ function samples(): Sample[] {
           { id: "check-1", kind: "lint", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 4000, commit: RUN_COMMIT, artifacts: [] },
           { id: "check-2", kind: "test", task: "task-merged", outcome: "pass", exit_code: 0, duration_ms: 22000, commit: RUN_COMMIT, artifacts: [] },
         ],
-        diff: null, diff_absent: "no_checkout", truncated: false,
+        diff: null, diff_absent: "no_checkout", head: null, head_absent: "no_checkout", truncated: false,
       },
     },
     {

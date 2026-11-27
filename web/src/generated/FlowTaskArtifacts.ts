@@ -3,8 +3,10 @@ import type { FlowCheck } from "./FlowCheck";
 import type { FlowTaskDiff } from "./FlowTaskDiff";
 
 /**
- * One task's checks, the artifacts they named and the change they read: what the Flow's checks bar, artifacts list and
- * artifact diff draw. A file the task left untracked is not in the diff, which reads the files git tracks.
+ * One task's checks, the artifacts they named, the change they read and the commit the checkout is on now: what the Flow's
+ * checks bar, artifacts list and artifact diff draw. A file the task left untracked is not in the diff, which reads the
+ * files git tracks. The checkout's head is what an artifact or a diff pinned to an earlier commit is stale against: it is
+ * stale once the checkout has moved on by itself, and this read never says whether it has, only which commit it is on.
  */
 export type FlowTaskArtifacts = { crew: string, task: string, 
 /**
@@ -15,6 +17,15 @@ checks: Array<FlowCheck>, diff?: FlowTaskDiff | null,
  * Why there is no diff: `no_checkout`, `no_base` or `unreadable`. Absent when `diff` is there.
  */
 diff_absent?: string | null, 
+/**
+ * The commit the task's checkout is on now, read from git when this is asked for, so it is the checkout as it is now and
+ * not a record of the verification.
+ */
+head?: string | null, 
+/**
+ * Why there is no head: `no_checkout` or `unreadable`. Absent when `head` is there.
+ */
+head_absent?: string | null, 
 /**
  * A list was cut at its cap.
  */
