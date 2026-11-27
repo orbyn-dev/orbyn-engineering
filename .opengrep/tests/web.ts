@@ -42,7 +42,15 @@ export function escape(selector: string) {
   const g = selector.replace(/[^a-zA-Z0-9_]/g, "\\$&");
   // ok: orbyn-js-regex-escape-skips-backslash
   const h = selector.replace(/[^a-zA-Z0-9_]/g, '\\$&');
-  return [a, b, c, d, e, f, g, h];
+  // The \W and \D shorthands match a backslash too, so they escape it as well.
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const i = selector.replace(/[\W]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const j = selector.replace(/[\D]/g, "\\$&");
+  // \w does not match a backslash, so this class still loses one: a finding.
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const k = selector.replace(/[\w.]/g, "\\$&");
+  return [a, b, c, d, e, f, g, h, i, j, k];
 }
 
 export function names(name: string, text: string) {

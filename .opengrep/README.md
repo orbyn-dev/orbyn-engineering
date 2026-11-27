@@ -18,8 +18,8 @@ finding, and **does not replace CodeQL**.
   - `orbyn-rust-secret-field-in-log` for `rust/cleartext-logging`: a secret-named field reaching a log call through
     another value; `redact`, `redacted_tail` and length-only reads are sanitizers.
   - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")`, in either
-    quote style, whose non-negated character class does not escape a backslash (`web/src/styles/tokens.test.ts:165`
-    was the known case; it is fixed).
+    quote style, whose character class matches no backslash of its own — not negated, and without a `\W`, `\S` or `\D`
+    shorthand (`web/src/styles/tokens.test.ts:165` was the known case; it is fixed).
 - `tests/`: a matching case and a safe look-alike for every rule. A rule is unproven without both. The workflow runs
   them first.
 
