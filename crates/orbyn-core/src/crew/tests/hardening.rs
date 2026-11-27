@@ -324,6 +324,7 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
                 base_branch: None,
                 effort: None,
                 options: Default::default(),
+                branch_name_seed: None,
             })
             .await
             .unwrap()

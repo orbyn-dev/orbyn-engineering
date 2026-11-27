@@ -199,6 +199,7 @@ async fn another_lead_thread_cannot_resume_the_task() {
             base_branch: None,
             effort: None,
             options: Default::default(),
+            branch_name_seed: None,
         })
         .await
         .unwrap()
@@ -491,10 +492,7 @@ async fn a_held_task_with_nothing_left_at_the_budget_boundary_is_not_resumed() {
     assert!(refused, "{reply}");
     assert_eq!(reply["code"], "invalid_object");
     assert!(
-        reply["message"]
-            .as_str()
-            .unwrap()
-            .contains("time budget"),
+        reply["message"].as_str().unwrap().contains("time budget"),
         "{reply}"
     );
     assert_eq!(w.task(&id).state, "needs_person", "the task is as it was");
