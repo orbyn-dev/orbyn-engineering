@@ -193,8 +193,8 @@ struct QuickJsRun {
     shared: Arc<Shared>,
 }
 
-/// Whether the script woke itself while `drive` polled it. A poll that parks and leaves the waker
-/// alone has no work left that could run the script again.
+/// Whether a tool call answering or a deadline reached woke the script while `drive` polled it. A
+/// poll that parks and leaves the waker alone has no work left that could run the script again.
 #[derive(Default)]
 struct Woken(AtomicBool);
 
@@ -207,6 +207,68 @@ impl Woken {
 impl Wake for Woken {
     fn wake(self: Arc<Self>) {
         self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+/// The waker `drive` waits with: it records that the script woke itself and passes the wake-up on to
+/// the caller, so a tool reply or a timer still resumes the run.
+struct Forward {
+    woken: AtomicBool,
+    caller: Waker,
+}
+
+impl Forward {
+    fn new(caller: Waker) -> Self {
+        Self {
+            woken: AtomicBool::new(false),
+            caller,
+        }
+    }
+
+    fn woken(&self) -> bool {
+        self.woken.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for Forward {
+    fn wake(self: Arc<Self>) {
+        self.woken.store(true, Ordering::SeqCst);
+        self.caller.wake_by_ref();
+    }
+}
+
+/// What a poll of the script while `drive` waits found.
+enum Waiting {
+    /// The script finished.
+    Done(Step),
+    /// The poll parked, woke nothing, and the heap is what holds the script.
+    HeapStalled,
+}
+
+/// Polls the script while `drive` waits, so every poll is also a check of whether the heap holds the
+/// run. Waiting in `timeout_at` alone checks once, before the wait: a script that catches a heap
+/// refusal after a tool replies can then await a promise that never settles, and nothing would review
+/// it again until the deadline.
+struct Watched<'a> {
+    job: &'a mut Job,
+    shared: &'a Shared,
+}
+
+impl Future for Watched<'_> {
+    type Output = Waiting;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Waiting> {
+        let this = self.get_mut();
+        let forward = Arc::new(Forward::new(cx.waker().clone()));
+        let waker = Waker::from(forward.clone());
+        let mut context = Context::from_waker(&waker);
+        match this.job.as_mut().poll(&mut context) {
+            Poll::Ready(step) => Poll::Ready(Waiting::Done(step)),
+            Poll::Pending if !forward.woken() && this.shared.heap_stalled() => {
+                Poll::Ready(Waiting::HeapStalled)
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -259,8 +321,15 @@ impl Run for QuickJsRun {
         }
         let wall_over = self.wall_deadline <= until;
         let stop = tokio::time::Instant::from_std(until.min(self.wall_deadline));
-        match tokio::time::timeout_at(stop, &mut self.job).await {
-            Ok(step) => self.finish(step),
+        let watched = Watched {
+            job: &mut self.job,
+            shared: &self.shared,
+        };
+        match tokio::time::timeout_at(stop, watched).await {
+            Ok(Waiting::Done(step)) => self.finish(step),
+            // Every poll of the wait checks the heap as well, so a refusal the script caught after a
+            // tool replied and a promise it can never settle end the run here instead of at the clock.
+            Ok(Waiting::HeapStalled) => self.heap_step(),
             // Reaching this deadline with the heap still holding the run is the heap's ending, not
             // the clock's. The wall clock stays the backstop for every other run that stops moving.
             Err(_) if self.shared.heap_stalled() => self.heap_step(),

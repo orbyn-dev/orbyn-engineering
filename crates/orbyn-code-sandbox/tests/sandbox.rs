@@ -543,6 +543,32 @@ async fn a_full_heap_ends_the_run_instead_of_the_wall_clock() {
 }
 
 #[tokio::test]
+async fn a_full_heap_after_a_tool_call_ends_the_run_instead_of_the_wall_clock() {
+    // The same heap ending, reached after a tool call: the refusal is recorded while the tool is in
+    // flight, so the check before the wait cannot tell the heap from a run waiting on a tool. Once
+    // the reply lands the script catches the refusal and awaits a promise it can never settle, and
+    // only the checks made while it waits can end the run — the wall clock would report a time
+    // limit and hold the runtime and the heap until then.
+    let code = "await tools.slow({ ms: 100 });\n\
+        try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+        await new Promise(() => {});";
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        // Small on purpose: the assertion is about which rule ends the run, and when.
+        wall: Duration::from_secs(2),
+        ..Limits::default()
+    };
+    let (mut run, _) = start(code, limits).await;
+    let began = Instant::now();
+    let step = run.drive(Instant::now() + Duration::from_secs(60)).await;
+    let elapsed = began.elapsed();
+    let error = failed(step);
+    assert_eq!(error.kind, ErrorKind::Limit);
+    assert!(error.message.contains("heap"), "{}", error.message);
+    assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+}
+
+#[tokio::test]
 async fn a_pending_run_under_its_heap_still_ends_at_the_wall_clock() {
     // The same unsettleable promise with the heap untouched: the wall clock is still the rule that
     // ends a run which stops making progress, so the heap rule did not take its place.
