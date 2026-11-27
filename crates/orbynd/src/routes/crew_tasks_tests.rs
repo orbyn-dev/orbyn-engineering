@@ -397,10 +397,12 @@ async fn the_artifacts_read_answers_one_task_and_keeps_the_key_out() {
     assert_eq!(status, 200);
     assert_eq!(view["task"], task.as_str());
     assert_eq!(view["crew"], "crew-1");
-    // The seeded task has no run, so no check ran and there is no checkout to read a diff from.
+    // The seeded task has no run, so no check ran and there is no checkout to read a diff or a head from.
     assert_eq!(view["checks"], json!([]));
     assert!(view["diff"].is_null());
     assert_eq!(view["diff_absent"], "no_checkout");
+    assert!(view["head"].is_null());
+    assert_eq!(view["head_absent"], "no_checkout");
     assert_eq!(view["truncated"], false);
     let text = view.to_string();
     assert!(

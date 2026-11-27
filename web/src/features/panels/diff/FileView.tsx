@@ -51,7 +51,7 @@ function RenderToggle({ rendered }: { rendered: boolean }) {
 }
 
 /** One file of the change: its header, then its lines, or the one line that says why there are none. */
-export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow, repoName, repoId }: {
+export function FileView({ file, lines, threadId, origin, needle, current, full, split, onShowAll, canRender, bar, edits, narrow, repoName, repoId, fileRepoId }: {
   file: FileDiff;
   /** The repository the file is in, named before its path in a multi-repository thread. */
   repoName?: string;
@@ -71,6 +71,10 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
   edits?: { revert(path: string, hunk: Hunk, repoId?: string): Promise<void>; saveLine(path: string, number: number, was: string, next: string, repoId?: string): Promise<boolean> };
   /** The file's repository when it is not the thread's primary one: sent as `repo_id` on the read and the write of an edit. Absent for the primary. */
   repoId?: string;
+  /** The file's repository when it is not the thread's primary one: a comment made here names it and stays on this
+   *  repository's file, where `repoId` above is only what a service call names. Absent for the primary, whose file belongs to
+   *  the thread's own checkout, and on an ordinary thread. */
+  fileRepoId?: string;
   narrow?: boolean;
 }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd ?? "");
@@ -136,7 +140,8 @@ export function FileView({ file, lines, threadId, origin, needle, current, full,
         </p>
       ) : (
         <Patch lines={lines} path={file.path} threadId={threadId} origin={origin} needle={needle} current={current}
-          full={full} split={split} onShowAll={onShowAll} actions={actions} narrow={narrow} />
+          full={full} split={split} onShowAll={onShowAll} actions={actions} narrow={narrow}
+          repoId={fileRepoId} repoName={repoName} />
       )}
     </div>
   );
