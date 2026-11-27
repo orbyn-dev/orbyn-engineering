@@ -579,13 +579,18 @@ async fn lane_rule(
         .collect();
     let mut paths: Vec<String> = Vec::new();
     let mut always = false;
+    // A rule that names paths is a conditional rule: it may name none, and that is not the same as naming no paths.
+    let mut conditional = false;
     for rule in &named {
         match rule.condition_paths() {
-            Some(condition) => paths.extend(
-                condition
-                    .iter()
-                    .map(|path| scrub.text(path.as_str(), RULE_PATH_MAX)),
-            ),
+            Some(condition) => {
+                conditional = true;
+                paths.extend(
+                    condition
+                        .iter()
+                        .map(|path| scrub.text(path.as_str(), RULE_PATH_MAX)),
+                );
+            }
             None => always = true,
         }
     }
@@ -593,8 +598,9 @@ async fn lane_rule(
         Some(wire::FlowLaneRule {
             by_rule: !named.is_empty(),
             locked: named.iter().any(|rule| rule.locked),
-            // A rule that always asks for the lane answers no paths; neither does a lane no rule names.
-            when_paths: (!always && !paths.is_empty()).then_some(paths),
+            // A rule that always asks for the lane answers no paths, and so does a lane no rule names; a rule that names
+            // paths answers them, even when its condition names none.
+            when_paths: (!always && conditional).then_some(paths),
         }),
         None,
     )

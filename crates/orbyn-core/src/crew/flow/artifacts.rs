@@ -162,7 +162,8 @@ pub(super) async fn diff_between(
     match changed_since(root, base, head, scrub).await {
         Ok(change) => (
             Some(wire::FlowTaskDiff {
-                base: base.to_owned(),
+                // Git read the stored `base`; the response shows it redacted, as the lane's own commit beside it is.
+                base: scrub.text(base, 64),
                 truncated: change.total > u32::try_from(change.files.len()).unwrap_or(u32::MAX),
                 files: change.files,
                 files_total: change.total,
