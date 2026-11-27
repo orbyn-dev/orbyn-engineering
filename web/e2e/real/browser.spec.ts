@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+﻿import { expect, test } from "@playwright/test";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -130,11 +130,12 @@ test("the device toolbar resizes the page from its edges", async ({ page }) => {
   // The service can finish the preset before the viewer reloads it. Measuring
   // the old box would aim the press outside the edge once the phone is drawn.
   await expect(page.getByRole("combobox", { name: "Device" })).toHaveValue("phone");
-  // The size lives in the toolbar's width and height fields now (pb-h36-fields), not in one line of text.
-  const dimensions = page.getByRole("toolbar", { name: "Device toolbar" });
-  const width = dimensions.getByRole("spinbutton", { name: "Width" });
+  // The toolbar shows the page's size as the two fields it is edited through (parity H36), not as one span.
+  const toolbar = page.getByRole("toolbar", { name: "Device toolbar" });
+  const width = toolbar.getByRole("spinbutton", { name: "Width", exact: true });
+  const height = toolbar.getByRole("spinbutton", { name: "Height", exact: true });
   await expect(width).toHaveValue("393");
-  await expect(dimensions.getByRole("spinbutton", { name: "Height" })).toHaveValue("852");
+  await expect(height).toHaveValue("852");
   const handle = page.getByRole("button", { name: /Resize the page from the right edge/ });
   await handle.hover();
   const box = await handle.boundingBox();
