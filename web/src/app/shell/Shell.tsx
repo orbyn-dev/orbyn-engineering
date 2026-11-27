@@ -21,8 +21,9 @@ import { useEscapeClose } from "../../ui/useEscapeClose";
 import { PreviewFloat, useTerminalAttention } from "../../features/panels";
 import { DevicesFloat } from "../../features/devices";
 import { startAppDataRefresh } from "./dataRefresh";
-import { HIDDEN_POLL_EVERY, lastFull, loadAll, loadEngines } from "./loading";
-import { POLL_MS, quickFocus, quickTick } from "../pollSchedule";
+import { lastFull, loadAll, loadEngines } from "./loading";
+import { startShellPolling } from "./polling";
+import { quickFocus } from "../pollSchedule";
 import { useGlobalKeys } from "./keys";
 import { BackgroundAnnouncer, useThreadNotifications } from "./notifications";
 import { useRouteFocus, useToastClearance } from "./focus";
@@ -65,20 +66,13 @@ export function Shell() {
     void loadAll();
     void loadEngines();
     const stopRefresh = startAppDataRefresh();
-    let ticks = 0;
-    const timer = setInterval(() => {
-      ticks += 1;
-      // A hidden window keeps up while work runs, or its alerts would never fire, and
-      // looks in now and then so it hears of work started elsewhere.
-      const running = Object.values(useWorkspace.getState().threads).some((thread) => thread.active_run);
-      if (!document.hidden || running || ticks % HIDDEN_POLL_EVERY === 0) void loadAll(quickTick(ticks));
-    }, POLL_MS);
+    const stopPolling = startShellPolling();
     // Coming back to the window: what changed while it was away, Git state included.
     const onFocus = () => void loadAll(quickFocus(Date.now(), lastFull));
     window.addEventListener("focus", onFocus);
     return () => {
-      clearInterval(timer);
       stopRefresh();
+      stopPolling();
       window.removeEventListener("focus", onFocus);
     };
   }, []);
