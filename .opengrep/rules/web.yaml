@@ -64,7 +64,7 @@ rules:
     languages: [typescript, javascript]
     severity: WARNING
     message: "Regex metacharacters are escaped by prefixing a backslash, but the character class does not escape a backslash itself: an input holding one loses it and the pattern changes; escape the backslash first (a class that matches a backslash is not reported: negated, through \\W, \\S, \\D, \\x5c, \\u005c or octal \\134, or through a range spanning it such as [A-z]; a range with an escaped endpoint is skipped)"
-    pattern-regex: '\.replace\(\s*/\[(?!\^)(?!(?:\\\]|[^\]])*(?:\\[WSD]|\\x5[cC]|\\u005[cC]|\\134))(?!(?:\\\]|[^\]])*(?:[\x20-\x5b]-[\x5e-\x7e]|(?:\\x[0-9a-fA-F]{1,4}|\\u[0-9a-fA-F]{1,4}|\\c.|\\[0-7]{1,3})-|-(?:\\x[0-9a-fA-F]{1,4}|\\u[0-9a-fA-F]{1,4}|\\c.|\\[0-7]{1,3}|\\\])))(?:\\[^\\]|[^\]\\])*\]/g\s*,\s*(?:"\\\\\$&"|''\\\\\$&'')\s*\)'
+    pattern-regex: '\.replace\(\s*/\[(?!\^)(?!(?:\\\]|[^\]])*(?:\\[WSD]|\\x5[cC]|\\u005[cC]|\\134))(?!(?:\\\]|[^\]])*(?:[\x20-\x5b]-[\x5e-\x7e]|(?:\\x[0-9a-fA-F]{1,4}|\\u[0-9a-fA-F]{1,4}|\\c.|\\[0-7]{1,3})-|[^\\]-(?:\\x[0-9a-fA-F]{1,4}|\\u[0-9a-fA-F]{1,4}|\\c.|\\[0-7]{1,3}|\\\])))(?:\\[^\\]|[^\]\\])*\]/g\s*,\s*(?:"\\\\\$&"|''\\\\\$&'')\s*\)'
     metadata: {category: security, subcategory: [audit], confidence: HIGH, cwe: ["CWE-116: Improper Encoding or Escaping of Output"], references: ["CodeQL js/incomplete-sanitization"]}
   - id: orbyn-js-strip-html-comment-incomplete
     languages: [typescript, javascript]

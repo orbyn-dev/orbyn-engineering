@@ -70,7 +70,20 @@ export function escape(selector: string) {
   // An ordinary range does not reach a backslash, so this class still loses one: a finding.
   // ruleid: orbyn-js-regex-escape-skips-backslash
   const s = selector.replace(/[a-z.]/g, '\\$&');
-  return [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s];
+  // A hyphen after a backslash is escaped, so it is a literal and not a range separator.
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const t = selector.replace(/[a\-z]/g, '\\$&');
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const u = selector.replace(/[\-\]]/g, '\\$&');
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const v = selector.replace(/[\-\x41]/g, '\\$&');
+  // A leading hyphen is a literal too, so it separates no range.
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const w = selector.replace(/[-\]]/g, '\\$&');
+  // A genuine range crossing the backslash to an escaped "]" still matches one.
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const x = selector.replace(/[A-\]]/g, '\\$&');
+  return [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x];
 }
 
 export function names(name: string, text: string) {
