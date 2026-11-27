@@ -10,8 +10,10 @@ test.describe.configure({ mode: "serial" });
  * keychain is touched. Also F3's observation of Settings › Source control: the Hosts table and its Rescan button, the rows it
  * draws, and no local control to turn a source-control host on or off.
  *
- * The project bind route exists and is Person-class; the last tests bind and unbind a stored connection's scope and record
- * that the issue-write routes, the candidates read and the update/state writes are still absent.
+ * The project bind route exists and is Person-class; the last test binds and unbinds a stored connection's scope, and reads
+ * the candidates route and the update and state writes now served for GitHub (#1593) through the stand-in `gh`. The four
+ * token trackers keep update, state and candidates Planned (422 unsupported) and their connects need a keychain token, so
+ * they are not exercised here (an owner action).
  */
 
 const WINDOW = { width: 1500, height: 1000 };
@@ -96,7 +98,7 @@ test("connect and disconnect are the real Person routes, and a stored scope come
   expect(refusal).toContain("GitHub reads through your own gh");
 });
 
-test("the project bind route binds and unbinds a stored scope, and the issue writes stay absent", async () => {
+test("the project bind route binds and unbinds a stored scope, and the GitHub edit routes are served", async () => {
   const failure = async (method: string, path: string, body?: unknown) => {
     try {
       await service.api(method, path, body);
@@ -120,9 +122,33 @@ test("the project bind route binds and unbinds a stored scope, and the issue wri
   expect(bound).toEqual({ tracker: "github", scope: "o/r" });
   expect(await service.api("POST", `/api/projects/${projectId}/issue-tracker`, { tracker: null })).toBeUndefined();
   expect(await service.api("POST", `/api/projects/${projectId}/issue-tracker`, { tracker: null })).toBeUndefined();
-  // The candidates read and the update and state writes are not on this service (PR #1521 served create, comment and react,
-  // which the web client does not call), so the edit controls have no route to use.
-  expect(await failure("GET", "/api/issues/candidates?tracker=github&scope=o%2Fr")).toContain("404");
-  expect(await failure("POST", "/api/issues/item/update", { tracker: "github", scope: "o/r", key: "7", title: "x" })).toContain("404");
-  expect(await failure("POST", "/api/issues/item/state", { tracker: "github", scope: "o/r", key: "7", state: "Open" })).toContain("404");
+  // The issue-edit routes are served for GitHub (#1593). The candidates read answers the stand-in's labels and assignable
+  // people; an update writes the present fields; one state write closes and one reopens, keeping GitHub's own close reason.
+  expect(await service.api("GET", "/api/issues/candidates?tracker=github&scope=o%2Fr")).toEqual({
+    labels: [{ name: "bug", color: "d73a4a" }, { name: "docs", color: "0075ca" }],
+    assignees: [{ login: "ada", name: null, id: "ada" }, { login: "grace", name: null, id: "grace" }],
+    truncated: false,
+  });
+  const updated = await service.api<{ tracker: string; scope: string; key: string; body: string }>(
+    "POST",
+    "/api/issues/item/update",
+    { tracker: "github", scope: "o/r", key: "12", body: "Re-read on the stand-in." },
+  );
+  expect(updated).toMatchObject({ tracker: "github", scope: "o/r", key: "12", body: "Re-read on the stand-in." });
+  const closed = await service.api<{ state: { category: string; name: string; close_reason: string | null } }>(
+    "POST",
+    "/api/issues/item/state",
+    { tracker: "github", scope: "o/r", key: "12", state: "Closed" },
+  );
+  expect(closed.state).toMatchObject({ category: "closed", name: "Closed", close_reason: "completed" });
+  const reopened = await service.api<{ state: { category: string; name: string } }>(
+    "POST",
+    "/api/issues/item/state",
+    { tracker: "github", scope: "o/r", key: "12", state: "Open" },
+  );
+  expect(reopened.state).toMatchObject({ category: "open", name: "Open" });
+  // Nothing to change is the route's own 400, refused before the tracker is asked; a tracker whose edit is not built and is
+  // not connected in this fixture is its 409, not a guessed 422 (the four token connects need a keychain token: an owner action).
+  expect(await failure("POST", "/api/issues/item/update", { tracker: "github", scope: "o/r", key: "12" })).toContain("400");
+  expect(await failure("GET", "/api/issues/candidates?tracker=gitlab&scope=o%2Fr")).toContain("409");
 });
