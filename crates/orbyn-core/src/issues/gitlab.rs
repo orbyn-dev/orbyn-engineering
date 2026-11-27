@@ -755,6 +755,7 @@ impl IssueSource for GitLab {
             comments: Vec::new(),
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
             states: Some(gitlab_states()),
         })
@@ -1215,6 +1216,7 @@ impl IssueSource for GitLab {
             comments,
             linked_pull_requests: Vec::new(),
             linked_threads: Vec::new(),
+            activity: Vec::new(),
             reactions: None,
             states: Some(gitlab_states()),
         })

@@ -643,6 +643,7 @@ impl IssueSource for FakeIssues {
             comments: vec![],
             linked_pull_requests: vec![],
             linked_threads: vec![],
+            activity: vec![],
             reactions: None,
             states: self.states(),
         })
@@ -701,6 +702,7 @@ impl IssueSource for FakeIssues {
             comments: vec![],
             linked_pull_requests: vec![],
             linked_threads: vec![],
+            activity: vec![],
             reactions: None,
             states: None,
         })

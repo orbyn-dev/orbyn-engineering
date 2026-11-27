@@ -1,13 +1,40 @@
 //! An explicit engine from the lead or the person: it wins over the scores, is still
 //! filtered, and is never swapped for another. Roles, lanes and the other-vendor rule.
 
-use orbyn_contracts::{AuthState, RejectionWhy, RouteAssigner, RouteRole};
+use orbyn_contracts::{
+    AuthState, RejectionWhy, RouteAssigner, RouteDecision, RouteRejection, RouteRole, RouteScore,
+};
 use serde_json::json;
 
 use super::fake::*;
 
 fn assign(id: &str, by: &str) -> serde_json::Value {
     json!({ "engine": { "id": id, "assigned_by": by, "tag": format!("@{id}") } })
+}
+
+/// The score row of `engine`, found by the engine it names: the scores are ranked, so this does not
+/// depend on where one landed.
+fn score_for<'a>(decision: &'a RouteDecision, engine: &str) -> &'a RouteScore {
+    let mut rows = decision
+        .scores
+        .iter()
+        .filter(|score| score.engine.as_str() == engine);
+    let row = rows
+        .next()
+        .unwrap_or_else(|| panic!("no score names {engine}: {:?}", decision.scores));
+    assert!(rows.next().is_none(), "one score names {engine}");
+    row
+}
+
+/// The one refusal that names `engine`, so a test finds the row it means rather than counting to a
+/// list place; a missing or duplicated row fails here with the rows attached.
+fn refusal_for<'a>(rejected: &'a [RouteRejection], engine: &str) -> &'a RouteRejection {
+    let mut rows = rejected.iter().filter(|row| row.engine.as_str() == engine);
+    let row = rows
+        .next()
+        .unwrap_or_else(|| panic!("no refusal names {engine}: {rejected:?}"));
+    assert!(rows.next().is_none(), "one refusal names {engine}");
+    row
 }
 
 #[test]
@@ -29,7 +56,14 @@ fn an_explicit_engine_wins_over_a_higher_score_and_the_card_says_who_assigned_it
         r.code.as_str() == "assigned_by_person" && r.text.as_str() == "Assigned by you (@codex)."
     }));
     // Claude would have scored higher and stays visible as an alternative.
-    assert_eq!(decision.scores[0].engine.as_str(), "claude");
+    let claude = score_for(&decision, "claude");
+    let codex = score_for(&decision, "codex");
+    assert!(
+        claude.score > codex.score,
+        "claude scored {} to codex's {}",
+        claude.score,
+        codex.score
+    );
     assert_eq!(decision.scores.len(), 2);
     verified(&decision);
 
@@ -58,7 +92,10 @@ fn an_explicit_engine_that_fails_a_filter_is_refused_and_never_swapped() {
     assert_eq!(refusal.message, "Codex isn't signed in.");
     assert_eq!(refusal.requested.as_ref().unwrap().engine.as_str(), "codex");
     assert_eq!(refusal.rejected.len(), 1);
-    assert_eq!(refusal.rejected[0].why, RejectionWhy::NotSignedIn);
+    assert_eq!(
+        refusal_for(&refusal.rejected, "codex").why,
+        RejectionWhy::NotSignedIn
+    );
 
     let mut loose = engine("opencode");
     loose.capabilities.managed = false;
@@ -67,7 +104,10 @@ fn an_explicit_engine_that_fails_a_filter_is_refused_and_never_swapped() {
         &[engine("claude"), loose],
         &Ask::default(),
     );
-    assert_eq!(refusal.rejected[0].why, RejectionWhy::NotManaged);
+    assert_eq!(
+        refusal_for(&refusal.rejected, "opencode").why,
+        RejectionWhy::NotManaged
+    );
 }
 
 #[test]
@@ -77,8 +117,8 @@ fn an_engine_this_machine_does_not_have_is_never_routed_to() {
         &[engine("claude")],
         &Ask::default(),
     );
-    assert_eq!(refusal.rejected[0].why, RejectionWhy::NotInstalled);
-    assert_eq!(refusal.rejected[0].engine.as_str(), "cursor");
+    let rejected = refusal_for(&refusal.rejected, "cursor");
+    assert_eq!(rejected.why, RejectionWhy::NotInstalled);
     assert!(refusal.message.contains("isn't configured"));
 }
 
@@ -113,10 +153,16 @@ fn a_named_model_must_be_listed_and_a_tag_cannot_lower_a_lead_role() {
     assert_eq!(pinned.assigned_by, RouteAssigner::Lead);
     // A model the engine does not list is refused.
     let missing = refused(&tagged("gpt-nope"), &engines, &ask(RouteRole::CodeReview));
-    assert_eq!(missing.rejected[0].why, RejectionWhy::MissingCapability);
+    assert_eq!(
+        refusal_for(&missing.rejected, "claude").why,
+        RejectionWhy::MissingCapability
+    );
     // Security review stays lead tier: Sonnet is refused, Opus is allowed.
     let low = refused(&tagged("sonnet"), &engines, &ask(RouteRole::SecurityReview));
-    assert_eq!(low.rejected[0].why, RejectionWhy::TierBelowLead);
+    assert_eq!(
+        refusal_for(&low.rejected, "claude").why,
+        RejectionWhy::TierBelowLead
+    );
     let high = routed(&tagged("opus"), &engines, &ask(RouteRole::SecurityReview));
     assert_eq!(high.model.as_str(), "claude-opus-4");
     assert_eq!(high.tier, orbyn_contracts::RouteTier::Lead);
@@ -187,7 +233,10 @@ fn a_reviewer_is_from_the_other_vendor_by_default_and_a_second_key_always() {
         ..Ask::default()
     };
     let refusal = refused(&brief_r, &alone, &key);
-    assert_eq!(refusal.rejected[0].why, RejectionWhy::SameEngineRefused);
+    assert_eq!(
+        refusal_for(&refusal.rejected, "claude").why,
+        RejectionWhy::SameEngineRefused
+    );
 
     // Tagging the author's own engine as reviewer is allowed and badged; as second key, refused.
     let own = reading(
@@ -202,7 +251,7 @@ fn a_reviewer_is_from_the_other_vendor_by_default_and_a_second_key_always() {
             .any(|r| r.text.as_str() == "Same engine as author.")
     );
     assert_eq!(
-        refused(&own, &both, &key).rejected[0].why,
+        refusal_for(&refused(&own, &both, &key).rejected, "claude").why,
         RejectionWhy::SameEngineRefused
     );
 }
@@ -279,9 +328,15 @@ fn security_and_locked_lanes_stay_on_the_lead_tier_even_when_pinned_lower() {
     let low = reading(json!({ "kind": "review",
         "engine": { "id": "codex", "model": "terra", "assigned_by": "lead" } }));
     let refusal = refused(&low, &both, &lane("security", "claude", false));
-    assert_eq!(refusal.rejected[0].why, RejectionWhy::TierBelowLead);
+    assert_eq!(
+        refusal_for(&refusal.rejected, "codex").why,
+        RejectionWhy::TierBelowLead
+    );
     let refusal = refused(&low, &both, &lane("correctness", "claude", true));
-    assert_eq!(refusal.rejected[0].why, RejectionWhy::TierBelowLead);
+    assert_eq!(
+        refusal_for(&refusal.rejected, "codex").why,
+        RejectionWhy::TierBelowLead
+    );
 }
 
 #[test]

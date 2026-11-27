@@ -137,13 +137,54 @@ async fn a_draft_with_three_mistakes_gets_all_three_in_one_error() {
 fn problems_in_the_answer_key_are_listed_with_the_brief_ones() {
     let mut call = example();
     call["brief"]["kind"] = json!("build");
-    call["answer_key"]["checks"][1]["kind"] = json!("shell");
-    call["answer_key"]["checks"][0]["params"] = json!({ "only": [] });
+    // The example names its checks by id, so break one by its name rather than by the place the fixture lists
+    // it in.
+    let checks = call["answer_key"]["checks"]
+        .as_array_mut()
+        .expect("the example lists its answer key's checks");
+    let dry_run = checks
+        .iter_mut()
+        .find(|check| check["id"] == "dry-run")
+        .expect("the example's dry-run check");
+    dry_run["kind"] = json!("shell");
+    let scope = checks
+        .iter_mut()
+        .find(|check| check["id"] == "scope")
+        .expect("the example's scope check");
+    scope["params"] = json!({ "only": [] });
+
     let all = crate::crew::draft::problems(&call["brief"], &call["answer_key"]);
-    assert_eq!(all.len(), 3, "{all:?}");
-    assert!(all[0].starts_with("brief.kind: \"build\" is not one of plan"));
-    assert!(all[2].starts_with("answer_key.checks[1].kind: \"shell\""));
-    assert!(all[1].starts_with("answer_key.checks[0].params:"));
+    // The brief's problems come first, then the answer key's in its walk order, each naming the field it is
+    // about: pin that order as the list of paths, then find each problem by the path it names rather than by a
+    // place.
+    let paths: Vec<&str> = all
+        .iter()
+        .map(|problem| {
+            problem
+                .split_once(": ")
+                .expect("a field path and what is wrong")
+                .0
+        })
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "brief.kind",
+            "answer_key.checks[0].params",
+            "answer_key.checks[1].kind"
+        ],
+        "{all:?}"
+    );
+    let problem = |path: &str| {
+        all.iter()
+            .find(|problem| problem.starts_with(path))
+            .unwrap_or_else(|| panic!("no {path} problem: {all:?}"))
+    };
+    assert!(problem("brief.kind").starts_with("brief.kind: \"build\" is not one of plan"));
+    assert!(
+        problem("answer_key.checks[1].kind").starts_with("answer_key.checks[1].kind: \"shell\"")
+    );
+    assert!(problem("answer_key.checks[0].params").starts_with("answer_key.checks[0].params:"));
 }
 
 #[tokio::test]
