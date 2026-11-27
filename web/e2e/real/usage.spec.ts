@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDetails, startProject, type Service } from "./service";
@@ -13,6 +13,47 @@ const history = (model: string) =>
     timestamp: new Date().toISOString(),
     message: { id: `m-${model}`, model, usage: { input_tokens: 1_000_000, output_tokens: 500_000, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
   })}\n`;
+
+/** The app's slow reads (web/src/api/lanes.ts): two run at once, and the rest queue behind them. */
+const SLOW_READ =
+  /^\/api\/(?:limits|usage|pulls|health\/dependencies)(?:\/|$)|^\/api\/(?:engines|projects|threads)\/[^/]+\/(?:models|tools|commands|limits|pulls)(?:\/|$)/;
+
+/**
+ * Watches the page's slow reads and resolves once none is left and none has changed for 300 ms.
+ * The details card's Limits row shares their two slots: opened while the thread page's own reads
+ * (commands, models) still hold them, its first read is aborted before it starts and the shared
+ * limits store keeps that abort as a failed check, so no Limits row draws. Wait for the page to
+ * finish reading what it opened with first, as a person reading the thread does.
+ */
+function slowReadsSettled(page: Page): () => Promise<void> {
+  const inFlight = new Set<unknown>();
+  let changedAt = Date.now();
+  const isSlow = (request: { url(): string }) => {
+    try {
+      return SLOW_READ.test(new URL(request.url()).pathname);
+    } catch {
+      return false;
+    }
+  };
+  page.on("request", (request) => {
+    if (!isSlow(request)) return;
+    inFlight.add(request);
+    changedAt = Date.now();
+  });
+  const done = (request: unknown) => {
+    if (inFlight.delete(request)) changedAt = Date.now();
+  };
+  page.on("requestfinished", done);
+  page.on("requestfailed", done);
+  return async () => {
+    await expect
+      .poll(() => inFlight.size === 0 && Date.now() - changedAt > 300, {
+        message: "the thread page's slow reads settle before the details card opens",
+        timeout: 20_000,
+      })
+      .toBe(true);
+  };
+}
 
 test.beforeAll(async () => {
   ({ service, projectId } = await startProject({ fakeEngines: true }));
@@ -69,13 +110,26 @@ test("thread details show what's left, and checks stay five minutes apart", asyn
   page.on("request", (request) => {
     if (/\/api\/threads\/[^/]+\/limits/.test(request.url())) checks += 1;
   });
+  const settled = slowReadsSettled(page);
+  // The thread page opens with two slow reads of its own: the composer's slash commands and the
+  // engine's models. Wait for both, then for the lane to fall quiet, before the details card reads.
+  const pageReads = Promise.all([
+    page.waitForResponse((response) => /\/api\/threads\/[^/]+\/commands$/.test(new URL(response.url()).pathname)),
+    page.waitForResponse((response) => /\/api\/engines\/[^/]+\/models$/.test(new URL(response.url()).pathname)),
+  ]);
   await page.goto(`${service.page}#/threads/${first.id}`);
+  await pageReads;
+  await settled();
   await openDetails(page);
-  await expect(page.getByText(/5 hours \d+% left/)).toBeVisible();
+  // The shipped copy, over the protocol double's own report: the 5-hour window is 12% used and the
+  // weekly one 40%, so what is left reads as these two windows.
+  await expect(page.getByText("5 hours 88% left")).toBeVisible();
+  await expect(page.getByText("7 days 60% left")).toBeVisible();
   await page.locator("li[data-thread-item]").filter({ hasText: "Two" }).click();
   await expect(page.getByRole("heading", { name: "Two" })).toBeVisible();
   await openDetails(page);
-  await expect(page.getByText(/5 hours \d+% left/)).toBeVisible();
+  await expect(page.getByText("5 hours 88% left")).toBeVisible();
+  await expect(page.getByText("7 days 60% left")).toBeVisible();
   expect(checks).toBe(1);
 });
 
