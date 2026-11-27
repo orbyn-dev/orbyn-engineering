@@ -33,7 +33,11 @@ export function escape(selector: string) {
   const c = selector.replace(/[.[\]]/g, "_");
   // ok: orbyn-js-regex-escape-skips-backslash
   const d = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return [a, b, c, d];
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const e = selector.replace(/[.[\]]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const f = selector.replace(/[.[\\\]]/g, '\\$&');
+  return [a, b, c, d, e, f];
 }
 
 export function names(name: string, text: string) {

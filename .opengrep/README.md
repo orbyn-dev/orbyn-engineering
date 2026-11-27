@@ -17,8 +17,9 @@ finding, and **does not replace CodeQL**.
     call through a variable, which the inline `orbyn-rust-sql-format` rule cannot see.
   - `orbyn-rust-secret-field-in-log` for `rust/cleartext-logging`: a secret-named field reaching a log call through
     another value; `redact`, `redacted_tail` and length-only reads are sanitizers.
-  - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")` whose
-    character class does not escape a backslash (`web/src/styles/tokens.test.ts:165` was the known case; it is fixed).
+  - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")`, in either
+    quote style, whose character class does not escape a backslash (`web/src/styles/tokens.test.ts:165` was the known
+    case; it is fixed).
 - `tests/`: a matching case and a safe look-alike for every rule. A rule is unproven without both. The workflow runs
   them first.
 
@@ -35,11 +36,14 @@ opengrep scan --config .opengrep/rules --exclude .opengrep --exclude node_module
 
 Use only local rules: a `p/...` ruleset or `opengrep validate` downloads from `semgrep.dev`.
 
-## Status against CodeQL (record updated 2026-11-26)
+## Status against CodeQL (record updated 2026-11-27)
 
-Gap 3 of issue #849 is closed: `orbyn-js-regex-escape-skips-backslash` covers `js/incomplete-sanitization` with a
-matching case and a safe look-alike, and the one instance it named (`web/src/styles/tokens.test.ts:165`) is fixed,
-so the helper now carries a backslash through instead of eating it.
+Gap 3 of issue #849 is closed for the literal replacement the rule matches: `orbyn-js-regex-escape-skips-backslash`
+covers `js/incomplete-sanitization` written as `"\\$&"` or `'\\$&'` — the same replacement in either quote style — with
+a matching case and a safe look-alike for each, and the one instance it named
+(`web/src/styles/tokens.test.ts:165`) is fixed, so the helper now carries a backslash through instead of eating it. A
+replacement built another way (a variable, `$1` with a capture group, `replaceAll`) is outside the rule, which reads
+the literal form only.
 
 The other four gaps are **open** and need the owner's decision. None is accepted here, and the advisory workflow stays
 non-required. The parser set below is the 2026-11-23 re-check; this change did not re-run the full scan.
