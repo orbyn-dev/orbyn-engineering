@@ -72,6 +72,8 @@ test("Settings › Source control draws the Issue trackers group and the Hosts t
   const hosts = page.getByRole("table", { name: "Hosts" });
   await expect(hosts).toBeVisible();
   await expect(hosts.getByRole("row").filter({ hasText: "GitHub" })).toContainText("Signed in");
+  // Signed in is the stand-in's own answer: the probe ran it (version and sign-in questions) rather than only finding it.
+  expect(service.ghCalls()).toEqual(expect.arrayContaining([["--version"], ["auth", "status"]]));
   await expect(page.getByRole("button", { name: "Rescan" })).toBeVisible();
   // The page's switches belong to preferences (Automatically pull); no source-control host has a local on/off control, and no
   // host row carries an account picker or a switch, toggle, button, checkbox or radio of its own.
