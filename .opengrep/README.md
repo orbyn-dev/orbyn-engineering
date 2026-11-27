@@ -42,9 +42,12 @@ Use only local rules: a `p/...` ruleset or `opengrep validate` downloads from `s
 Gap 3 of issue #849 is closed for the literal replacement the rule matches: `orbyn-js-regex-escape-skips-backslash`
 covers `js/incomplete-sanitization` written as `"\\$&"` or `'\\$&'` — the same replacement in either quote style — with
 a matching case and a safe look-alike for each, and the one instance it named
-(`web/src/styles/tokens.test.ts:165`) is fixed, so the helper now carries a backslash through instead of eating it. A
-replacement built another way (a variable, `$1` with a capture group, `replaceAll`) is outside the rule, which reads
-the literal form only.
+(`web/src/styles/tokens.test.ts:165`) is fixed, so the helper now carries a backslash through instead of eating it.
+
+What the rule does not read, so this record does not claim it: a replacement built another way (a variable, `$1` with a
+capture group, `replaceAll`); a regex flag other than `g`, so `/[…]/gi` and a flagless `/[…]/` are not matched; a negated
+class, which is skipped even where it really does exclude a backslash (`/[^\\]/` is not reported); and a class that
+matches a backslash of its own, which needs no fix.
 
 The other four gaps are **open** and need the owner's decision. None is accepted here, and the advisory workflow stays
 non-required. The parser set below is the 2026-11-23 re-check; this change did not re-run the full scan.
