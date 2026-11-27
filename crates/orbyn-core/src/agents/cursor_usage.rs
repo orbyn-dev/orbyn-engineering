@@ -82,7 +82,7 @@ pub(crate) const REFETCH_OVERLAP_MS: u64 = 3_600_000;
 /// The window to read next, or nothing when the store already answers the period asked for.
 ///
 /// A window read less than a minute ago answers the period when it reaches back to the period's
-/// own start. Otherwise the read starts at the newest end, because that is where the spend a
+/// own start and into the period. Otherwise the read starts at the newest end, because that is where the spend a
 /// person opens the screen to see is; then it covers the last covered hour again, because Cursor
 /// finalizes an amount after it first reported it; then it walks older history backwards, one span
 /// at a time, and never past the period's start. A read still fresh walks older history before the
@@ -101,6 +101,7 @@ pub(crate) fn next_window(
 ) -> Option<Window> {
     if let Some(read) = read
         && read.since_ms <= retention_start_ms
+        && read.until_ms >= retention_start_ms
         && now_ms.saturating_sub(read.fetched_at_ms) < FRESH_FOR_MS
     {
         return None;

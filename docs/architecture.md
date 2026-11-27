@@ -542,7 +542,8 @@ conversation, timestamp, model and counters because Cursor sends no event id, an
 that history it has read, with the time it read it, in `billed_reads`. The window is a fact of its
 own because a read that found no spend writes no event: the events alone cannot say whether a day
 was looked at and came back empty. A window read less than a minute ago that still reaches back to
-the period's own start answers the read. Otherwise the next read starts at the newest end, because
+the period's own start and into the period answers the read. Otherwise the next read starts at the
+newest end, because
 that is where the spend a person opens the screen to see is; then it covers the last covered hour
 again, because Cursor finalizes an amount after it first reported it; then it walks older history
 backwards, one span at a time and never past the period's start, and a read still fresh walks older
@@ -559,7 +560,7 @@ store holds events, never as an always-empty engine; the credential read, its ca
 account run remain owner-approved work.
 Three states stay apart: no store, and a store whose account was never read and which holds no event, are no row at all; a store whose account was read is a scanned engine even with no spend on it; and a period that holds none of the stored events is a scanned engine of nothing. When the host read lands it must hand over one
 complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
-the days it names, so reading a window twice writes the same rows and a window of two events is
+the days it covers whole, so reading a window twice writes the same rows and a window of two events is
 stored as two, while an amount that settles later updates its row instead of adding one. A record
 that cannot be read as a billed event — no usage block, no timestamp or model that names a day,
 a negative counter — is dropped rather than counted as zero. The account's counters are separate,

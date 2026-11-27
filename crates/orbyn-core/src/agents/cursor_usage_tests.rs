@@ -378,6 +378,22 @@ fn a_read_is_answered_from_the_store_only_while_it_is_fresh_and_covers_the_perio
     assert!(next_window(behind, NOW - 5 * DAY, NOW, DAY).is_some());
 }
 
+/// A fresh window that ends before the period starts holds nothing the period can be answered
+/// with, so the newest window is read instead of the store answering with nothing.
+#[test]
+fn a_fresh_read_that_ends_before_the_period_does_not_answer_it() {
+    let period_start = NOW - HOUR;
+    let covered = read(NOW - 10 * DAY, NOW - 6 * HOUR, NOW);
+    assert_eq!(
+        next_window(covered, period_start, NOW, DAY),
+        Some(Window {
+            since_ms: period_start,
+            until_ms: NOW,
+        }),
+        "the store holds nothing in the period, so the newest window is read"
+    );
+}
+
 /// History older than the store's window is read backwards, one span at a time, and never past
 /// the period's start.
 #[test]
