@@ -11,6 +11,7 @@ const fixtures: PullFixture[] = [
   {
     number: 1,
     title: "First layer",
+    createdAt: "2026-08-01T00:00:00Z",
     body: "Why this exists.",
     headRefName: "feat-one",
     baseRefName: "main",
@@ -40,6 +41,8 @@ const fixtures: PullFixture[] = [
       { filename: "src/a.ts", status: "modified", additions: 2, deletions: 1, patch: PATCH },
       { filename: "src/b.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+b" },
     ],
+    // GitHub's own state: the viewer marked the first file viewed on GitHub itself.
+    viewed: ["src/a.ts"],
     commits: [
       {
         sha: "a1b2c3d4e5f6",
@@ -55,11 +58,23 @@ const fixtures: PullFixture[] = [
       },
     ],
   },
-  { number: 2, title: "Second layer", headRefName: "feat-two", baseRefName: "feat-one", isDraft: true, author: { login: "grace" }, labels: [{ name: "docs" }] },
+  { number: 2, title: "Second layer", createdAt: "2026-08-02T00:00:00Z", headRefName: "feat-two", baseRefName: "feat-one", isDraft: true, author: { login: "grace" }, labels: [{ name: "docs" }] },
   // The viewer is asked to review it, so its page offers the review.
-  { number: 3, title: "Unrelated fix", headRefName: "fix-three", author: { login: "ada" }, reviewers: ["me"] },
-  { number: 4, title: "Old idea", headRefName: "old-four", state: "CLOSED", author: { login: "ada" } },
-  { number: 5, title: "Shipped work", headRefName: "shipped-five", state: "MERGED", author: { login: "ada" } },
+  { number: 3, title: "Unrelated fix", createdAt: "2026-08-03T00:00:00Z", headRefName: "fix-three", author: { login: "ada" }, reviewers: ["me"] },
+  { number: 4, title: "Old idea", createdAt: "2026-08-04T00:00:00Z", headRefName: "old-four", state: "CLOSED", author: { login: "ada" } },
+  { number: 5, title: "Shipped work", createdAt: "2026-08-05T00:00:00Z", headRefName: "shipped-five", state: "MERGED", author: { login: "ada" } },
+  {
+    number: 6,
+    title: "Marked later",
+    createdAt: "2026-08-06T00:00:00Z",
+    headRefName: "feat-six",
+    state: "MERGED",
+    author: { login: "ada" },
+    files: [
+      { filename: "src/g.ts", status: "modified", additions: 2, deletions: 1, patch: PATCH },
+      { filename: "src/h.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+h" },
+    ],
+  },
 ];
 
 let service: Service;
@@ -207,7 +222,11 @@ test("the list sorts, switches state from the pills and comes back from a pull r
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("Old idea");
   await page.getByRole("button", { name: "Merged", exact: true }).click();
-  await expect(rows).toContainText("Shipped work");
+  // Both merged pull requests list, newest creation first (the Created sort set above), and each
+  // row says Merged: the second row is listed rather than hidden by the once-single expectation.
+  await expect(rows).toHaveCount(2);
+  await expect(rows).toHaveText([/Marked later/, /Shipped work/]);
+  await expect(rows.filter({ hasText: "Merged" })).toHaveCount(2);
   await open.click();
 
   // A pull request is a page of its own in history: Back returns to the list.
@@ -288,16 +307,20 @@ test("the timeline filters by kind", async ({ page }) => {
 test("the code tab marks files viewed and submits line comments as one review", async ({ page }) => {
   const article = await openPull(page, "First layer");
   await article.getByRole("tab", { name: /^Files changed/ }).click();
-  await expect(article.getByRole("status")).toHaveText("Viewed 0 of 2");
-  await article.getByRole("checkbox", { name: "Viewed src/b.ts" }).click();
+  // src/a.ts was marked viewed on GitHub itself, so its mark is read from there.
   await expect(article.getByRole("status")).toHaveText("Viewed 1 of 2");
+  await article.getByRole("checkbox", { name: "Viewed src/b.ts" }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 2 of 2");
+  await expect.poll(() => service.ghPull(1).viewed).toEqual(["src/a.ts", "src/b.ts"]);
   // The pull request is in the address, so a reload stays on it, back on its Summary tab.
   await page.reload();
   await expect(page).toHaveURL(/#\/pulls\/[^/]+\/1$/);
   await page.getByRole("article", { name: "First layer" }).getByRole("tab", { name: /^Files changed/ }).click();
   const again = page.getByRole("article", { name: "First layer" });
-  await expect(again.getByRole("status")).toHaveText("Viewed 1 of 2");
+  await expect(again.getByRole("status")).toHaveText("Viewed 2 of 2");
 
+  // Both rows are marked viewed, so both diffs start folded; open the one to comment on.
+  await again.getByText("src/a.ts", { exact: true }).click();
   await again.getByRole("button", { name: "Comment on line 2 of src/a.ts" }).focus();
   await again.getByRole("button", { name: "Comment on line 2 of src/a.ts" }).click();
   await again.getByLabel("Comment for line 2").fill("Not this name.");
@@ -310,6 +333,38 @@ test("the code tab marks files viewed and submits line comments as one review", 
     body: "One thing.",
     comments: [{ path: "src/a.ts", line: 2, body: "Not this name.", side: "RIGHT" }],
   });
+});
+
+test("a viewed mark removed here is removed on GitHub too", async ({ page }) => {
+  // GitHub holds both marks before this test reads the files, whatever an earlier test left.
+  service.ghEdit(1, { viewed: ["src/a.ts", "src/b.ts"] });
+  const article = await openPull(page, "First layer");
+  await article.getByRole("tab", { name: /^Files changed/ }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 2 of 2");
+  await article.getByRole("checkbox", { name: "Viewed src/a.ts" }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 1 of 2");
+  await expect.poll(() => service.ghPull(1).viewed).toEqual(["src/b.ts"]);
+});
+
+test("a viewed mark GitHub does not save is kept here and the toast says so", async ({ page }) => {
+  await page.goto(`${service.page}#/pulls`);
+  await page.getByRole("button", { name: "Merged", exact: true }).click();
+  await page.getByRole("button", { name: /Marked later/ }).click();
+  const article = detail(page, "Marked later");
+  await expect(article).toBeVisible();
+  await article.getByRole("tab", { name: /^Files changed/ }).click();
+  await expect(article.getByRole("status")).toHaveText("Viewed 0 of 2");
+  // GitHub's GraphQL limit is spent, as it is for a busy account, so the mark mutation cannot
+  // run. The person's mark is kept by this service, and the toast says GitHub did not save it.
+  service.ghEdit(0, { rateLimited: true });
+  try {
+    await article.getByRole("checkbox", { name: "Viewed src/g.ts" }).click();
+    await expect(page.getByText(/It is kept in Orbyn/)).toBeVisible();
+    await expect(article.getByRole("status")).toHaveText("Viewed 1 of 2");
+    await expect(article.getByRole("checkbox", { name: "Viewed src/g.ts" })).toBeChecked();
+  } finally {
+    service.ghEdit(0, { rateLimited: false });
+  }
 });
 
 test("Request changes opens a review card, sends the note as a review and becomes a timeline entry", async ({ page }) => {
@@ -372,7 +427,7 @@ test("merge takes a method from the menu, strips credits and can wait for checks
   await article.getByRole("button", { name: "Ready for review" }).click();
   await expect(article.getByRole("button", { name: "Merge", exact: true })).toBeEnabled();
   await article.getByRole("button", { name: /Squash and merge/ }).click();
-  await page.getByRole("menuitem", { name: "Merge when checks pass" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Merge when checks pass" }).click();
   await article.getByRole("button", { name: "Merge", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Merge pull request" });
   await dialog.getByLabel("Commit message").fill("Second layer\n\nCo-Authored-By: Claude <noreply@example.com>");
