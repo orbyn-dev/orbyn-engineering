@@ -31,6 +31,9 @@ const MAX_RESPONSE: usize = 2 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
 const MAX_PAGE: u32 = 1000;
 const MAX_TITLE: usize = 256;
+/// GitLab's label ceiling, and the app's (`web/src/features/issues/edit.ts`, `LABEL_NAME_MAX`): a label travels by name,
+/// so a name at this length has no form one read could carry whole and `candidates` leaves it out rather than offer a
+/// shortened, different label for a write to create.
 const MAX_LABEL: usize = 200;
 /// A login kept as the app keeps it (`web/src/features/issues/edit.ts`, 80 characters): the picker keys an assignee row
 /// by this login and looks the id a write sends up by it, so a login this long or longer is the form the app shows, and

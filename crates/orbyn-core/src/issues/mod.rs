@@ -55,6 +55,8 @@ const MAX_TITLE_CHARS: usize = 256;
 /// The most an issue body or a comment may hold, in bytes.
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const MAX_LABELS: usize = 50;
+/// The most a label name may hold, in characters. A label travels by name, so this is also the ceiling the picker keeps
+/// a label name to (`web/src/features/issues/edit.ts`, `LABEL_NAME_MAX`): cutting below it would send a different label.
 const MAX_LABEL_CHARS: usize = 200;
 const MAX_ASSIGNEES: usize = 25;
 /// The most a candidate id or a comment id may hold, in characters (a reader's own id cap).
