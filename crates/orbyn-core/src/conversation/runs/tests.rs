@@ -236,6 +236,7 @@ async fn fixture_steering(
             base_branch: None,
             effort: None,
             options: std::collections::BTreeMap::new(),
+            branch_name_seed: None,
         })
         .await
         .unwrap();

@@ -530,15 +530,7 @@ async fn qualify_populated_migration(binary: std::ffi::OsString, previous: i64) 
     }
     let ready: Value = serde_json::from_str(&ready).unwrap();
     // Service owns this exact child and releases it on every assertion failure.
-    let old = Service {
-        url: ready["url"].as_str().unwrap().to_owned(),
-        token: ready["token"].as_str().unwrap().to_owned(),
-        access_key: ready["access_key"].as_str().map(str::to_owned),
-        person_key: None,
-        client: reqwest::Client::new(),
-        child,
-        stdout,
-    };
+    let old = Service::adopt(&data, Options::default(), &ready, child, stdout);
     old.ensure_workspace(dir.path()).await;
     let (status, mut original) = old
         .send(
