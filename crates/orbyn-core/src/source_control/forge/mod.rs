@@ -47,8 +47,8 @@ pub use pulls::{
     revision_files, run_id_of, set_file_viewed, timeline,
 };
 pub use review::{
-    add_comment, edit_comment, label_candidates, react, reviewer_candidates, set_labels,
-    set_reviewers, set_thread_resolved, submit_review,
+    add_comment, edit_comment, label_candidates, react, reply_to_thread, reviewer_candidates,
+    set_labels, set_reviewers, set_thread_resolved, submit_review,
 };
 pub use status::{forge_status, viewer};
 
