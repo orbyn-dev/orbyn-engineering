@@ -1078,6 +1078,25 @@ mod tests {
         );
     }
 
+    /// A fixture can sit under a `TEMP` path whose name holds `&`, which cmd.exe splits a bare
+    /// argument on: the junction helper must quote the paths it is given.
+    #[test]
+    fn a_link_is_created_under_a_folder_named_with_a_shell_character() {
+        let dir = TempDir::new();
+        let holder = dir.path().join("a&b");
+        let target = holder.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("probe.txt"), "here\n").unwrap();
+        let link = holder.join("link");
+        link_dir(&target, &link);
+        assert_eq!(
+            std::fs::read_to_string(link.join("probe.txt")).unwrap(),
+            "here\n",
+            "the link names the target folder"
+        );
+        crate::testing::unlink_dir(&link);
+    }
+
     #[tokio::test]
     async fn the_library_is_refused_from_every_side() {
         let dir = TempDir::new();

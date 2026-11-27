@@ -42,14 +42,16 @@ pub fn link_dir(target: &Path, link: &Path) {
     std::os::unix::fs::symlink(target, link).unwrap();
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+
         // Junction creation needs no symbolic-link privilege on supported Windows.
-        // cmd.exe reads a `/` inside a bare path as a switch, so name both paths the
-        // way cmd parses them.
+        // cmd.exe parses its own command line: it reads a `/` inside a bare path as a switch
+        // and splits a bare path on `&`, so name both paths the way cmd parses them, quoted.
         let native = |path: &Path| path.to_string_lossy().replace('/', r"\");
         let output = std::process::Command::new("cmd.exe")
             .args(["/d", "/c", "mklink", "/J"])
-            .arg(native(link))
-            .arg(native(target))
+            .raw_arg(format!("\"{}\"", native(link)))
+            .raw_arg(format!("\"{}\"", native(target)))
             .output()
             .unwrap();
         assert!(
