@@ -522,7 +522,13 @@ fn task_folder_repository<'a>(
     path: &Path,
 ) -> Option<(&'a ThreadRepoRecord, PathBuf)> {
     let mut parts = path.components();
-    let Some(Component::Normal(first)) = parts.next() else {
+    // A reference may spell out the folder it is already relative to (`./planner/src/x.ts`); the leading `.` is
+    // not a segment of it. An absolute path and a `..` stay what they are and name no repository.
+    let first = match parts.next() {
+        Some(Component::CurDir) => parts.next(),
+        other => other,
+    };
+    let Some(Component::Normal(first)) = first else {
         return None;
     };
     let repository = repos.iter().find(|repo| {
@@ -589,6 +595,10 @@ impl Core {
             }
             _ => None,
         };
+        // A matched repository prefix already leaves the path relative to that repository's worktree, so its first
+        // segment is a real folder there (`planner/planner/note.txt` is the `planner` folder inside the `planner`
+        // checkout); only a reference under no repository's folder gets the repeated-workspace strip.
+        let task_folder_matched = owner.is_some();
         let (scope, input, repo_id) = match owner {
             Some((repository, inside))
                 if asked.is_some_and(|repo| repo.repo_id == repository.repo_id) =>
@@ -634,8 +644,12 @@ impl Core {
                     .ok_or_else(|| CoreError::Git("This folder is not a Git checkout.".into()))?
                     .join(&input),
                 ThreadPathBasis::Thread => {
-                    let stripped = repeated_workspace_path(&scope.checkout, &input)
-                        .map(|path| scope.checkout.join(path));
+                    let stripped = if task_folder_matched {
+                        None
+                    } else {
+                        repeated_workspace_path(&scope.checkout, &input)
+                            .map(|path| scope.checkout.join(path))
+                    };
                     stripped
                         .filter(|path| {
                             !crate::project::outside_files::reaches_remote(path)

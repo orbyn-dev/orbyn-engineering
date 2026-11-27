@@ -38,9 +38,13 @@ function serve(repoId: string) {
 const readPath = (asked: string[]) => new URL(asked.find((url) => url.includes("/files/content"))!, "http://127.0.0.1").searchParams;
 
 it("opens the repository's tab for a task-folder reference that names another repository", async () => {
-  const taskFolderTab = fileTabId({ kind: "thread", path: `${REPO}/notes.ts` });
+  const target = { kind: "thread", path: `${REPO}/notes.ts` } as const;
+  const taskFolderTab = fileTabId(target);
   const repoTab = fileTabId({ kind: "thread", path: "notes.ts", repoId: REPO });
   serve(REPO);
+  // The task-folder tab is open, so its removal is what the handoff does and not an empty order.
+  useUi.getState().openFileTab(target);
+  expect(useUi.getState().panelTabOrder).toContain(taskFolderTab);
   const view = render(<FileTab id={taskFolderTab} threadId="t" />);
 
   // The tab that opens is that repository's, at the path inside its worktree, and the task-folder tab is gone.

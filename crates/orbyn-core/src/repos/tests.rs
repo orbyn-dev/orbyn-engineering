@@ -1316,6 +1316,53 @@ async fn a_task_folder_reference_resolves_in_the_repository_its_first_segment_na
     assert_eq!(plain.repo_id.as_deref(), Some(project.as_str()));
 }
 
+/// A reference may spell out the folder it is relative to (`./planner/note.txt`), and once its first segment
+/// names a repository the rest is relative to that repository's worktree, so a folder there that repeats the
+/// checkout's own name is a real folder and is not stripped a second time.
+#[tokio::test]
+async fn a_task_folder_reference_keeps_its_path_after_the_repository_prefix() {
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, _other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    let folder = core.task_folder(&thread.id).await.unwrap();
+    let name = folder.repos[1].name.clone();
+    let second = Path::new(&thread.cwd).join(&name);
+    // A folder inside that checkout repeating its own name, with a same-named file at the root as well, so a
+    // second repeated-workspace strip would answer the root file instead of the nested one.
+    std::fs::create_dir_all(second.join(&name)).unwrap();
+    std::fs::write(second.join(&name).join("note.txt"), "nested\n").unwrap();
+    std::fs::write(second.join("note.txt"), "root\n").unwrap();
+    // A leading `./` still names the repository.
+    let dotted = format!("./{name}/note.txt");
+    let resolved = core
+        .resolve_thread_path(&thread.id, &task_folder_navigation(&thread.cwd, &dotted))
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved.repo_id.as_deref(),
+        Some(other_id.as_str()),
+        "the `./` is not the first segment"
+    );
+    assert_eq!(resolved.checkout_path.as_deref(), Some("note.txt"));
+    // `planner/planner/note.txt` is the `planner` folder inside the `planner` checkout, never the root file.
+    let nested = format!("{name}/{name}/note.txt");
+    let resolved = core
+        .resolve_thread_path(&thread.id, &task_folder_navigation(&thread.cwd, &nested))
+        .await
+        .unwrap();
+    assert_eq!(resolved.repo_id.as_deref(), Some(other_id.as_str()));
+    assert_eq!(
+        resolved.checkout_path.as_deref(),
+        Some(format!("{name}/note.txt").as_str())
+    );
+}
+
 #[tokio::test]
 async fn navigation_coordinates_are_resolved_in_the_repository_its_scope_names() {
     use orbyn_contracts::ResolveThreadPath;
