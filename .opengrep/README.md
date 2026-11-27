@@ -22,7 +22,10 @@ finding, and **does not replace CodeQL**.
     shorthand, a `\x5c` or `\u005c` escape, an octal `\134`, or a range that spans a backslash (`[A-z]`, `[[-^]`); a
     range with an escaped endpoint cannot be classified, so it is skipped rather than guessed, and only an unescaped
     hyphen with an endpoint on both sides separates a range, so an escaped `\-` and a leading `-` are literals
-    (`web/src/styles/tokens.test.ts:165` was the known case; it is fixed). A `\p{…}` property escape is outside the rule.
+    (`web/src/styles/tokens.test.ts:165` was the known case; it is fixed). A hyphen that follows a completed range is
+    a literal as well, which the range lookahead cannot read: `[A-Z-a.]` misses a backslash and is skipped
+    (known limitation, [#1840](https://github.com/orbyn-dev/orbyn-engineering/issues/1840)). A `\p{…}` property escape
+    is outside the rule.
 - `tests/`: a matching case and a safe look-alike for every rule. A rule is unproven without both. The workflow runs
   them first.
 
@@ -52,6 +55,14 @@ class, which is skipped even where it really does exclude a backslash (`/[^\\]/`
 escaped endpoint, skipped rather than classified, which can hide a real finding; and a class that matches a backslash of
 its own, including through a range such as `[A-z]` or `[[-^]`, which needs no backslash-specific fix, though other
 regex metacharacters in that class may still need their own escaping.
+
+**Known limitation: a hyphen after a completed range** ([#1840](https://github.com/orbyn-dev/orbyn-engineering/issues/1840)).
+`[A-Z-a.]` reads as `A-Z`, `-`, `a` and `.`, so it misses a backslash and the rule should report it, but the range
+lookahead reads `Z-a` as a backslash-spanning range and skips the class; `[A-Z-a-z]` and `[A-Z---a]` are skipped for the
+same reason. It is recorded rather than patched again because a bounded fix was measured: one lookbehind level closes
+`[A-Z-a.]` and then reports `[-A-z]` and `[A-Z-.-^]`, which do match a backslash, and two levels close those and still
+miss `[A-Z---a]`. Each level moves the same hole one hyphen along, so the class needs a parser, not another lookahead
+(the proposed parse is in that issue).
 
 The other four gaps are **open** and need the owner's decision. None is accepted here, and the advisory workflow stays
 non-required. The parser set below is the 2026-11-23 re-check; this change did not re-run the full scan.
