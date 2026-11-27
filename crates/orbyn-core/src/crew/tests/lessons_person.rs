@@ -58,6 +58,16 @@ fn lesson_row_opt(w: &World, id: &str) -> Option<CrewLesson> {
     w.core.store.crew_lesson(id).unwrap()
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
 fn actions(w: &World) -> Vec<String> {
     let conn = w.core.store.reader();
     let mut statement = conn
@@ -97,6 +107,16 @@ fn seed(
         })
         .unwrap()
         .unwrap()
+}
+
+/// The repository lesson the fixture seeded as `Repository lesson {n}.`, found by the text its loop gave it: the
+/// fixture numbers its rows, so a test that means one of them names it instead of reading a place in the store's order.
+fn numbered<'a>(lessons: &'a [CrewLesson], n: usize) -> &'a CrewLesson {
+    let text = format!("Repository lesson {n}.");
+    lessons
+        .iter()
+        .find(|lesson| lesson.text == text)
+        .unwrap_or_else(|| panic!("no {text}: {lessons:?}"))
 }
 
 fn add_repo(w: &World, project: &str, text: &str) -> CrewLesson {
@@ -191,12 +211,16 @@ async fn the_list_filters_counts_and_in_next_brief_follow_the_brief() {
         .unwrap();
     assert!(last_repo < global_at, "repository lessons come first");
 
-    // The newest five active visible repository lessons would go into the brief; the sixth does not.
-    let eligible: Vec<&CrewLesson> = all_repo
-        .iter()
-        .filter(|lesson| lesson.state == "active" && !lesson.hidden_by_cap)
-        .collect();
-    for lesson in eligible.iter().take(5) {
+    // The newest five active visible repository lessons would go into the brief; the sixth does not. The fixture wrote
+    // its lessons in number order, so 50 through 46 are the newest five it can carry and 45 is the next one back; name
+    // each by the number the loop gave it rather than by a place in the store's newest-first order.
+    for n in (46..=50).rev() {
+        let lesson = numbered(&all_repo, n);
+        assert!(
+            lesson.state == "active" && !lesson.hidden_by_cap,
+            "the newest five are active and visible: {}",
+            lesson.text
+        );
         let view = list
             .lessons
             .iter()
@@ -204,7 +228,7 @@ async fn the_list_filters_counts_and_in_next_brief_follow_the_brief() {
             .unwrap();
         assert!(view.in_next_brief, "{}", lesson.text);
     }
-    let sixth = eligible[5];
+    let sixth = numbered(&all_repo, 45);
     assert!(
         !list
             .lessons
@@ -273,8 +297,9 @@ async fn the_list_filters_counts_and_in_next_brief_follow_the_brief() {
         [hidden.id.as_str()]
     );
 
-    // A repository lesson ignores the `repo` query, even one that does not exist.
-    let newest = eligible[0].id.as_str();
+    // A repository lesson ignores the `repo` query, even one that does not exist. The newest lesson is the last one
+    // the fixture wrote, number 50; name it rather than read the store's first place.
+    let newest = numbered(&all_repo, 50).id.as_str();
     let detail = w
         .core
         .crew_lesson_detail(newest, Some("no-such-repository"))
@@ -534,12 +559,9 @@ async fn promoting_and_demoting_move_the_scope_and_respect_the_global_cap() {
         .iter()
         .filter(|lesson| lesson.hidden_by_cap)
         .collect();
-    assert_eq!(hidden.len(), 1);
-    assert_ne!(
-        hidden[0].id, promoted.id,
-        "the promoted lesson is not hidden"
-    );
-    assert_eq!(hidden[0].rev, 2, "a cap hide bumps the rev");
+    let hidden = one(&hidden, "global lesson hidden by the cap");
+    assert_ne!(hidden.id, promoted.id, "the promoted lesson is not hidden");
+    assert_eq!(hidden.rev, 2, "a cap hide bumps the rev");
 
     let demoted = w
         .core

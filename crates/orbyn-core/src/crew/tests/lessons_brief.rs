@@ -81,6 +81,27 @@ fn bullet_count(prompt: &str) -> usize {
         .count()
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
+/// The review task of the one lane a test asks for. A review answer lists its lanes in start order, not in a fixture's
+/// order, and a lane a repo rule adds must not become the lane the test waits on.
+fn one_lane(mut lanes: Vec<String>) -> String {
+    assert_eq!(
+        lanes.len(),
+        1,
+        "the test asks for one lane, and no rule adds another: {lanes:?}"
+    );
+    lanes.pop().expect("the lane's review task")
+}
+
 fn lesson_row(w: &World, id: &str) -> CrewLesson {
     w.core.store.crew_lesson(id).unwrap().unwrap()
 }
@@ -357,16 +378,12 @@ async fn hidden_lessons_are_never_injected() {
     let rows = w.core.store.crew_lessons("repo", Some(&project)).unwrap();
     assert_eq!(rows.len(), 51);
     let hidden: Vec<&CrewLesson> = rows.iter().filter(|lesson| lesson.hidden_by_cap).collect();
-    assert_eq!(hidden.len(), 1);
+    let hidden = one(&hidden, "lesson the cap hides");
 
     let (_, prompt) = start(&w, "Hidden lessons.").await;
     assert_eq!(bullet_count(&prompt), BRIEF_LESSONS_MAX);
-    assert!(
-        !prompt.contains(hidden[0].text.as_str()),
-        "{}",
-        hidden[0].text
-    );
-    assert_eq!(lesson_row(&w, &hidden[0].id).uses, 0);
+    assert!(!prompt.contains(hidden.text.as_str()), "{}", hidden.text);
+    assert_eq!(lesson_row(&w, &hidden.id).uses, 0);
     let rows = w.core.store.crew_lessons("repo", Some(&project)).unwrap();
     assert_eq!(
         rows.iter().filter(|lesson| lesson.uses == 1).count(),
@@ -672,9 +689,9 @@ async fn a_review_lane_carries_no_lessons_even_though_a_worker_brief_does() {
     // The lesson exists before the lane starts, so only the review link can keep it out of the reviewer's prompt.
     let project = project_of(&w);
     let lesson = person_lesson(&w, &project, "A repository lesson a reviewer must not see.");
-    let lanes = w.review(&subject, &["correctness"]).await;
+    let lane = one_lane(w.review(&subject, &["correctness"]).await);
 
-    let prompt = worker_prompt(&w, &lanes[0]).await;
+    let prompt = worker_prompt(&w, &lane).await;
     assert!(!prompt.contains("<crew-lessons"), "{prompt}");
     assert!(!prompt.contains(lesson.text.as_str()), "{prompt}");
     assert_eq!(
