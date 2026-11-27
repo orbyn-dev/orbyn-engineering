@@ -1072,6 +1072,35 @@ mod tests {
         );
     }
 
+    /// The Windows twin of the symlinked root and target. A junction is a directory link that
+    /// needs no symbolic-link privilege, and a reparse point is refused like a symlink, so the
+    /// link's own path is never the registered root. A junction under `repo/` is followed to its
+    /// real folder, and the real folder is what the boundary checks.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn junctioned_roots_are_refused_and_targets_are_followed() {
+        let dir = TempDir::new();
+        let path = library(&dir.path().join("mine"));
+        let link = dir.path().join("link");
+        crate::testing::junction(&link, &path);
+        let workspace = service(&dir).await;
+        assert!(matches!(
+            workspace.setup(adopt(&link)).await,
+            Err(CoreError::WorkspaceRefused(_))
+        ));
+
+        std::fs::create_dir_all(path.join("repo")).unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        run_git(&outside, &["init", "-q"]);
+        let escape = path.join("repo").join("escape");
+        crate::testing::junction(&escape, &outside);
+        assert_eq!(
+            check_target(&path, &escape).await.unwrap(),
+            canonicalize(&outside).unwrap()
+        );
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn the_library_is_refused_from_every_side() {

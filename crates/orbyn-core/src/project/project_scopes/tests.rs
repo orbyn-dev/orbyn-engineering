@@ -639,3 +639,133 @@ async fn incomplete_repository_metadata_disables_checkout_and_group_writes_consi
     };
     assert_eq!(selected_members(&catalog).unwrap(), vec![project.id]);
 }
+
+#[test]
+fn catalog_reads_share_only_their_own_scope() {
+    let parse =
+        |value: serde_json::Value| serde_json::from_value::<ProjectScopesQuery>(value).unwrap();
+    let all = parse(json!({}));
+    let all_explicit = parse(json!({ "selection": { "kind": "all_projects" } }));
+    let group = parse(json!({ "selection": { "kind": "project_group", "group_key": "g" } }));
+    let checkout = parse(json!({
+        "selection": { "kind": "checkout", "group_key": "g", "project_id": "p" }
+    }));
+    let separate = parse(json!({ "recipe": { "mode": "separate" } }));
+    let override_a = parse(json!({
+        "recipe": { "overrides": [{ "project_id": "p", "mode": "separate" }] }
+    }));
+    let override_b = parse(json!({
+        "recipe": { "overrides": [{ "project_id": "q", "mode": "separate" }] }
+    }));
+    // A project id is an opaque string on the wire: a delimiter inside one override
+    // must not stand in for another override's boundary.
+    let merged = parse(json!({
+        "recipe": { "overrides": [{ "project_id": "p=separate;q", "mode": "repository" }] }
+    }));
+    let split = parse(json!({
+        "recipe": { "overrides": [
+            { "project_id": "p", "mode": "separate" },
+            { "project_id": "q", "mode": "repository" }
+        ] }
+    }));
+    assert_ne!(
+        catalog_read_key(&merged),
+        catalog_read_key(&split),
+        "an override delimiter cannot merge two distinct recipes"
+    );
+    assert_eq!(
+        catalog_read_key(&all),
+        catalog_read_key(&all_explicit),
+        "an absent selection and an explicit All projects observe the same thing"
+    );
+    for (left, right) in [
+        (&all, &group),
+        (&all, &checkout),
+        (&all, &separate),
+        (&all, &override_a),
+        (&group, &checkout),
+        (&override_a, &override_b),
+    ] {
+        assert_ne!(
+            catalog_read_key(left),
+            catalog_read_key(right),
+            "a different scope must not share another scope's observation"
+        );
+    }
+}
+
+#[test]
+fn catalog_reads_ignore_override_order() {
+    let parse =
+        |value: serde_json::Value| serde_json::from_value::<ProjectScopesQuery>(value).unwrap();
+    let first = parse(json!({
+        "recipe": { "overrides": [
+            { "project_id": "a", "mode": "separate" },
+            { "project_id": "b", "mode": "repository" }
+        ] }
+    }));
+    let reordered = parse(json!({
+        "recipe": { "overrides": [
+            { "project_id": "b", "mode": "repository" },
+            { "project_id": "a", "mode": "separate" }
+        ] }
+    }));
+    let changed = parse(json!({
+        "recipe": { "overrides": [
+            { "project_id": "a", "mode": "repository" },
+            { "project_id": "b", "mode": "repository" }
+        ] }
+    }));
+    assert_eq!(catalog_read_key(&first), catalog_read_key(&reordered));
+    assert_ne!(catalog_read_key(&first), catalog_read_key(&changed));
+}
+
+#[tokio::test]
+async fn catalog_reads_together_share_one_observation_and_a_later_one_sees_changes() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let root = dir.path().join("repo");
+    repository(&root);
+    configure(&root, "origin", "git@host:Owner/Repo.git");
+    core.add_project(root.to_str().unwrap()).await.unwrap();
+    // A selection no other test asks for, so the gate counts only these reads.
+    let query = serde_json::from_value::<ProjectScopesQuery>(json!({
+        "selection": { "kind": "project_group", "group_key": "catalog-reads-together" }
+    }))
+    .unwrap();
+    let observation = super::observation_hooks::hold(&catalog_read_key(&query));
+    let together =
+        futures_util::future::join_all((0..5).map(|_| core.project_scope_catalog(&query)));
+    // Hold the first observation open until every read has joined it.
+    let gate = async {
+        tokio::time::timeout(Duration::from_secs(10), observation.started())
+            .await
+            .expect("the concurrent reads start an observation");
+        assert_eq!(
+            observation.count(),
+            1,
+            "concurrent identical reads make one observation"
+        );
+        observation.release();
+    };
+    let (together, ()) = tokio::join!(together, gate);
+    let first = together[0].as_ref().unwrap();
+    for catalog in &together {
+        assert_eq!(catalog.as_ref().unwrap(), first);
+    }
+    // No answer is kept: a read after a change observes the change, not the last answer.
+    let other = dir.path().join("other");
+    repository(&other);
+    core.add_project(other.to_str().unwrap()).await.unwrap();
+    let after = core.project_scope_catalog(&query).await.unwrap();
+    assert_eq!(
+        after.groups.iter().flat_map(|group| &group.members).count(),
+        2
+    );
+    assert_ne!(after.version, first.version);
+    assert_eq!(
+        observation.count(),
+        2,
+        "a later read observes the workspace again"
+    );
+}

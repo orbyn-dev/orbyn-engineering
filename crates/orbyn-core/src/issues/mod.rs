@@ -29,6 +29,7 @@ use crate::app::Core;
 use crate::credentials::{CredentialError, Credentials};
 use crate::error::{CoreError, Result};
 use crate::store::{AuditRecord, TrackerConnection, tracker_name, tracker_of};
+use crate::util::swr;
 use async_trait::async_trait;
 use orbyn_contracts::{
     CommentIssue, ConnectTracker, CreateIssue, CreateThread, IssueCandidates, IssueCloseReason,
@@ -131,6 +132,20 @@ pub(crate) fn possibly_created(tracker: &str, error: CoreError) -> CoreError {
         )),
         other => other,
     }
+}
+
+/// Whether a write's answer leaves one scope's cached listings unable to describe the tracker: the tracker accepted
+/// the write, or its answer does not prove the write failed, so it may have applied it. Only an answer decided from
+/// the request alone proves nothing was stored: every reader checks its fields before it sends anything, so `Invalid`
+/// came back without a request, and `Unsupported` is a reader with no write path at all. A rate limit, a forbidden
+/// answer, a `NotFound`, a broken connection, a timeout or an unreadable reply can each come back from the read that
+/// answers a write the tracker already stored (GitHub patches the issue and then reads it back), so none of them
+/// proves the edit was dropped, and each drops the scope's pages too.
+fn write_may_have_changed<T>(written: &Result<T>) -> bool {
+    !matches!(
+        written,
+        Err(CoreError::Invalid(_) | CoreError::Unsupported(_))
+    )
 }
 
 /// A new issue as the owning tracker receives it: the person's validated text and the choices that name labels and
@@ -255,7 +270,7 @@ pub(crate) trait IssueSource: Send + Sync {
 pub(crate) struct IssueDesk {
     credentials: Mutex<Credentials>,
     sources: Mutex<HashMap<TrackerKind, Arc<dyn IssueSource>>>,
-    cache: Mutex<HashMap<String, (Instant, ScopeList)>>,
+    cache: Mutex<Listings>,
     /// Linear's teams fallback, which every no-scope read would otherwise ask for again.
     scope_cache: Mutex<HashMap<String, (Instant, Vec<String>)>>,
     /// Tests send the reader GitLab builds to a local fake server instead of the stored host.
@@ -272,12 +287,54 @@ pub(crate) struct IssueDesk {
     linear_test_base: Mutex<Option<String>>,
 }
 
+/// The 30-second listing cache, and how many times the cache has been dropped.
+///
+/// A listing asks the tracker without holding the lock, so a write can land while it is out. The count is bumped under
+/// the same lock that drops the entries: a listing whose count changed while it was out leaves its answer out of the
+/// cache, so a write is never undone by a request it overlapped.
+#[derive(Default)]
+struct Listings {
+    /// How many times the cache has been dropped. A listing compares the value it started with to the value it finds.
+    dropped: u64,
+    entries: HashMap<String, (Instant, ScopeList)>,
+}
+
+impl Listings {
+    /// One listing, as it was cached, while it is younger than [`CACHE_FOR`].
+    fn get(&self, key: &str) -> Option<ScopeList> {
+        let (at, list) = self.entries.get(key)?;
+        (at.elapsed() < CACHE_FOR).then(|| list.clone())
+    }
+
+    /// Caches one listing, unless the cache was dropped while that listing was out. A request that overlapped a write
+    /// may be answered from the tracker as it was before that write, so its answer must not become the next page.
+    fn put_since(&mut self, dropped: u64, key: String, list: ScopeList) {
+        if self.dropped == dropped {
+            self.entries.insert(key, (Instant::now(), list));
+        }
+    }
+
+    /// Drops every entry and bumps [`Self::dropped`], so a listing already out cannot cache its answer.
+    fn drop_all(&mut self) {
+        self.entries.clear();
+        self.dropped += 1;
+    }
+
+    /// Drops every entry whose key starts with `prefix`, bumping [`Self::dropped`] like [`Self::drop_all`]. A prefix
+    /// ends at a [`swr::key`] separator, so it always names a whole scope and never the start of a longer name
+    /// (see [`IssueDesk::scope_prefix`]).
+    fn drop_prefixed(&mut self, prefix: &str) {
+        self.entries.retain(|key, _| !key.starts_with(prefix));
+        self.dropped += 1;
+    }
+}
+
 impl IssueDesk {
     pub(crate) fn new(credentials: Credentials) -> Self {
         Self {
             credentials: Mutex::new(credentials),
             sources: Mutex::new(HashMap::new()),
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(Listings::default()),
             scope_cache: Mutex::new(HashMap::new()),
             #[cfg(test)]
             gitlab_test_base: Mutex::new(None),
@@ -405,14 +462,48 @@ impl IssueDesk {
             .clear();
     }
 
-    /// Drops the 30-second listing cache. Tests call it between passes when a fake tracker changes its answer inside
-    /// the cache window; no production path needs it, because a listener's interval is 60 seconds at least.
-    #[cfg(test)]
-    pub(crate) fn clear_cache(&self) {
+    /// The key one listing is cached under: its connection's tracker and scope, then every filter, sort, limit and
+    /// page the query carries. [`Self::scope_prefix`] names the part a write drops.
+    fn list_key(kind: TrackerKind, scope: &str, query: &IssueQuery) -> String {
+        format!("{}{query:?}", Self::scope_prefix(kind, scope))
+    }
+
+    /// What every cached listing of one connection's scope starts with: the tracker and the scope, each ending at a
+    /// [`swr::key`] separator, then the query's `Debug`. The separator is a control character and a scope with a
+    /// control character is refused, so a scope's prefix ends exactly where its name ends: the prefix of
+    /// `org/Project` matches no page of `org/Project Two`, whose name only starts with the written one.
+    fn scope_prefix(kind: TrackerKind, scope: &str) -> String {
+        swr::key(&[tracker_name(kind), scope])
+    }
+
+    /// Drops every cached listing of one connection's scope, whatever its filter, sort or page, after a write whose
+    /// effect reaches it (docs/issues.md, "Cache"). The scope is as narrow as the write: the tracker itself applies
+    /// the filters, so which cached pages the changed issue belongs to cannot be known here, while the connection
+    /// and scope of the write name every page it can reach. Pages of other scopes and connections stay.
+    pub(crate) fn scope_changed(&self, kind: TrackerKind, scope: &str) {
+        let prefix = Self::scope_prefix(kind, scope);
         self.cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+            .drop_prefixed(prefix.as_str());
+    }
+
+    /// Drops every cached listing, because the connection one was cached from is gone: a connect and a disconnect both
+    /// change which tracker the next listing asks. A test whose fake tracker changed its answer inside the cache window
+    /// without a write has no scope to drop, so it drops all of it too.
+    fn drop_listings(&self) {
+        self.cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drop_all();
+    }
+
+    /// Drops the whole 30-second listing cache. Tests call it between passes when a fake tracker changes its answer
+    /// inside the cache window without a write; a real write drops its own scope at once (`scope_changed`), and a
+    /// connect or disconnect drops everything, because the connection it was cached from is gone.
+    #[cfg(test)]
+    pub(crate) fn clear_cache(&self) {
+        self.drop_listings();
     }
 }
 
@@ -883,11 +974,7 @@ impl Core {
             scopes: scope.map(str::to_owned).into_iter().collect(),
         };
         self.store.put_tracker(&connection, &crate::util::now())?;
-        self.issues
-            .cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.issues.drop_listings();
         self.issues.clear_scopes();
         Ok(self
             .issue_trackers()
@@ -906,11 +993,7 @@ impl Core {
                 .map_err(credential_error)?;
         }
         self.store.delete_tracker(kind)?;
-        self.issues
-            .cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+        self.issues.drop_listings();
         self.issues.clear_scopes();
         Ok(self
             .issue_trackers()
@@ -926,23 +1009,27 @@ impl Core {
         scope: &str,
         query: &IssueQuery,
     ) -> Result<ScopeList> {
-        let id = format!("{} {scope} {query:?}", tracker_name(kind));
-        if let Some((at, hit)) = self
-            .issues
-            .cache
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&id)
-            && at.elapsed() < CACHE_FOR
-        {
-            return Ok(hit.clone());
-        }
+        let id = IssueDesk::list_key(kind, scope, query);
+        // The answer is asked for without the lock, so a write can drop this scope while the request is out. The count
+        // read here says whether that happened: if it did, the answer is the tracker as it was before the write and it
+        // stays out of the cache, so the next listing reads the tracker again instead of serving a page a write undid.
+        let dropped = {
+            let cache = self
+                .issues
+                .cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            match cache.get(&id) {
+                Some(hit) => return Ok(hit),
+                None => cache.dropped,
+            }
+        };
         let fresh = self.issue_source(kind)?.list(scope, query).await?;
         self.issues
             .cache
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(id, (Instant::now(), fresh.clone()));
+            .put_since(dropped, id, fresh.clone());
         Ok(fresh)
     }
 
@@ -1077,7 +1164,7 @@ impl Core {
         checked_body(&body, "The issue body")?;
         checked_labels(&input.labels)?;
         checked_assignees(&input.assignees)?;
-        source
+        let created = source
             .create(
                 &input.scope,
                 &NewIssue {
@@ -1087,7 +1174,11 @@ impl Core {
                     assignees: &input.assignees,
                 },
             )
-            .await
+            .await;
+        if write_may_have_changed(&created) {
+            self.issues.scope_changed(input.tracker, &input.scope);
+        }
+        created
     }
 
     /// Writes one comment on one issue and answers it as the tracker stored it. Editing or deleting a comment is
@@ -1096,13 +1187,19 @@ impl Core {
         self.require_connected(input.tracker).await?;
         self.check_issue_scope(input.tracker, &input.scope).await?;
         let body = checked_comment(&input.body)?;
-        self.writing_source(input.tracker)?
+        let written = self
+            .writing_source(input.tracker)?
             .comment(&input.scope, &input.key, body)
-            .await
+            .await;
+        if write_may_have_changed(&written) {
+            self.issues.scope_changed(input.tracker, &input.scope);
+        }
+        written
     }
 
     /// Adds or takes back one reaction and answers the issue with the tracker's reaction counts. Both directions are
-    /// idempotent on the tracker; the same call twice answers the same issue.
+    /// idempotent on the tracker; the same call twice answers the same issue. A reaction changes no field a listing
+    /// carries and no order it sorts by, so the cached pages stay.
     pub async fn react_issue(&self, input: ReactIssue) -> Result<IssueDetail> {
         self.require_connected(input.tracker).await?;
         self.check_issue_scope(input.tracker, &input.scope).await?;
@@ -1154,7 +1251,7 @@ impl Core {
             ));
         }
         let source = self.editing_source(input.tracker)?;
-        let mut detail = source
+        let written = source
             .update(
                 &input.scope,
                 &input.key,
@@ -1165,7 +1262,11 @@ impl Core {
                     assignees: input.assignees.as_deref(),
                 },
             )
-            .await?;
+            .await;
+        if write_may_have_changed(&written) {
+            self.issues.scope_changed(input.tracker, &input.scope);
+        }
+        let mut detail = written?;
         detail.linked_threads = self.store.threads_linking(&IssueKey {
             tracker: input.tracker,
             scope: input.scope,
@@ -1202,9 +1303,13 @@ impl Core {
         // `not_planned` answers what it stored.
         let close_reason =
             closed.then_some(input.close_reason.unwrap_or(IssueCloseReason::Completed));
-        let mut detail = source
+        let written = source
             .set_state(&input.scope, &input.key, &wanted.name, close_reason)
-            .await?;
+            .await;
+        if write_may_have_changed(&written) {
+            self.issues.scope_changed(input.tracker, &input.scope);
+        }
+        let mut detail = written?;
         detail.linked_threads = self.store.threads_linking(&key)?;
         Ok(detail)
     }

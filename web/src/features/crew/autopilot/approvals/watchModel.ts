@@ -1,7 +1,7 @@
 // What a watch's reads mean, as the words and rows the Background screens draw. Crew designs: watch-list, watch-passing,
-// watch-failing, watch-failing-template, watch-still-failing, watch-recovered, watch-paused, watch-command-error and
-// watch-history. Pure: the same reads give the same words. The contract is the open service pull request (KC6), read
-// through the generated types; nothing here invents a field it does not carry.
+// watch-failing, watch-failing-template, watch-still-failing, watch-recovered, watch-paused, watch-command-error,
+// watch-history and watch-could-not-start-reasons. Pure: the same reads give the same words. The contract is the open
+// service pull request (KC6), read through the generated types; nothing here invents a field it does not carry.
 import type { BackgroundCrew as WireCrew } from "../../../../generated/BackgroundCrew";
 import type { BackgroundTrigger } from "../../../../generated/BackgroundTrigger";
 import { templateNameOf } from "./copy";

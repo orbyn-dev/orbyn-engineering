@@ -148,13 +148,38 @@ impl Watched {
         .await
     }
 
-    fn row(&self, i: usize) -> MergeRecord {
+    /// The task whose brief said `outcome`, found through that brief: `history` starts its tasks in fixture order,
+    /// so a test names the merge it means by the outcome it was given, never by the place it was started in.
+    fn task_saying(&self, outcome: &str) -> String {
+        self.tasks
+            .iter()
+            .find(|task| {
+                self.w
+                    .core
+                    .store
+                    .crew_brief(task.as_str())
+                    .unwrap()
+                    .is_some_and(|brief| brief.outcome == outcome)
+            })
+            .unwrap_or_else(|| panic!("a history task whose brief said {outcome:?}"))
+            .clone()
+    }
+
+    /// The merge row of `task`, found by the task it records: the store owns its order, so a test never reads a
+    /// place in a read to name the row it means.
+    fn row(&self, task: &str) -> MergeRecord {
         self.w
             .core
             .store
-            .crew_merge(&self.tasks[i])
+            .crew_merge(task)
             .unwrap()
-            .unwrap()
+            .unwrap_or_else(|| panic!("the merge row of {task}"))
+    }
+
+    /// Every merge row the fixture made, found by the task it records; an all-rows assertion reads none of the
+    /// store's order.
+    fn rows(&self) -> Vec<MergeRecord> {
+        self.tasks.iter().map(|task| self.row(task)).collect()
     }
 }
 
@@ -168,6 +193,9 @@ async fn a_broken_main_bisects_to_the_right_merge_and_reverts_it() {
         &[("src/c.txt", "c\n")],
     ])
     .await;
+    // The third fixture merge rewrote `src/state.txt`, so it is the one the watch must name and revert.
+    let culprit = h.task_saying("Task 3.");
+    let after = h.task_saying("Task 4.");
     assert_eq!(h.state().await, "BAD");
     let before = h.tip().await;
     let outcome =
@@ -182,7 +210,10 @@ async fn a_broken_main_bisects_to_the_right_merge_and_reverts_it() {
     else {
         panic!("{outcome:?}")
     };
-    assert_eq!(task_id, h.tasks[2], "the third merge broke it");
+    assert_eq!(
+        task_id, culprit,
+        "the merge whose state change broke the checks"
+    );
     assert_eq!(h.tip().await, revert_commit);
     assert_eq!(h.state().await, "GOOD");
     // One new commit on the first-parent line, the revert; the other merges stay.
@@ -208,24 +239,26 @@ async fn a_broken_main_bisects_to_the_right_merge_and_reverts_it() {
         "a"
     );
     // The rows: the cause is reverted, the merges before it are green, the one after waits for the next watch.
-    let culprit = h.row(2);
+    let row = h.row(&culprit);
     assert_eq!(
-        (
-            culprit.review_state.as_str(),
-            culprit.reverted_commit.as_deref()
-        ),
+        (row.review_state.as_str(), row.reverted_commit.as_deref()),
         ("reverted", Some(revert_commit.as_str()))
     );
+    let before: Vec<MergeRecord> = ["Task 1.", "Task 2."]
+        .iter()
+        .map(|outcome| h.row(&h.task_saying(outcome)))
+        .collect();
+    assert!(
+        before.iter().all(|row| row.watch == "green"),
+        "the merges before the cause are green: {before:?}"
+    );
     assert_eq!(
-        (
-            h.row(0).watch.as_str(),
-            h.row(1).watch.as_str(),
-            h.row(3).watch.as_str()
-        ),
-        ("green", "green", "unknown")
+        h.row(&after).watch,
+        "unknown",
+        "the merge after the cause waits for the next watch"
     );
     // The person is told, and it is in the ledger.
-    let told = kinds(&h.w, &h.tasks[2]);
+    let told = kinds(&h.w, &culprit);
     assert!(
         told.contains(&"reverted".to_owned()) && told.contains(&"person_told".to_owned()),
         "{told:?}"
@@ -237,7 +270,11 @@ async fn a_broken_main_bisects_to_the_right_merge_and_reverts_it() {
             .await
             .unwrap();
     assert_eq!(next, WatchOutcome::Healthy { cleared: 1 });
-    assert_eq!(h.row(3).watch, "green");
+    assert_eq!(
+        h.row(&after).watch,
+        "green",
+        "the next watch cleared the merge after the cause"
+    );
 }
 
 #[tokio::test]
@@ -250,6 +287,7 @@ async fn a_later_merge_that_depends_on_the_cause_is_listed_and_nothing_is_revert
         &[("src/state.txt", "STILL BAD\n")],
     ])
     .await;
+    let broke = h.task_saying("Task 3.");
     let before = h.tip().await;
     let outcome =
         h.w.core
@@ -259,9 +297,9 @@ async fn a_later_merge_that_depends_on_the_cause_is_listed_and_nothing_is_revert
     let WatchOutcome::NeedsPerson { culprit, .. } = &outcome else {
         panic!("{outcome:?}")
     };
-    assert_eq!(culprit.as_deref(), Some(h.tasks[2].as_str()));
+    assert_eq!(culprit.as_deref(), Some(broke.as_str()));
     assert_eq!(h.tip().await, before, "the branch moved without certainty");
-    let row = h.row(2);
+    let row = h.row(&broke);
     assert_eq!(row.watch, "broken");
     assert!(
         row.needs_person
@@ -270,12 +308,13 @@ async fn a_later_merge_that_depends_on_the_cause_is_listed_and_nothing_is_revert
         "{:?}",
         row.needs_person
     );
-    // It tops the Review queue, even under Full.
+    // It tops the Review queue, even under Full: the queue ranks a break that needs a decision first, so the broken
+    // merge's place at the top is the read's order, not the fixture's.
     assert_eq!(
         h.w.core.crew_review_queue(NOW + 200).unwrap().merges[0].task_id,
-        h.tasks[2]
+        broke
     );
-    assert!(kinds(&h.w, &h.tasks[2]).contains(&"main_broken".to_owned()));
+    assert!(kinds(&h.w, &broke).contains(&"main_broken".to_owned()));
 }
 
 #[tokio::test]
@@ -320,7 +359,9 @@ async fn a_healthy_main_clears_the_merges_and_a_repository_with_no_checks_is_not
             .await
             .unwrap();
     assert_eq!(outcome, WatchOutcome::Healthy { cleared: 4 });
-    assert!((0..4).all(|i| h.row(i).watch == "green"));
+    let rows = h.rows();
+    assert_eq!(rows.len(), 4, "a row for every merge the fixture made");
+    assert!(rows.iter().all(|row| row.watch == "green"), "{rows:?}");
     assert_eq!(
         h.w.core
             .crew_watch_main(&h.target, NOW + 200)
@@ -349,5 +390,7 @@ async fn a_repository_with_no_checks_is_not_called_healthy() {
             .unwrap(),
         WatchOutcome::NoChecks
     );
-    assert!((0..4).all(|i| h.row(i).watch == "unknown"));
+    let rows = h.rows();
+    assert_eq!(rows.len(), 4, "a row for every merge the fixture made");
+    assert!(rows.iter().all(|row| row.watch == "unknown"), "{rows:?}");
 }

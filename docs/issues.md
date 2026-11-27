@@ -102,8 +102,19 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
 - A tracker that fails for any other reason while others answer goes in `failed`, with the service's own message
   (never the raw tracker response). An invalid request, such as a paging cursor the service did not issue, is
-  `400 invalid_input` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
-  cached 30 seconds.
+  `400 invalid_input` instead and fails the whole listing.
+- **Cache.** A listing is up to 100 issues per tracker and scope, and each page is kept 30 seconds. A write through
+  this service in that tracker and scope (create, comment, an edit, a state change) drops every cached page of it as
+  soon as the tracker answers, so the next listing reads the tracker again instead of the page cached before it; a
+  listing that was still asking the tracker when the write landed is not cached, so it cannot put the page it read
+  back. It is that whole scope and no more: the tracker applies the filters, so which cached pages the changed issue
+  belongs to cannot be known here, while nothing outside the tracker and scope of the write can have changed. A scope
+  is matched by its whole name, so a write to `org/Project` leaves `org/Project Two` cached. A write whose answer does
+  not prove it failed may have been applied, so it drops the same pages: that is a tracker that never answered, and
+  one that answered a read of a write it had already stored (a rate limit, a refusal, a `404` or an unreadable reply
+  on that read). A reaction changes no field a page carries and no order it sorts by, so it drops none. Dropping the
+  page guarantees a fresh read, not that the write is in its answer: on GitHub that read is a `gh issue list`
+  `--search` call (`sort`), which can lag a new or changed issue, so a page read in that window can still miss it.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
   report them gives `[]`. A link carries `checks` when the tracker reports CI for it: the same `PullChecks`
   counts the pull request list carries. GitHub reads them with one `gh pr view --json statusCheckRollup` per
@@ -636,16 +647,17 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
     word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
     nothing left writes nothing, and a removal deletes by the award's id. The answer carries each award name and
     count from the award list's first page of 100, and carries no counts (`null`) when that page is full, because
-    more may be behind it; a removal whose own-award lookup runs out of those pages answers `tracker_unavailable`
-    rather than pretending the award is gone.
+    more may be behind it; an add or a removal whose own-award lookup runs out of those pages answers
+    `tracker_unavailable` rather than pretending the award is not there.
   - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
     `400 invalid_input` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
     React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
     directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
-    left writes nothing. The answer carries each content word and count from at most two pages of 50, and carries
-    no counts when the last page is full, because more may be behind it. Label names are resolved against the
-    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid_input` even though it
-    exists.
+    left writes nothing, as far as those pages show: a reaction they do not carry while the last page is full may be
+    behind it, so both directions answer `tracker_unavailable` rather than guess, writing nothing. The answer carries
+    each content word and count from at most two pages of 50, and carries no counts when the last page is full, because
+    more may be behind it. Label names are resolved against the repository's labels read up to five pages of 50, so a
+    label beyond the first 250 is `400 invalid_input` even though it exists.
   - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
     Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
     than one is `400 invalid_input`, as is a label with a semicolon in it); comment writes markdown and answers the stored

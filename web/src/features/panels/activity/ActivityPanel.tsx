@@ -2,6 +2,7 @@ import { useState } from "react";
 import { clockTime, fullTime } from "../../../lib/format";
 import { useUi } from "../../../product/state/ui";
 import { useThreadLogs } from "../../../product/state/threadLogs";
+import type { ThreadLog } from "../../../product/timeline/types";
 import { Empty } from "../../../product/ui/states";
 import { ThisRun } from "./ThisRun";
 import { filterActivity, summarizeActivity, type ActivityFilter } from "./activityView";
@@ -11,10 +12,13 @@ const FILTERS: { id: ActivityFilter; label: string }[] = [
   { id: "commands", label: "Commands" },
   { id: "edits", label: "Edits" },
 ];
+/** A thread that has no log yet shares this one empty timeline: a selector that makes a new array on every
+ *  store snapshot re-renders forever (the log stays unset until a thread's first event arrives). */
+const NO_TIMELINE: ThreadLog["timeline"] = [];
 
 /** The thread's activity. Remount it per thread so the filter starts at All. */
 export function ActivityPanel({ threadId }: { threadId: string }) {
-  const timeline = useThreadLogs((state) => state.logs[threadId]?.timeline ?? []);
+  const timeline = useThreadLogs((state) => state.logs[threadId]?.timeline ?? NO_TIMELINE);
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const timestampFormat = useUi((state) => state.timestampFormat);
   if (timeline.length === 0) return <Empty title="No activity yet" />;

@@ -11,6 +11,33 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{Notify, mpsc};
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
+/// The delivery row a post to one member answers with, found by the recipient it names: one post answers one row per
+/// target, so a second row or a row for another member is a bug, not a place a test may read.
+fn delivered_to<'a>(sent: &'a Value, to: &str) -> &'a Value {
+    let delivered = sent["delivered"]
+        .as_array()
+        .expect("a post answers with its delivery rows");
+    assert_eq!(
+        delivered.len(),
+        1,
+        "one post to one member answers one delivery row: {sent}"
+    );
+    delivered
+        .iter()
+        .find(|row| row["to"].as_str() == Some(to))
+        .unwrap_or_else(|| panic!("no delivery to {to}: {sent}"))
+}
+
 pub(super) async fn pause_worker(d: &Duo) -> String {
     let worker = d.w.worker(&d.b);
     d.w.core
@@ -323,7 +350,7 @@ async fn a_needs_person_worker_receives_held_messages_when_its_turn_resumes() {
     let body = "Keep the parser's newline behavior on resume.";
     let (sent, error) = d.call(&d.ta, "crew_post", Duo::fact(&d.mb, body)).await;
     assert!(!error, "{sent}");
-    assert_eq!(sent["delivered"][0]["mode"], "held");
+    assert_eq!(delivered_to(&sent, &d.mb)["mode"], "held");
     d.w.core
         .store
         .move_crew_task(&d.b, "running", None)
@@ -428,8 +455,10 @@ async fn a_terminal_worker_lists_undelivered_ids_to_the_lead_without_forwarding_
     assert!(!error, "{sent}");
     let crew = d.w.task(&d.b).crew_id;
     let held = d.w.core.store.held_crew_messages(&crew, &d.mb).unwrap();
-    assert_eq!(held.len(), 1);
-    let message_id = held[0].id.as_str().to_owned();
+    let message_id = one(&held, "held message for the ended worker")
+        .id
+        .as_str()
+        .to_owned();
     d.w.core
         .crew_cancel_task(&d.b, Some("The person ended this task."), "test")
         .await

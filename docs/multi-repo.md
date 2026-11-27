@@ -398,11 +398,14 @@ an ordinary thread and nothing below changes for it. The rows are written by thr
   folder and the answer's `checkout_path` is relative to that repository's worktree. The request's `cwd` is the thread's own
   stored folder (the task folder) and so is the answer's: the thread's move is still `409 stale_owner`, and it is that folder,
   not a worktree, that a client fences against.
-- **Known limit: a task-folder reference.** A reference the engine writes relative to its task folder (a message link or a tool
-  result such as `planner/src/x.ts`) still resolves in the thread's primary repository: the task folder is not a checkout, and
-  its worktrees share no one path namespace. A repository-relative reference that names its `repo_id` resolves in that
-  repository; following a task-folder reference to the repository that owns it needs the link, chip or reveal intent to carry
-  the repository (issue #1581).
+- **A task-folder reference names its repository in its first segment.** A thread-basis reference is written relative to the
+  task folder, whose children are the repositories' worktrees: `planner/src/x.ts` is the thread's `planner` repository's
+  `src/x.ts`, never the primary repository's `planner/src/x.ts`. The resolver maps the first segment to the thread repository
+  whose worktree folder it is, with the platform's own case rules, and resolves the rest inside that worktree; an untrusted
+  repository among them answers `409 repo_untrusted`. The answer's `repo_id` names the repository the coordinates belong to
+  (absent for an ordinary thread, and for a repository that is not the thread's), so the web opens that repository's tab and
+  its read and write carry the `repo_id`; a reference under no repository's folder keeps its older meaning after the
+  repeated-workspace strip, which is the primary repository's worktree.
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.

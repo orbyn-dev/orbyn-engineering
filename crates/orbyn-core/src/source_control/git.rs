@@ -107,6 +107,9 @@ async fn converter_overrides(cwd: &Path) -> Vec<String> {
 /// Git for the checks that read what a worker changed. Anything the worker could set in the repository to hide an edit, or to
 /// make the core run a program of its choosing, is off: repository filters and diff converters, attributes (from the tree, the
 /// global file and the system), and replace refs. A caller that relies on a changed file showing in a diff uses this.
+/// Line-ending conversion is deliberately left as the checkout configures it: these reads compare a working tree against its
+/// index, and forcing the conversion off reports a clean `core.autocrlf=true` checkout as changed. A read that must compare
+/// bytes uses [`git_byte_exact`].
 pub(crate) async fn git_hardened(cwd: &Path, args: &[&str]) -> Result<Vec<u8>> {
     hardened(cwd, &[], args).await
 }
@@ -1245,6 +1248,53 @@ mod tests {
                 .unwrap();
             assert_eq!(text(&exact), "false", "{key} is off for byte-exact checks");
         }
+    }
+
+    /// Line-ending conversion stays on for a hardened read on purpose. The working-tree reads it serves
+    /// (`status`, `diff`) compare a checkout against its index, so forcing the conversion off reports a clean
+    /// `core.autocrlf=true` checkout as changed; only the byte-exact read that decides turns it off, and there
+    /// the same bytes must read as a change. The index is rebuilt without stat info so Git compares content
+    /// instead of trusting its cache. Measured on Git for Windows 2.43.
+    #[tokio::test]
+    async fn hardened_reads_keep_the_checkouts_line_ending_conversion() {
+        let dir = TempDir::new();
+        let root = dir.path();
+        for args in [
+            &["init", "-q"][..],
+            &["config", "core.autocrlf", "true"][..],
+            // An inherited `core.safecrlf=true` refuses the LF-only fixture written below, so pin
+            // it: this repository's settings decide the test, not the machine's.
+            &["config", "core.safecrlf", "false"][..],
+            &["config", "user.email", "review@example.invalid"][..],
+            &["config", "user.name", "Review"][..],
+        ] {
+            crate::testing::run_git(root, args);
+        }
+        std::fs::write(root.join("f.txt"), "a\nb\n").unwrap();
+        crate::testing::run_git(root, &["add", "f.txt"]);
+        crate::testing::run_git(root, &["commit", "-qm", "one"]);
+        // The checkout now holds CRLF bytes where the index holds LF, as `core.autocrlf=true` leaves it.
+        std::fs::write(root.join("f.txt"), "a\r\nb\r\n").unwrap();
+        std::fs::remove_file(root.join(".git/index")).unwrap();
+        crate::testing::run_git(root, &["read-tree", "HEAD"]);
+        assert_eq!(
+            text(
+                &git_hardened(root, &["status", "--porcelain"])
+                    .await
+                    .unwrap()
+            ),
+            "",
+            "a hardened read must not report a clean line-ending checkout as changed"
+        );
+        assert_eq!(
+            text(
+                &git_byte_exact(root, &["status", "--porcelain"])
+                    .await
+                    .unwrap()
+            ),
+            "M f.txt",
+            "the byte-exact read that decides must see the byte difference"
+        );
     }
 
     #[test]

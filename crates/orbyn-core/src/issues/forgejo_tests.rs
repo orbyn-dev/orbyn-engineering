@@ -1507,7 +1507,8 @@ mod writes {
 
 mod limits {
     //! Forgejo's reaction list has a page bound: when the last page read is full, the answer is no counts rather
-    //! than a partial list presented as the totals.
+    //! than a partial list presented as the totals, and the reader's own reaction that the read did not find is no
+    //! proof that it is absent.
 
     use super::*;
     use orbyn_contracts::IssueReaction;
@@ -1544,6 +1545,53 @@ mod limits {
         assert_eq!(
             detail.reactions, None,
             "a full last page may hide more: no counts rather than a partial list"
+        );
+    }
+
+    /// The lookup that makes both directions idempotent reads the same bounded pages: when they are all full and the
+    /// reader's own reaction is not among them, a page this reader does not read may still hold it, so neither
+    /// direction may guess. A repeated add would write a second reaction and a removal would answer success with the
+    /// reaction still there; the answer is `tracker_unavailable` and nothing is written.
+    #[tokio::test]
+    async fn a_list_longer_than_the_pages_read_answers_unavailable_instead_of_guessing() {
+        let server = Server::start(|req| {
+            let base = base_of(req);
+            let path = req.path();
+            if path == "/api/v1/user" {
+                return Reply::json(&json!({ "login": "ann" }));
+            }
+            if path.ends_with("/reactions") {
+                // Every page read is full and none of it is ann's.
+                let rows: Vec<Value> = (0..50)
+                    .map(|n| json!({ "content": "+1", "user": { "login": format!("bo{n}") } }))
+                    .collect();
+                return Reply::json(&Value::Array(rows));
+            }
+            if path.ends_with("/comments") {
+                return Reply::json(&json!([]));
+            }
+            Reply::json(&issue(&base, 21))
+        })
+        .await;
+        for on in [true, false] {
+            let error = reader(&server)
+                .react("grp/proj", "21", None, IssueReaction::ThumbsUp, on)
+                .await
+                .map(|_| ())
+                .unwrap_err();
+            assert!(
+                matches!(&error, CoreError::TrackerUnavailable(m)
+                    if m == "Forgejo's reaction list is longer than Orbyn reads."),
+                "on={on}: {error:?}"
+            );
+        }
+        let seen = server.seen();
+        assert!(
+            !seen.iter().any(|req| {
+                (req.line.starts_with("POST ") || req.line.starts_with("DELETE "))
+                    && req.path().ends_with("/reactions")
+            }),
+            "nothing is written when the read cannot tell: {seen:?}"
         );
     }
 }
