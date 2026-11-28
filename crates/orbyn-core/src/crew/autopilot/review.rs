@@ -97,7 +97,9 @@ impl ActionReview for GateReview {
     async fn review(&self, scope: &RunScope, ask: &ActionAsk) -> Review {
         match self.0.upgrade() {
             Some(core) => core.crew_review_action(scope, ask).await,
-            None => Review::Pass,
+            // The core is gone, so no lease, rule or worktree can be read. This path never passes:
+            // not knowing is a refusal, as everywhere else on the gate.
+            None => Review::Deny("Orbyn could not check this action.".to_owned()),
         }
     }
 }
@@ -225,6 +227,12 @@ impl Core {
         };
         let project = self.store.thread(&run.lead_thread_id)?.project_id;
         let mode = self.crew_autopilot_mode(&project, &task.crew_id);
+        // A relative path resolves where the write scope resolves it, so the lease is read against
+        // the file the engine writes. Without a write scope the worktree is all there is to go on.
+        let lease_base = scope
+            .write_scope
+            .as_ref()
+            .map_or_else(|| worktree.clone(), |scope| scope.engine_cwd.clone());
         let ground = Ground::read(self, &worktree, run.base_commit.as_deref()).await;
         let scene = ground.scene(&key.protected_paths);
         let ctx = context(ask.kind, &ask.target, &ask.paths, &scene);
@@ -276,7 +284,7 @@ impl Core {
         // toward the trip wires (3 in a row, 20 in a run) like any other: a worker cannot retry out-of-lease
         // writes without limit.
         if let Some(words) =
-            self.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, ask)
+            self.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, &lease_base, ask)
         {
             let body = json!({ "action": action, "decided_by": "lease", "mode": mode.name() });
             return self.autopilot_denied(task, &body, &words, &needles);

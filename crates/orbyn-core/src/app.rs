@@ -113,6 +113,11 @@ pub struct CoreConfig {
     /// Whether a crew worker's process starts under the restriction (and is refused where
     /// none exists). Ships `true`; only tests of crew logic with fake engines turn it off.
     pub crew_confine_workers: bool,
+    /// Whether a writing crew worker runs in its own worktree instead of the lead's checkout
+    /// (issue #436). Ships `false`: the worktree and its recorded checkout are built, but the
+    /// protected-file and index-flag baselines a start records are still read from the lead's
+    /// checkout, so turning it on for everyone is the rest of #436.
+    pub crew_writer_worktrees: bool,
 }
 
 impl CoreConfig {
@@ -143,6 +148,7 @@ impl CoreConfig {
             crew_merge_watch_interval: None,
             crew_background_watch_interval: None,
             crew_confine_workers: true,
+            crew_writer_worktrees: false,
         }
     }
 }
@@ -661,6 +667,23 @@ impl Core {
         project_id: &str,
         request: &orbyn_contracts::CreateThread,
     ) -> Result<git::WorktreeOptions> {
+        self.worktree_options_for(
+            project_id,
+            request.base_branch.as_deref(),
+            real_title(request.branch_name_seed.as_deref())
+                .or_else(|| real_title(request.title.as_deref())),
+        )
+    }
+
+    /// [`Self::worktree_options`] from the commit to start at and the title naming may read,
+    /// shared by a thread's worktree and a crew writer's (issue #436): one resolver, no second
+    /// copy of the preference reads.
+    pub(crate) fn worktree_options_for(
+        &self,
+        project_id: &str,
+        base: Option<&str>,
+        seed: Option<String>,
+    ) -> Result<git::WorktreeOptions> {
         let text = |key: &str| -> Result<String> {
             Ok(self
                 .preference(key, Some(project_id))?
@@ -674,12 +697,11 @@ impl Core {
                 prefix: text("branch_name_prefix")?,
                 custom: None,
             },
-            base: request.base_branch.clone(),
+            base: base.map(str::to_owned),
             from_origin: self.preference("new_worktrees_start_from_origin", Some(project_id))?
                 == serde_json::json!(true),
             submodules: text("worktree_submodules")?,
-            seed: real_title(request.branch_name_seed.as_deref())
-                .or_else(|| real_title(request.title.as_deref())),
+            seed,
         })
     }
 

@@ -60,6 +60,7 @@ mod view;
 mod watch;
 mod workers;
 mod working;
+mod worktree;
 
 #[cfg(test)]
 mod tests;
@@ -87,6 +88,7 @@ pub use classes::{
 };
 pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, withhold};
+pub(crate) use leases::LeaseGuard;
 pub use leases::{LEASE_RELEASE_TOOL, LEASE_REQUEST_TOOL, LEASE_TOOLS, refuse_protected};
 pub use needs_you::WORKER_STOPPED_TWICE;
 pub use protect::protected_changes;

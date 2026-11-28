@@ -240,9 +240,11 @@ the gap Crew fills. openbot is non-commercial: no code or text from it, only the
 - **Lead**: an ordinary thread on whatever engine the person picks. It gets the Crew tools. It writes briefs and
   reviews results. It does no routing maths.
 - **Router** (Rust, no model): picks the engine for each brief. The decision and its reasons are stored and shown.
-- **Workers**: threads on the chosen engines. Planned: each writing worker in its own worktree; today they run in the lead's checkout (see "Isolation"). Depth is 1: workers cannot start workers.
+- **Workers**: threads on the chosen engines. A writing worker's own worktree is built and off by default (#436): behind
+  `CoreConfig::crew_writer_worktrees` it gets a checkout of its own, and with the flag off, which is how it ships, the
+  worker runs in the lead's checkout (see "Isolation"). Depth is 1: workers cannot start workers.
 - **Crew bus** (Rust): owns runs, messages and the shared board.
-- **Verifier** (Rust): runs the answer-key checks in the worker's checkout (the lead's, until worker worktrees are built).
+- **Verifier** (Rust): runs the answer-key checks in the worker's checkout (the lead's, until worker worktrees are switched on).
 
 **Models and effort per role.** These come from the repository's harness (`harness.py resolve`: library defaults, then
 the owner's file, then the repository's `.orbyn/harness.json`). Effort is medium for every role and never higher.
@@ -371,7 +373,8 @@ retries with the reason. The same failure twice means one change of approach, an
     task counts, including review lanes and fixes, except Autopilot's merge corrections, which create their task
     directly (deterministic, no worker turns). A task whose worker thread exists or whose first prompt is still queued
     counts at least one turn.
-  - The worker runs in the lead's checkout through `delegate`. A worktree of its own is not created yet.
+  - The worker runs in the lead's checkout through `delegate`, unless a writing worker's own checkout is switched on
+    (#436, "Isolation"), which it is not by default.
   - **Check kinds this version runs (#437):** besides the command kinds, `file_scope` and `diff_size`,
     `schema`, `secret_scan` and `repo_required` run in the checkout, and `http_probe` sends one
     request, each recording its Evidence:
@@ -483,12 +486,29 @@ Guards, all enforced in code:
 
 **Isolation**
 
-- **Planned:** a writing worker gets its own worktree through the existing worktree handoff.
-- **Today:** workers run in the lead's checkout. There is no merge gate for a single worker, and diff checks see the lead's uncommitted changes too.
+- **Built, off by default (#436):** a writing worker gets a checkout of its own, `<repo>-wt/crew-<member>` beside the
+  clone on branch `crew-<member>`, made before its thread and removed when that start fails. A failed start removes only
+  the checkout it made, and keeps even that one while its worker cannot be confirmed stopped; a checkout that already
+  existed is never removed, so the member keeps what it held. It is one folder per crew member, reused across that
+  member's tasks, so the folders cannot pile up one per task. A member's id names its folder and branch unchanged, so it
+  is lowercase letters, digits and hyphens, at most 59 characters; any other id is refused a checkout instead of being
+  mapped onto a name another member already has. Each folder has a record beside it, `<repo>-wt/.orbyn/crew-<member>`,
+  written before the folder is made: a folder a crash left and git no longer lists is cleared by the next start for that
+  member instead of blocking every retry, but only while that record says Orbyn made it and the folder is still this
+  clone's checkout. Any other folder there is kept and the start refuses until a person moves or removes it, so a
+  person's folder is never deleted for Orbyn's convenience, and a checkout git lists on another branch is never taken for
+  a worker's. It is switched on by `CoreConfig::crew_writer_worktrees`, which ships `false`, because a start still
+  records the key's protected files and the checkout's index flags from the lead's checkout: switching it on gives the
+  verifier a checkout whose baseline was read somewhere else, which is the rest of #436. Read-only workers share the
+  lead's checkout either way.
+- **Today, with the flag off:** workers run in the lead's checkout. There is no merge gate for a single worker, and diff checks see the lead's uncommitted changes too.
 - The brief's file lease prevents two writers on the same files, and a worker's file-change tool outside it is refused
   at the gate with the lease's own words, before the write; the verifier's `file_scope` is no longer what catches it. A
   shell command is not read, so a command can still write outside the lease (issue #441's sandbox). A refused write is
-  recorded as a denial and counts toward the trip wires (3 in a row, 20 in a run).
+  recorded as a denial. It counts toward the trip wires (3 in a row, 20 in a run) only when Autopilot's chain is bound;
+  otherwise the refusal is an `action.deny` audit row and does not count. The gate asks the lease whether or not
+  Autopilot's chain was bound, and a lease it cannot read is a refusal: no rule, permission mode or person's approval
+  reaches a write the lease refuses.
 - The lead merges in order.
 - Read-only workers share the lead's checkout.
 

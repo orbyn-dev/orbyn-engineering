@@ -23,6 +23,7 @@ by `store::crew` ([Crew Protocol](../../../../docs/crew/protocol/SPEC.md)).
 | `persist` | Storing a decision with its task, after both checks |
 | `tool` | The tool list and `crew_route`, the dry-run tool |
 | `start` | `crew_start`: validates the brief and key, refuses a crew that spent its turn budget, routes, grants the leases and runs the worker through `delegate` |
+| `worktree` | A writing worker's own checkout (issue #436): `<repo>-wt/crew-<member>` beside the clone on branch `crew-<member>`, made before its thread and removed when that start fails — a checkout that already existed is left alone, and one this start made is kept when its worker cannot be confirmed stopped. One folder per member, reused across that member's tasks; a folder a crash left and git no longer lists is cleared by the next start only when Orbyn's own record at `<repo>-wt/.orbyn/crew-<member>` says Orbyn made it and the folder is still this clone's checkout, and any other folder is kept with the start refused until a person moves or removes it. Off by default (`CoreConfig::crew_writer_worktrees`), because a start still reads the protected-file and index-flag baselines from the lead's checkout |
 | `report` | `crew_report`: the worker's result, stamped by the core, then the verifier |
 | `lifecycle` | The task states and transitions of SPEC.md section 6, and the loop guard. Pure |
 | `leases` | Grants the brief's files to its worker; refuses protected paths, files outside the brief and a reviewer's write; reads expiry on use; refuses a worker's file change outside its lease at the gate, before the write. Its member tools (`crew_lease_request`, `crew_lease_release`, behind the flag) let a member ask for a lease inside its brief and release one it holds; a conflict tells the lead, and the grant is the core's own object with the caller as holder |
@@ -97,6 +98,8 @@ ids and enums, never text.
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
   A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
+  The gate asks that check whether or not Autopilot's chain was bound, and a lease it cannot read is a
+  refusal, not a pass.
 - A crew-wide turn budget is one device-local number (`crew_turn_budget`, whole turns; 0 or unset is
   none), set in Settings › General. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
   task is refused once the crew has spent it, and a task already running is never stopped by it. It fails closed: a budget or a

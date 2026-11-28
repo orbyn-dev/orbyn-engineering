@@ -180,6 +180,14 @@ pub trait ActionReview: Send + Sync {
     async fn review(&self, scope: &RunScope, ask: &ActionAsk) -> Review;
 }
 
+/// The check a Crew worker's file lease installs on the gate (H10), asked when no [`ActionReview`]
+/// is bound, so a lease refusal never depends on Autopilot having been wired. A check that cannot
+/// be made is a `Deny`, never a `Pass`.
+#[async_trait::async_trait]
+pub trait ActionLease: Send + Sync {
+    async fn lease(&self, scope: &RunScope, ask: &ActionAsk) -> Review;
+}
+
 /// How many approvals one run may have waiting at once. A stalled or hostile engine gets a plain denial past
 /// this instead of growing the gate and the store's pending list without bound.
 const MAX_WAITING_APPROVALS: usize = 32;
@@ -187,6 +195,7 @@ const MAX_WAITING_APPROVALS: usize = 32;
 pub struct ApprovalGate {
     store: Arc<Store>,
     review: std::sync::OnceLock<Arc<dyn ActionReview>>,
+    lease: std::sync::OnceLock<Arc<dyn ActionLease>>,
     waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalState>>>,
     /// Approvals currently waiting, counted per run.
     waiting_runs: Mutex<HashMap<String, usize>>,
@@ -200,6 +209,7 @@ impl ApprovalGate {
         Self {
             store,
             review: std::sync::OnceLock::new(),
+            lease: std::sync::OnceLock::new(),
             waiters: Mutex::new(HashMap::new()),
             waiting_runs: Mutex::new(HashMap::new()),
             feedback: Mutex::new(HashMap::new()),
@@ -210,6 +220,12 @@ impl ApprovalGate {
     /// Installs Autopilot's check. It can be set once.
     pub fn bind_review(&self, review: Arc<dyn ActionReview>) {
         let _ = self.review.set(review);
+    }
+
+    /// Installs the Crew lease check. It can be set once. It is not tied to the Preview flag that
+    /// gates Autopilot's binding: a worker's lease holds whether or not that check was wired.
+    pub fn bind_lease(&self, lease: Arc<dyn ActionLease>) {
+        let _ = self.lease.set(lease);
     }
 
     /// Decides an action, waiting for a person when policy says ask. The audit
@@ -335,9 +351,15 @@ impl ApprovalGate {
         if scope.plan && ask.kind == ActionKind::FileChange {
             return Ok(Verdict::Deny("Plan mode changes nothing.".to_owned()));
         }
-        let review = match self.review.get() {
-            Some(review) => review.review(scope, &ask).await,
-            None => Review::Pass,
+        // Autopilot's chain answers first when it was bound, so its own ledger and trip wires see the
+        // request. When nothing bound it, the lease still holds: the gate asks its own lease check
+        // rather than let a Crew worker's write through unchecked.
+        let (review, source) = match self.review.get() {
+            Some(review) => (review.review(scope, &ask).await, "autopilot"),
+            None => match self.lease.get() {
+                Some(lease) => (lease.lease(scope, &ask).await, "crew_lease"),
+                None => (Review::Pass, "autopilot"),
+            },
         };
         if let Review::Deny(words) = review {
             self.store.append_audit(&AuditRecord {
@@ -345,7 +367,7 @@ impl ApprovalGate {
                 action: "action.deny".into(),
                 target: ask.target.clone(),
                 decision: Some(PolicyEffect::Deny),
-                source: "autopilot".into(),
+                source: source.into(),
                 thread_id: Some(scope.thread_id.clone()),
                 run_id: Some(scope.run_id.clone()),
                 detail: json!({ "kind": ask.kind }),
@@ -420,6 +442,8 @@ impl ApprovalGate {
             id: id.clone(),
             settled: false,
         };
+        // The person's wait can be long, so the ask is kept for the lease to be asked again once they answer.
+        let after_wait = ask.clone();
         self.store.create_approval(NewApproval {
             id: id.clone(),
             run_id: scope.run_id.clone(),
@@ -442,7 +466,31 @@ impl ApprovalGate {
             }
         };
         Ok(match state {
-            ApprovalState::Allowed => Verdict::Allow,
+            // The lease was asked before the wait, and a lease past its `expires_at` stops blocking another
+            // member, so an allow can outlive the lease that justified it: the same lease is asked again and
+            // its refusal wins. This narrows the window to the gap between this answer and the write the engine
+            // makes itself, which reaches no Orbyn route and so cannot be fenced from here.
+            ApprovalState::Allowed => match self.lease.get() {
+                Some(lease) => match lease.lease(scope, &after_wait).await {
+                    Review::Deny(words) => {
+                        // This refusal is this request's outcome, so it is recorded like the one asked before the
+                        // wait; the person's approval stays its own decision in the approval row.
+                        self.store.append_audit(&AuditRecord {
+                            actor: format!("engine:{}", scope.engine),
+                            action: "action.deny".into(),
+                            target: after_wait.target.clone(),
+                            decision: Some(PolicyEffect::Deny),
+                            source: "crew_lease".into(),
+                            thread_id: Some(scope.thread_id.clone()),
+                            run_id: Some(scope.run_id.clone()),
+                            detail: json!({ "kind": after_wait.kind }),
+                        })?;
+                        Verdict::Deny(words)
+                    }
+                    _ => Verdict::Allow,
+                },
+                None => Verdict::Allow,
+            },
             ApprovalState::Denied => Verdict::Deny(
                 self.take_feedback(&id)
                     .unwrap_or_else(|| "Denied in Orbyn.".to_owned()),

@@ -18,7 +18,7 @@ use time::OffsetDateTime;
 use super::guard::refuse_secret;
 use crate::app::Core;
 use crate::error::CoreError;
-use crate::governance::approvals::{ActionAsk, resolve_existing};
+use crate::governance::approvals::{ActionAsk, ActionLease, Review, RunScope, resolve_existing};
 use crate::tools::mcp::McpBinding;
 
 fn invalid(message: impl Into<String>) -> CrewError {
@@ -456,11 +456,16 @@ impl Core {
     /// to the verifier's file_scope to notice afterwards. The run's write scope has already
     /// refused a path outside the checkout, so one that cannot be read is left to it. It never
     /// fails open: an error reading the task, brief or leases is a refusal in that error's words.
+    ///
+    /// `base` is where a relative path is resolved, which is `WriteScope::engine_cwd` when the run
+    /// has a write scope: the same base `permits` and `absolute` use, so this checks the file the
+    /// write lands on rather than a second guess at it.
     pub(crate) fn crew_refuse_lease_write(
         &self,
         task_id: &str,
         member: &str,
         worktree: &Path,
+        base: &Path,
         ask: &ActionAsk,
     ) -> Option<String> {
         if ask.kind != ActionKind::FileChange {
@@ -479,14 +484,13 @@ impl Core {
             &ask.paths
         };
         for path in paths {
-            // A relative path is joined to the task's worktree here. The run's write scope joins it to
-            // the engine's own cwd (the library for Claude, the checkout for an engine that runs in
-            // it), so the two agree only when those are the same; where they differ, the write scope
-            // has already refused or resolved the path somewhere this check would not read.
+            // A relative path is resolved against `base`, the engine's own cwd, which is where the
+            // write scope resolves it. Joining it to the worktree instead would check a different
+            // file whenever the engine runs beside the checkout (a library run) rather than in it.
             let absolute = if Path::new(path).is_absolute() {
                 PathBuf::from(path)
             } else {
-                worktree.join(path)
+                base.join(path)
             };
             // `..`, links and a path that is not there yet resolve the way the write scope
             // resolves them, so the lease is read against where the bytes land.
@@ -733,5 +737,48 @@ impl Core {
                 .map_err(internal)?;
         }
         Ok(json!({ "ok": true }))
+    }
+}
+
+/// The gate's own lease check (H10), bound by `McpService::bind_host` whether or not Autopilot's
+/// review was: a worker's file change may name only paths its lease covers, and a check that cannot
+/// be made — no core, an unreadable task, no worktree — is a refusal, never a pass.
+pub(crate) struct LeaseGuard(pub std::sync::Weak<Core>);
+
+#[async_trait::async_trait]
+impl ActionLease for LeaseGuard {
+    async fn lease(&self, scope: &RunScope, ask: &ActionAsk) -> Review {
+        let Some(core) = self.0.upgrade() else {
+            return Review::Deny("Orbyn could not check this action.".to_owned());
+        };
+        if ask.kind != ActionKind::FileChange {
+            return Review::Pass;
+        }
+        let found = match core.store.crew_task_for_worker(&scope.thread_id) {
+            Ok(found) => found,
+            Err(_) => return Review::Deny("Orbyn could not check this action.".to_owned()),
+        };
+        // Not a Crew worker: this check has nothing to say about the run.
+        let Some((task, run)) = found else {
+            return Review::Pass;
+        };
+        let Some(worktree) = run
+            .worktree
+            .as_deref()
+            .map(PathBuf::from)
+            .or_else(|| scope.write_scope.as_ref().map(|w| w.checkout.clone()))
+        else {
+            return Review::Deny("Orbyn could not find this task's worktree.".to_owned());
+        };
+        // A relative path resolves where the write scope resolves it, so the lease is read against
+        // the file the engine writes. Without a write scope the worktree is all there is to go on.
+        let base = scope
+            .write_scope
+            .as_ref()
+            .map_or_else(|| worktree.clone(), |scope| scope.engine_cwd.clone());
+        match core.crew_refuse_lease_write(&task.id, run.member.as_str(), &worktree, &base, ask) {
+            Some(words) => Review::Deny(words),
+            None => Review::Pass,
+        }
     }
 }
