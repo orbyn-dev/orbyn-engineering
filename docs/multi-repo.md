@@ -312,8 +312,16 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec 3152baf7;
   `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677 + spec f2b539677, 26 Nov 2026; and
   `web/e2e/real/multi-repo-scan.spec.ts`, 2 passed @ app 97068179d + spec 97068179d, 26 Nov 2026. The Changes grouping ran
-  in `web/e2e/real/multi-repo-changes.spec.ts` (2 passed in #1592's evidence, which records no app or spec run id); still not run
-  against a live service: per-repository Git actions and pull requests, and opening another repository's file tab from the Changes list.
+  in `web/e2e/real/multi-repo-changes.spec.ts` (2 passed in #1592's evidence, which records no app or spec run id). The
+  repository choice in the header Git menu, the branch dialog and the commit picker also ran
+  (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed, recorded 26 Nov 2026 in the commit that added the spec, 4d147ab08;
+  that record names no app or spec revision): the reads of the chosen repository carry its `repo_id` in the query and the
+  primary's carry none, the dialog's write names it in the body, a branch created there is in that repository's worktree
+  alone and the Git menu's commit lands only there. The primary-worktree assertions the commit case gained afterwards
+  (a1fa807ea, 27 Nov 2026: a pending file written into the primary worktree before the commit, whose `HEAD` and
+  `git status --porcelain` must be unchanged after it) were not covered by that run. Run again on the current head,
+  28 Nov 2026: 4 passed (48.2s) @ app ccf98d924 + spec ccf98d924, those assertions included. Still not run against a
+  live service: per-repository push and pull requests, and opening another repository's file tab from the Changes list.
 
 ### As built: web UI (repo threads)
 
@@ -366,7 +374,9 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 - **Verified against a live service.** The new-thread dialog, its `POST .../repo-threads`, the task folder read and the Repos popover
   ran against a real `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec
   3152baf7 (a repository added later joins the thread); `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677
-  + spec f2b539677, 26 Nov 2026 (the Repos chip's 390 px phone sheet).
+  + spec f2b539677, 26 Nov 2026 (the Repos chip's 390 px phone sheet). The repository choice in the header Git menu, the branch
+  dialog and the commit picker also ran (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed); the rest of the routes above are
+  checked with the mock (which applies the rules they state) and request-level tests of the client.
 
 ## As built: repo_id on Git and file calls
 
