@@ -223,13 +223,28 @@ it("has no Load more row when the answer has no next_cursors", async () => {
 });
 
 it("one click is one request while a page is loading, and the row says it is busy", async () => {
-  const mock = createIssuesMock({ pageSize: 4, delayMs: 30 });
+  const mock = createIssuesMock({ pageSize: 4 });
   setIssuesApi(mock);
+  // The test holds the page's answer open, so the row stays busy for as long as the two clicks take however slow the
+  // runner is. A real 30 ms delay made "still loading" a race the runner's own speed decided.
+  const answer = mock.list;
+  let release!: () => void;
+  const settled = new Promise<void>((resolve) => { release = resolve; });
+  let reads = 0;
+  mock.list = async (...args: Parameters<typeof answer>) => {
+    reads += 1;
+    const page = await answer(...args);
+    if (reads === 2) await settled;
+    return page;
+  };
   const user = userEvent.setup();
   render(<IssuesPage />);
   await screen.findByRole("button", { name: "Login sends people back to /home" });
   await user.dblClick(loadMore()!);
   expect(screen.getByRole("button", { name: "Load more" })).toHaveAttribute("aria-busy", "true");
+  // Two clicks, one request: the second click is on the same busy row and asks for nothing.
+  expect(mock.listed).toHaveLength(2);
+  release();
   await waitFor(() => expect(rows()).toHaveLength(6));
   expect(mock.listed).toHaveLength(2);
 });

@@ -1,23 +1,21 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockApi } from "../../../../mock/api";
 import type { Project } from "../../../generated/Project";
 import { useConnection } from "../../../product/state/connection";
 import { useWorkspace } from "../../../product/state/workspace";
 import { installMockFetch } from "../../../test-support";
 import { BackgroundTab } from "../autopilot/approvals/Background";
+import { renderPreviewFrame } from "../shared/test-support";
 import { NeedsYouInbox } from "./NeedsYouInbox";
 import { NEEDS_REFRESH_MS } from "./useNeedsYou";
 
 let mock: MockApi;
-// App's cold module graph is fixture setup, not part of the live-frame assertion deadline.
-// Install the owned mock first; importing does not render App or start its effects.
-beforeAll(async () => {
-  installMockFetch();
-  await import("../../../app/App");
-  // App's first import is the cold module graph of the whole app; under a full-suite run it passes the 10 s default hook timeout.
-}, 60_000);
+// The frame helper imports App and sets this file's Crew frame deadline (2 × FRAME_LOAD_TIMEOUT) when it loads, so it
+// is a static import here: imported inside the live-frame test it lands after Vitest has fixed that test's 5 s deadline,
+// and the frame's own 15 s wait for the cold app chunk then cannot finish. Every test installs the owned mock in
+// beforeEach, before it renders or reads anything.
 beforeEach(() => {
   mock = installMockFetch();
   useConnection.setState({ remote: false });
@@ -445,7 +443,6 @@ describe("the watch rows (KC6)", () => {
 
 describe("the live frame", () => {
   it("draws the inbox inside the Crew page on the app's own routes (needsyou-live)", async () => {
-    const { renderPreviewFrame } = await import("../shared/test-support");
     mock.reset("crew-held-account");
     await renderPreviewFrame("needsyou-live");
     const items = within(await screen.findByRole("list", { name: "Needs you" })).getAllByRole("listitem");
