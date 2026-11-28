@@ -1,23 +1,28 @@
 //! The Crew "needs you" inbox (Crew Preview, KC3 PR1): one read, across every crew, of what waits for the person, and the
 //! person's device-local dismissal of the stops they do not want to see again. It adds no state: every item is a view of what
-//! Crew already stores (a task's state, a merge's `needs_person`, a background run's wait, the Autopilot ledger, a manual
-//! check). Nothing here moves a task, answers a merge or settles a run; the dismissal is a row of its own and touches nothing
-//! behind the item.
+//! Crew already keeps (a task's state, a merge's `needs_person`, a queued merge's waiting state, an open hold in the
+//! Autopilot's memory, a background run's wait, the Autopilot ledger, a manual check). Nothing here moves a task, answers a
+//! merge or settles a run; the dismissal is a row of its own and touches nothing behind the item.
 //!
-//! A task appears once. The first rule that matches wins, in this order: a task whose last cancel attempt could not stop its
+//! A task appears once, unless a command held for its worker waits beside it: the hold is an item of its own. The first rule
+//! that matches wins, in this order: a task whose last cancel attempt could not stop its
 //! worker (its worker may still run, so it comes before the same task waiting on a person), then a task waiting on a person,
 //! then a merge waiting on
-//! the person, then a background run waiting for review, then a stopped task with a trip wire, then a stopped task whose worker
+//! the person (after it landed, for review, and before it lands, at the merge gate), then a command Autopilot held for the
+//! person, then a background run waiting for review, then a stopped task with a trip wire, then a stopped task whose worker
 //! stopped twice. Other stopped and cancelled tasks are not items. Every text is one line, redacted and capped at 160
 //! characters; a task carries its own scrubbed reason when its latest `needs_person` result has one (the question, the refusal
 //! that kept it from starting, a manual check), and every other kind carries fixed core words.
 //!
 //! Since KC3 PR2 this list is the one field: the Taskboard's Needs you column, the Review queue's `waiting_elsewhere`, the
 //! dashboard's `live` row, the Autopilot digest's `needs_person` count and the Flow `you` cell read it instead of deriving
-//! their own rule, so a dismissal hides the wait wherever the field is read. They read the same list, not necessarily equal
-//! counts: the board cards only work tasks and the dashboard narrows to one repository. The Taskboard and the dashboard are
-//! refreshed while their screen is open, so those reads pass a crew or repository scope the store narrows in SQL and never
-//! load every crew's records; the Inbox, the Review queue and the digest read the whole device.
+//! their own rule, so a dismissal hides the wait wherever the field is read. The waits the frames draw and the old field had
+//! no kind for are items too: a command Autopilot held for the person (`CommandApproval`, answered in Approvals) and a merge
+//! the queue holds at the gate before it lands (`MergeGateWaiting`, released by the person); a merge that already landed and
+//! waits for review stays `MergeWaiting`. They read the same list, not necessarily equal loads: the board cards only work
+//! tasks and the dashboard narrows to one repository. The Taskboard and the dashboard are refreshed while their screen is
+//! open, so those reads pass a crew or repository scope the store narrows in SQL and never load every crew's records; the
+//! Inbox, the Review queue and the digest read the whole device.
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
@@ -95,6 +100,8 @@ fn fixed_reason(kind: wire::NeedsYouKind) -> Option<&'static str> {
         wire::NeedsYouKind::CouldNotStart => Some("The worker never ran."),
         wire::NeedsYouKind::ManualCheck => Some("A check only a person can make is waiting."),
         wire::NeedsYouKind::MergeWaiting => Some("A merge needs your decision."),
+        wire::NeedsYouKind::MergeGateWaiting => Some("A merge waits for your release."),
+        wire::NeedsYouKind::CommandApproval => Some("A command waits for your approval."),
         wire::NeedsYouKind::BackgroundReview => {
             Some("A background run is waiting for your review.")
         }
@@ -307,6 +314,70 @@ impl Core {
                 question: None,
                 question_hidden: false,
             });
+        }
+
+        // A command Autopilot held for the person. The holds live in memory until decided, so this is a snapshot of that
+        // book and not a store read; a command held for a worker's task is a wait of its own (the task may keep working
+        // beside it, so it is not a task wait and does not take the task's place in the list).
+        let holds = self.held_waiting(crate::util::unix_now());
+        if !holds.is_empty() {
+            let task_ids: Vec<String> = holds.iter().map(|hold| hold.task_id.clone()).collect();
+            let projects = self.store.crew_projects_of_tasks(&task_ids)?;
+            for hold in holds {
+                let project = projects.get(&hold.task_id).cloned();
+                if !scope.keeps(project.as_deref(), &hold.crew_id) || !seen.insert(hold.id.clone())
+                {
+                    continue;
+                }
+                items.push(wire::NeedsYouItem {
+                    kind: wire::NeedsYouKind::CommandApproval,
+                    id: hold.id,
+                    project_id: project,
+                    crew_id: Some(hold.crew_id),
+                    since: format_unix(hold.held_at),
+                    dismissible: dismissible(wire::NeedsYouKind::CommandApproval),
+                    reason: fixed_reason(wire::NeedsYouKind::CommandApproval).map(str::to_owned),
+                    name: None,
+                    engine: None,
+                    model: None,
+                    task_kind: None,
+                    question: None,
+                    question_hidden: false,
+                });
+            }
+        }
+
+        // A merge the queue holds for the person before it lands (`waiting`), which is not a merge that already landed and
+        // waits for review: the person's release is what moves it, and it is the queue's own row.
+        let gate = self
+            .store
+            .crew_waiting_merge_entries(scope.crew(), scope.project())?;
+        if !gate.is_empty() {
+            let task_ids: Vec<String> = gate.iter().map(|entry| entry.task_id.clone()).collect();
+            let projects = self.store.crew_projects_of_tasks(&task_ids)?;
+            for entry in gate {
+                let project = projects.get(&entry.task_id).cloned();
+                if !scope.keeps(project.as_deref(), &entry.crew_id)
+                    || !seen.insert(entry.task_id.clone())
+                {
+                    continue;
+                }
+                items.push(wire::NeedsYouItem {
+                    kind: wire::NeedsYouKind::MergeGateWaiting,
+                    id: entry.task_id,
+                    project_id: project,
+                    crew_id: Some(entry.crew_id),
+                    since: format_unix(entry.queued_unix),
+                    dismissible: dismissible(wire::NeedsYouKind::MergeGateWaiting),
+                    reason: fixed_reason(wire::NeedsYouKind::MergeGateWaiting).map(str::to_owned),
+                    name: None,
+                    engine: None,
+                    model: None,
+                    task_kind: None,
+                    question: None,
+                    question_hidden: false,
+                });
+            }
         }
 
         for review in self

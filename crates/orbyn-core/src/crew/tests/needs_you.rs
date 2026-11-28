@@ -716,3 +716,121 @@ async fn the_autopilot_digest_needs_you_count_is_the_one_field() {
         "the merge wait is still a person's to answer"
     );
 }
+
+/// A command Autopilot held for the person is a wait of its own in the one field: it names the hold, not the task, and
+/// deciding the hold drops it. The Inbox cannot dismiss it — only the Approvals tab decides a held command.
+#[tokio::test]
+async fn a_held_command_is_its_own_wait_and_a_decision_drops_it() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let task = started_hanging(&w, "Hold a command.").await;
+    let hold = crate::crew::fixtures::hold_command(
+        &w.core,
+        &task,
+        std::path::Path::new("checkout"),
+        "make deploy",
+    );
+    let item = item_of(&w, NeedsYouKind::CommandApproval, &hold);
+    assert_eq!(
+        item.reason.as_deref(),
+        Some("A command waits for your approval.")
+    );
+    assert!(!item.dismissible, "only Approvals decides a held command");
+    let crew_id = w.task(&task).crew_id;
+    assert_eq!(item.crew_id.as_deref(), Some(crew_id.as_str()));
+    assert!(matches!(
+        w.core
+            .crew_needs_you_dismiss(NeedsYouKind::CommandApproval, &hold, "user"),
+        Err(CoreError::Invalid(_))
+    ));
+    // The task keeps working beside the hold, so the hold is not a task wait and does not take the task's place.
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| item.kind == NeedsYouKind::CommandApproval)
+            .count()
+            == 1
+    );
+    // The person dismisses the hold itself; the wait leaves the field.
+    w.core.autopilot_dismiss_held(&hold).unwrap();
+    assert!(
+        items(&w)
+            .iter()
+            .all(|item| item.kind != NeedsYouKind::CommandApproval)
+    );
+}
+
+/// A hold whose worker's task ended is not a wait: approving it would fail (the approve path finds no live worker and
+/// closes the hold as over), so it must not be counted or announced. The field drops it on its own read, which sweeps
+/// nothing and leaves the hold's book as it found it; a sweep closes the hold later.
+#[tokio::test]
+async fn a_held_command_for_an_ended_task_is_not_a_wait() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let task = started_hanging(&w, "Hold a command.").await;
+    let hold = crate::crew::fixtures::hold_command(
+        &w.core,
+        &task,
+        std::path::Path::new("checkout"),
+        "make deploy",
+    );
+    let found = || {
+        items(&w)
+            .into_iter()
+            .find(|item| item.kind == NeedsYouKind::CommandApproval && item.id == hold)
+    };
+    // Its worker still runs the task, so the hold waits for the person.
+    assert!(found().is_some(), "a live worker's hold is a wait");
+
+    stop_task(&w, &task, "repeated_failure");
+    assert!(found().is_none(), "a hold whose task ended is not a wait");
+    // The read wrote nothing behind the item: no hold ended, and no ledger row says one did.
+    assert!(
+        w.core
+            .store
+            .crew_autopilot_events(&task)
+            .unwrap()
+            .iter()
+            .all(|event| event.kind != "hold_ended"),
+        "the needs-you read must not sweep the held book"
+    );
+}
+
+/// A merge the queue holds for the person at the gate is its own kind, not the review wait of a merge that already
+/// landed; the person's release moves the entry out of the gate and drops the wait.
+#[tokio::test]
+async fn a_merge_held_at_the_gate_is_its_own_wait_and_a_release_drops_it() {
+    let w = crew(arc(|_, root| built(root))).await;
+    let task = w.built_work().await;
+    let crew_id = w.task(&task).crew_id;
+    let mut entry =
+        crate::crew::fixtures::merge_entry(&task, "/repo", "The merge is held at the gate.");
+    entry.crew_id = crew_id.clone();
+    w.core.store.add_merge_entry(&entry).unwrap();
+
+    let item = item_of(&w, NeedsYouKind::MergeGateWaiting, &task);
+    assert_eq!(
+        item.reason.as_deref(),
+        Some("A merge waits for your release.")
+    );
+    assert!(
+        !item.dismissible,
+        "the merge queue answers it, not the Inbox"
+    );
+    assert_eq!(item.crew_id.as_deref(), Some(crew_id.as_str()));
+    assert!(
+        items(&w)
+            .iter()
+            .all(|item| item.kind != NeedsYouKind::MergeWaiting),
+        "a merge still at the gate has not landed and is not a review wait"
+    );
+
+    w.core.crew_release_merge(&task).unwrap();
+    assert!(
+        items(&w)
+            .iter()
+            .all(|item| item.kind != NeedsYouKind::MergeGateWaiting),
+        "the release moves it out of the gate"
+    );
+}

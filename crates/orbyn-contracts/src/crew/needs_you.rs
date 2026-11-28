@@ -1,18 +1,24 @@
 //! The Crew "needs you" inbox over HTTP (Crew Preview): one list of everything, across every crew, that waits for the person.
 //! An item names only ids, a kind, a time and at most one redacted line: it carries no task content, no answer key, no check,
-//! no path and no thread id. The read is built from what Crew already stores, so it holds no state of its own; a dismissal is
-//! the person's local choice and changes nothing behind it. Times are RFC 3339.
+//! no path and no thread id. The read is built from what Crew already keeps (its records and the open holds), so it holds no
+//! state of its own; a dismissal is the person's local choice and changes nothing behind it. Times are RFC 3339.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 wire_enum! {
-/// Why an item is in the inbox: the first matching rule for a task, or the wait of a merge, a background run or a watch.
+/// Why an item is in the inbox: the first matching rule for a task, or the wait of a held command, a merge (before or
+/// after it lands), a background run or a watch.
 pub enum NeedsYouKind {
     TaskNeedsPerson,
     CouldNotStart,
     ManualCheck,
+    /// A merge that reached the branch and waits for the person's review decision.
     MergeWaiting,
+    /// A merge the queue holds for the person before it lands: the person releases it, or turns the task down.
+    MergeGateWaiting,
+    /// A command Autopilot held for the person: approve it once, deny it or dismiss it.
+    CommandApproval,
     BackgroundReview,
     /// A watch's command turned failing and asked for the person (or its template could not start).
     WatchFailing,
@@ -26,17 +32,18 @@ pub enum NeedsYouKind {
 }
 
 wire! {
-/// One thing that waits for the person. `id` is the task's id, a background run's id or a watch crew's id; `since` is when it
-/// began to wait. `name`, `engine`, `model` and `task_kind` are set only for a `could_not_stop` item.
+/// One thing that waits for the person. `id` is the task's id, a background run's id, a watch crew's id or a held
+/// command's id; `since` is when it began to wait. `name`, `engine`, `model` and `task_kind` are set only for a
+/// `could_not_stop` item.
 pub struct NeedsYouItem {
-    /// The task's id, a background run's id, or a watch crew's id.
+    /// The task's id, a background run's id, a watch crew's id, or a held command's id.
     pub id: String,
     pub kind: NeedsYouKind,
     /// The project the item belongs to, when its task or run still names one.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub project_id: Option<String>,
-    /// The crew the item belongs to: a task's crew, a merge's crew, a background crew, or a watch crew.
+    /// The crew the item belongs to: a task's crew, a merge's or held command's crew, a background crew, or a watch crew.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub crew_id: Option<String>,

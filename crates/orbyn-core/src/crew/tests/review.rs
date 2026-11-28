@@ -454,7 +454,7 @@ async fn a_review_call_paced_by_the_mcp_timer_names_its_lanes() {
     w.until_state(&started.task_id, "passed").await;
 }
 
-fn commit_rules(w: &super::harness::World, text: &str) {
+pub(super) fn commit_rules(w: &super::harness::World, text: &str) {
     std::fs::create_dir_all(w.repo.join(".orbyn")).unwrap();
     std::fs::write(w.repo.join(".orbyn/crew.json"), text).unwrap();
     commit_all(&w.repo, "rules");
