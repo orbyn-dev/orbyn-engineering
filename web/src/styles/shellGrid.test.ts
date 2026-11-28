@@ -37,6 +37,20 @@ describe("the Windows bar", () => {
     expect(css).toMatch(/:root\[data-window-frame="windows"\]\s*\{[^}]*--titlebar-h:\s*32px;[^}]*--topbar-h:\s*32px;/);
     expect(css).toMatch(/\.window-control:focus-visible[^}]*outline-offset:\s*-2px/);
   });
+
+  it("draws the Maximize states the shell reports while its hit-test window holds the pointer", () => {
+    // Windows offers the snap layouts only to the window that answers the hit test, and the shell's
+    // window over the button holds the pointer, so the page never sees :hover or :active there. The
+    // shell reports the state on the root element (desktop/src-tauri/src/snap_overlay.rs) and these
+    // rules draw the design's two states unchanged.
+    const body = (selector: string) => rules.find((rule) => rule.selector === selector)?.body;
+    const hover = body(".window-control:hover");
+    const press = body(".window-control:active");
+    expect(hover).toBeTruthy();
+    expect(press).toBeTruthy();
+    expect(body('[data-window-control="hover"] .window-control-maximize')).toBe(hover);
+    expect(body('[data-window-control="press"] .window-control-maximize')).toBe(press);
+  });
 });
 
 describe("the pull request list's optional columns", () => {

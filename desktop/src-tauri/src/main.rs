@@ -14,6 +14,7 @@ mod person_key;
 mod presence;
 mod restart_policy;
 mod shell_state;
+mod snap_overlay;
 mod snapshot;
 mod system;
 mod window_actions;
@@ -53,9 +54,18 @@ pub(crate) fn reveal(app: &AppHandle) {
     }
 }
 
+/// Replaces the window's document. The page's own cleanup does not run for that: React never
+/// unmounts, so the Maximize button's overlay window is cleared here rather than from the page. The
+/// next document may draw no button where the last one drew, and an overlay left over that place
+/// would offer the Snap Layouts flyout and maximize on a click over nothing.
+fn navigate(window: &WebviewWindow, url: url::Url) {
+    snap_overlay::clear(window);
+    let _ = window.navigate(url);
+}
+
 fn show_restarting(app: &AppHandle) {
     if let Some(window) = main_window(app) {
-        let _ = window.navigate(desktop_origin::restarting());
+        navigate(&window, desktop_origin::restarting());
     }
 }
 
@@ -104,7 +114,7 @@ fn show_failure(app: &AppHandle, reason: &str, repeated: bool) {
     let Some(window) = main_window(app) else {
         return;
     };
-    let _ = window.navigate(desktop_origin::failed(reason, repeated));
+    navigate(&window, desktop_origin::failed(reason, repeated));
 }
 
 /// Replaces any running core, then supplies its address to the stable asset page.
@@ -249,7 +259,7 @@ fn launch_core(app: &AppHandle) {
             *slot = Some(core);
             drop(slot);
             if let Some(window) = main_window(app) {
-                let _ = window.navigate(desktop_origin::application(&target));
+                navigate(&window, desktop_origin::application(&target));
             }
             let waiting =
                 std::mem::take(&mut *app.state::<WaitingLinks>().0.lock().expect("link queue"));
@@ -415,7 +425,7 @@ fn open_window(app: &AppHandle) -> tauri::Result<()> {
     let zoom = *app.state::<Zoom>().0.lock().expect("zoom");
     window.set_zoom(zoom)?;
     #[cfg(windows)]
-    window_frame::install_hit_test(&window, app.state::<window_frame::MaximizeRect>());
+    snap_overlay::install(&window);
     Ok(())
 }
 
@@ -517,7 +527,6 @@ fn main() {
         .manage(WaitingLinks(Mutex::new(Vec::new())))
         .manage(ServicePort::default())
         .manage(Zoom::default())
-        .manage(window_frame::MaximizeRect::default())
         .manage(activity::KeepAwake::default())
         .manage(menu::QuitItem::default())
         .menu(menu::build)

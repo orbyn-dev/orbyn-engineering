@@ -39,7 +39,9 @@ function CloseGlyph() {
 /**
  * The Windows integrated toolbar's window controls, at the bar's top-right corner. They are drawn
  * by the page, not the system: each command goes to the shell through the bridge, and a failed
- * command changes nothing. Maximize reports its box so the shell can answer Windows' hit test.
+ * command changes nothing. Maximize reports its box, and the shell puts its own hit-test window
+ * over it so Windows offers the snap layouts there; that window holds the pointer, so it reports
+ * the hover and press states back to this page for `windowFrame.css` to draw.
  */
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
@@ -107,7 +109,7 @@ export function WindowControls() {
       <button
         ref={maximize}
         type="button"
-        className="window-control"
+        className="window-control window-control-maximize"
         aria-label={maximized ? "Restore" : "Maximize"}
         onClick={maximizeWindow}
       >
