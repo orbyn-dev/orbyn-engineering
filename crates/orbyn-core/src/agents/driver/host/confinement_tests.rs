@@ -27,6 +27,34 @@ fn the_allowlist_keeps_a_login_home_and_path_and_adds_the_identity() {
 }
 
 #[test]
+fn the_search_path_keeps_the_folders_the_environment_names() {
+    // Windows spells the search path `Path` as often as `PATH`, and a name ignores case
+    // there: the widened path starts from what the environment had, under one name.
+    let env = allowlist(&vars(&[("Path", "/picked/bin")]), false, &[], "w");
+    #[cfg(windows)]
+    {
+        let search: Vec<&String> = env
+            .keys()
+            .filter(|name| name.eq_ignore_ascii_case("PATH"))
+            .collect();
+        assert_eq!(search, ["PATH"], "one search path, not two: {env:?}");
+        let entries: Vec<PathBuf> = std::env::split_paths(OsStr::new(&env["PATH"])).collect();
+        assert_eq!(
+            entries.first(),
+            Some(&PathBuf::from("/picked/bin")),
+            "{env:?}"
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        // POSIX compares names exactly: `Path` is a variable of its own, and the search path
+        // is the tool folders alone.
+        assert_eq!(env["Path"], "/picked/bin");
+        assert!(!env["PATH"].contains("/picked/bin"), "{env:?}");
+    }
+}
+
+#[test]
 fn no_credential_and_no_data_folder_reach_a_frame() {
     let env = allowlist(
         &vars(&[

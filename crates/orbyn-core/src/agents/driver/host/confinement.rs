@@ -60,9 +60,15 @@ pub fn allowlist(
             env.insert(name.to_owned(), value.to_owned());
         }
     }
-    let base = env.get("PATH").map(OsString::from);
-    let path = crate::host::child_env::widened(base.as_deref());
+    // The search path is a spawn's to keep, and Windows spells it `Path` as often as `PATH`:
+    // ask for it the way the platform compares names, and set the one entry.
+    let spelled = crate::host::child_env::lookup(inherited, "PATH");
+    let path = crate::host::child_env::widened(spelled.map(|(_, value)| value));
     if let Some(path) = path.to_str() {
+        env.remove("PATH");
+        if let Some(name) = spelled.and_then(|(name, _)| name.to_str()) {
+            env.remove(name);
+        }
         env.insert("PATH".into(), path.to_owned());
     }
     env.remove("ORBYN_DATA_DIR");
