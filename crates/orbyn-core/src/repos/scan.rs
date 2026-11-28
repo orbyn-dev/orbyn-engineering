@@ -358,6 +358,14 @@ mod tests {
             .iter()
             .map(|f| (f.name.as_str(), f.refused))
             .collect();
+        // The leaf of the foreign path is read the way the product reads it: on Windows
+        // `C:\x` is a rooted path whose leaf is `x`, while elsewhere the whole text is one
+        // ordinary name. Both are refused as outside, which is the product's rule.
+        let foreign = Path::new("C:\\x")
+            .file_name()
+            .expect("the foreign path has a leaf")
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(
             state,
             [
@@ -368,7 +376,7 @@ mod tests {
                 ("outside", Some(ScanRefusal::Outside)),
                 ("etc", Some(ScanRefusal::Outside)),
                 ("up", Some(ScanRefusal::Outside)),
-                ("C:\\x", Some(ScanRefusal::Outside)),
+                (foreign.as_str(), Some(ScanRefusal::Outside)),
             ]
         );
         assert!(by_folder.folders[0].is_git);

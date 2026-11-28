@@ -484,8 +484,10 @@ async fn a_quiet_console_with_a_question_appends_the_waiting_event() {
     let dir = TempDir::new();
     let (core, thread_id) = core_with_thread(&dir);
     let spec = PtySpec {
-        program: console_program(),
-        args: console_args(),
+        // A pty hands the program to `CreateProcessW` as the application name, which a bare
+        // `cmd.exe` is not found by: the path is resolved first, as the twin test does.
+        program: console_program_absolute(),
+        args: console_args_blocking(),
         cwd: dir.path().to_owned(),
         cols: 80,
         rows: 24,
@@ -526,7 +528,10 @@ async fn a_quiet_console_with_a_question_appends_the_waiting_event() {
         }
         assert!(
             Instant::now() < deadline,
-            "the quiet question should become an event"
+            "the quiet question should become an event; scrollback: {:?}",
+            core.terminals
+                .named(&thread_id, "engine-console")
+                .map(|session| String::from_utf8_lossy(&session.scrollback()).into_owned())
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
@@ -553,22 +558,9 @@ fn console_program() -> std::path::PathBuf {
     "/bin/sh".into()
 }
 
-#[cfg(unix)]
-fn console_args() -> Vec<std::ffi::OsString> {
-    vec!["-c".into(), "printf 'Continue? (y/N)\\n'; sleep 30".into()]
-}
-
 #[cfg(windows)]
 fn console_program() -> std::path::PathBuf {
     "cmd.exe".into()
-}
-
-#[cfg(windows)]
-fn console_args() -> Vec<std::ffi::OsString> {
-    vec![
-        "/C".into(),
-        "echo Continue? (y/N) & ping -n 31 127.0.0.1 >nul".into(),
-    ]
 }
 
 #[tokio::test]
