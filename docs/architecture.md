@@ -607,7 +607,13 @@ or unusable report stays unknown. No credential file or SDK is needed by Orbyn.
 ## Checkpoints
 
 Each run snapshots the checkout before it starts and when it ends, through a
-temporary index, into `refs/orbyn/checkpoints/<thread>/<run>/{start,end}`. The real
+temporary index, into `refs/orbyn/checkpoints/<thread>/<run>/<folder>/{start,end}`, where `<folder>`
+is `repo-<repo_id>` for a repository and `checkout` for the engine's own folder: two linked
+worktrees of one repository share a Git common directory, so a ref that named only the point
+would keep only the last snapshot reachable. A multi-repository
+thread snapshots each trusted repository's worktree instead, since the task folder the
+engine works in is not a repository: the run's own row keeps the first repository's ends,
+so the turn picker lists it once, and each repository's ends are kept for its reads. The real
 index, HEAD and working files stay untouched, ignored files are not captured, and a
 failed snapshot costs that checkpoint, not the run. This Git metadata is the one
 thing a run adds under a target, in that repository's own `.git`, whether it was
@@ -615,8 +621,16 @@ cloned here or registered in place, and removing a project leaves it there. It n
 reaches a working file or a push.
 
 Restoring takes a safety snapshot first, then makes the files match, leaving HEAD,
-the index and ignored files alone. It refuses while another live thread shares the
-folder. A fork and an engine switch cannot carry an engine session, so each ends it
+the index and ignored files alone. A multi-repository thread restores each trusted
+worktree to its own checkpoint, in that repository's Git objects; an ordinary
+thread restores the engine's own folder as before. It refuses while another live
+thread shares its own folder or any folder it would move. The thread is held against new
+runs for the whole restore, as a rewind holds it, so a run cannot change a file after that
+folder's safety snapshot; and one restore runs at a time,
+so a safety snapshot never records half of another's work, and a folder whose files
+changed after its own safety snapshot is left as it is rather than overwritten. A rewind
+that moves one repository and then fails on another writes the folders that did move and
+names the one that could not, so a partial restore is never read as a whole one. A fork and an engine switch cannot carry an engine session, so each ends it
 and leaves a handoff of up to 16,000 characters, oldest text dropped first, for the
 next run. A rewind does the same unless the engine rolls its own session back. Dropping the session and writing the handoff share a transaction. It
 stays until a run that carried it completes, so a failed start, a stop or a restart
@@ -818,8 +832,11 @@ removed. The removal is refused, with no paths in the error, when `git status --
 ignored files. Commits and branches are never touched.
 
 Linked pull requests are polled every two minutes, and a refresh links the open pull
-request of the checkout's branch. The link is kept per thread and number, so a pull
-request's own linked threads are the project's threads that linked it.
+request of the checkout's branch. A link and its watch are kept per thread, repository
+and number, so two repositories can both have a #12, and a pull request's own linked
+threads are the project's threads that linked it. A watch route names the repository with
+`?repo_id=`, absent meaning the thread's primary repository, and a watch pass reads each
+watch in its own repository's worktree.
 `GET .../pulls/:number/breakdown` counts its changed files by change kind from the
 same rows `/files` serves, so it adds no forge read. A merge settles the thread when
 `on_merge` is set and the thread has not opted out. A watch wakes its thread, through the queue, when a
@@ -4074,7 +4091,8 @@ every method, path and which routes need a credential.
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |
 | `GET, POST /api/threads/:id/pulls`, `POST .../pulls/refresh` | Linked pull requests; refresh also links the branch's own |
-| `GET /api/threads/:id/watches`, `POST, DELETE /api/threads/:id/pulls/:number/watch` | `PullWatch`; `400` on a settled, archived or subagent thread |
+| `GET /api/threads/:id/watches?repo_id=`, `POST /api/threads/:id/pulls/:number/watch?repo_id=` | The read answers `PullWatch[]`; the start answers `201` and the stored `PullWatch` (`400` on a settled, archived or subagent thread); `repo_id` names one repository of a multi-repository thread, absent is its primary |
+| `DELETE /api/threads/:id/pulls/:number/watch?repo_id=` | `204` with no body; a watch that is not there is no error; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `POST /api/watches/check` | One watch pass now (`204`) |
 | `GET, DELETE /api/threads/:id/pulls/:number` | `PullRequestDetail`; unlink |
 | `POST /api/threads/:id/pulls/:number/review`, `/merge` | Review and merge through the forge CLI |

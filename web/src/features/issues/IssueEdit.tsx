@@ -99,18 +99,16 @@ export function useDescriptionEditor({ issue, offered, write, writing }: EditPro
 
 type Kind = "labels" | "assignees";
 
-/** One row of a picker: the key the list checks it by, the words it shows, and an assignee the candidates cannot address. */
+/** One row of a picker: the key the list checks it by, the words it shows, and an assignee's login when the row is a person. */
 interface Item {
   /** A label's name, or an assignee's login. */
   id: string;
   name: string;
   /** An assignee's login, when the row is a person. */
   login?: string;
-  /** An assignee the candidates do not carry an id for: kept and checked, and Apply waits until it is unchecked. */
-  unresolved: boolean;
 }
 
-/** What a picker hands back on Apply: the labels' names, or the assignees with the candidate id a write needs. */
+/** What a picker hands back on Apply: the labels' names, or the assignees with the id their write sends. */
 export interface PickChoice {
   labels?: string[];
   assignees?: { login: string; id: string }[];
@@ -122,14 +120,12 @@ function itemsFor(kind: Kind, mine: { labels: string[]; assignees: { login: stri
   const items: Item[] = [];
   const add = (item: Item) => { if (!seen.has(item.id)) { seen.add(item.id); items.push(item); } };
   if (kind === "labels") {
-    for (const name of mine.labels) add({ id: name, name, unresolved: false });
-    for (const label of candidates?.labels ?? []) add({ id: label.name, name: label.name, unresolved: false });
+    for (const name of mine.labels) add({ id: name, name });
+    for (const label of candidates?.labels ?? []) add({ id: label.name, name: label.name });
     return items;
   }
-  // A `Map`, not an object: a login comes from the tracker and could be `__proto__`.
-  const ids = new Map((candidates?.assignees ?? []).map((who) => [who.login, who.id] as const));
-  for (const who of mine.assignees) add({ id: who.login, name: who.login, login: who.login, unresolved: !ids.has(who.login) });
-  for (const who of candidates?.assignees ?? []) add({ id: who.login, name: who.name ? `${who.login} · ${who.name}` : who.login, login: who.login, unresolved: false });
+  for (const who of mine.assignees) add({ id: who.login, name: who.login, login: who.login });
+  for (const who of candidates?.assignees ?? []) add({ id: who.login, name: who.name ? `${who.login} · ${who.name}` : who.login, login: who.login });
   return items;
 }
 
@@ -202,20 +198,22 @@ export function Picker({ kind, target, current, mine, offered, busy, label, head
   const items = itemsFor(kind, mine, candidates);
   const wanted = filter.trim().toLowerCase();
   const shown = items.filter((item) => item.name.toLowerCase().includes(wanted)).slice(0, 250);
+  // A `Map`, not an object: a login comes from the tracker and could be `__proto__`.
   const ids = new Map((candidates?.assignees ?? []).map((who) => [who.login, who.id] as const));
   const chosen = items.filter((item) => picked.has(item.id));
-  const unresolved = kind === "assignees" ? chosen.filter((item) => item.unresolved) : [];
   const tooMany = picked.size > limit;
   const unchanged = picked.size === current.length && current.every((id) => picked.has(id));
-  const problem = tooMany ? `An issue can have at most ${limit} ${noun}.` : unresolved.length > 0 ? `Orbyn cannot address ${unresolved.map((item) => capText(item.login ?? item.name, 40)).join(", ")} yet. Uncheck ${unresolved.length === 1 ? "it" : "them"} to continue.` : null;
+  const problem = tooMany ? `An issue can have at most ${limit} ${noun}.` : null;
   const toggle = (id: string) => setPicked((now) => { const next = new Set(now); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const apply = async () => {
     if (busy || problem || unchanged || read.status !== "ready") return;
     setError(null);
     const choice: PickChoice = kind === "labels"
       ? { labels: chosen.map((item) => item.name) }
-      // A person goes out by the candidate's id, never by a login typed by hand; an unaddressable one blocked Apply above.
-      : { assignees: chosen.flatMap((item) => { const id = item.login === undefined ? undefined : ids.get(item.login); return item.login === undefined || id === undefined ? [] : [{ login: item.login, id }]; }) };
+      // A person goes out by the candidate's id, never by a login typed by hand. A current assignee the candidates do not
+      // carry has no id here; the candidates are built for GitHub only, and GitHub addresses a person by login, so the
+      // issue's own login is what the write sends for her (docs/issues.md, "As built, GitHub").
+      : { assignees: chosen.flatMap((item) => item.login === undefined ? [] : [{ login: item.login, id: ids.get(item.login) ?? item.login }]) };
     try {
       if (await save(choice)) setOpen(false);
     } catch (failure) {

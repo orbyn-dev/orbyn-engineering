@@ -302,8 +302,9 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   totals sum `GET .../diff?scope=turn&run=` over the thread's trusted repositories, one read per repository with its own `repo_id`.
   An untrusted repository is not read and a repository whose read fails is left out, and the row says "N repo not counted" instead of
   counting them as zero changes; if no repository could be read the row has no figures. `ThreadRepo.added`, `deleted` and `files` are
-  against `HEAD`, not per turn, so they are not used. An ordinary thread reads once, as before. Whether the service keeps a turn's
-  checkpoint in a repository other than the primary is not known; a refusal there shows as "not counted".
+  against `HEAD`, not per turn, so they are not used. An ordinary thread reads once, as before. A run keeps a
+  checkpoint in every trusted repository's worktree, so each repository's turn read answers; an untrusted repository
+  keeps none and is not read.
 - **The 200-file cap.** A repository's `ThreadRepo.files` is cut at 200 by the service. A repository group whose list holds 200
   says "200 shown" quietly on its header.
 - **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
@@ -425,6 +426,11 @@ nothing below changes for it. The rows are written by thread creation in the nex
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
+- **Known limit: Jujutsu status is the primary project's.** `GET /api/threads/{id}/jj` reads no `repo_id`, and sending
+  one is ignored rather than refused: the answer is the thread's own checkout's status, or `null`. A Jujutsu checkout Orbyn
+  reads is a `.jj` folder with no `.git` of its own, so it is not a Git repository and cannot be a repository of a
+  multi-repository thread (`409 not_git`), and the thread's other repositories are Git ones with no jj state to ask for:
+  the primary project is the whole answer.
 - **`GET /api/threads/{id}/repos`** answers `ThreadRepo[]` (`repo_id`, `name`, `branch`, `base_branch`, `added`, `deleted`, `trusted`,
   `files` at most 200 repo-relative paths): lines and files changed against `HEAD`, read with the hardened Git. `404` for an ordinary
   thread.
@@ -432,7 +438,9 @@ nothing below changes for it. The rows are written by thread creation in the nex
 
 ## As built: repository threads and the task folder
 
-Behind the same flag; no new migration (`thread_repos` is from the slice above). Built: `POST /api/projects/{id}/repo-threads`,
+Behind the same flag; migration 93 adds `checkpoint_repositories`, one row per repository a run was snapshotted
+in, so a turn or thread diff can read in the repository it names (the run's own `checkpoints` row keeps the
+first repository's ends). Built: `POST /api/projects/{id}/repo-threads`,
 `GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads and on
 navigation coordinates.
 
@@ -466,10 +474,12 @@ navigation coordinates.
   primary and the repository row id for the others, as everywhere else. `GET /api/projects/{id}/pulls/{number}/linked-threads` matches
   the project's own repository only, so another repository's #12 never lists a thread.
 - **`repo_id` on the thread pull request routes.** `?repo_id=` on `GET` and `POST /api/threads/{id}/pulls`, `POST .../pulls/refresh`,
-  `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`. Absent means the primary repository, so every
-  older client is unchanged. Unknown, untrusted or flag-off repositories are refused as for the Git routes. Watches
-  (`.../pulls/{number}/watch`) stay on the primary repository for now; unlinking a primary link drops its watch, any other link does not.
-  The watch pass refreshes the open links of each repository of a thread.
+  `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`, and on the watches (`GET .../watches`,
+  `POST`/`DELETE .../pulls/{number}/watch`). Absent means the primary repository, so every older client is unchanged. Unknown, untrusted or
+  flag-off repositories are refused as for the Git routes. A watch is kept by (thread, repository, number) (migration 92), so two
+  repositories can both watch a #12; every watch made before it moved to the thread's own project, which is its primary repository.
+  Unlinking a link drops that repository's watch. The watch pass refreshes the open links of each repository of a thread and reads each
+  watch in its own repository's worktree.
 - **`ThreadRepo.pull_request`.** The repository's open pull request with the highest number, else the latest one it has; absent when none.
 - **`FileDiff.repo_id`.** Set on a thread diff of a multi-repository thread: the repository asked for, else the primary. Absent for an
   ordinary thread.
@@ -488,7 +498,9 @@ Web side of pull requests and removal (mock-tested, not run against a live `orby
 - **Remove from thread.** A button on each non-primary row of the Repos popover, behind a confirm dialog; the service's `400` message is shown as written.
 - **Diff.** The service answers one repository per read, so the Changes panel still reads once per trusted repository; `FileDiff.repo_id` is not needed to group.
 - **Merge dialog.** The "Remove agent credits" switch is the person's choice for that merge and is sent as `remove_agent_credits` (the account setting when untouched).
-- **Not done.** A pull request screen per repository (the pulls page is keyed by project, not repository) and watches for a non-primary repository.
+- **Not done.** A pull request screen per repository (the pulls page is keyed by project, not repository), and a Watch control for
+  another repository's pull request: the service keeps that watch (`repo_id` on the watch routes), but the header PR chip and its Watch
+  switch read the primary repository only (the `multirepo-pr-*` frames cover the other repository's state word, Review and Merge).
 
 ## Not in the beta
 
@@ -521,7 +533,13 @@ path outside its worktree, and is `404` for an unknown or ordinary-thread `repo_
 one branch name in every repository and a taken name creates nothing; a diff, commits, a commit or branch
 comparison and a turn's checkpoint read the repository their `repo_id` names, the primary (the first
 stored repository) when it is absent, and run Git in that repository's worktree rather than the task
-folder; checkpoint capture and a file restore still use the engine's task folder; navigation coordinates
+folder; a run keeps a checkpoint in every trusted repository's worktree, so its turn and thread diffs read there
+instead of answering `404` from the task folder, and a restore moves every trusted worktree while an ordinary
+thread's restore stays in the engine's own folder. A restore is refused while another live thread works in the
+thread's own folder or in any worktree it would move, not only in the task folder; one restore runs at a time, and
+a worktree whose files changed after its own safety snapshot is left as it is rather than overwritten; a rewind
+that restores one repository and then fails on another writes what did move and names the repository it could not
+(`workspace.restore.failed`, keeping the success row `workspace.restore` as it was); navigation coordinates
 resolve in the repository their `repo_id` names too, the primary when absent, so a repository's file is found in
 its own worktree and the task folder is never the checkout, and a thread that moved answers `409 stale_owner`;
 an unknown repository is `404` and an untrusted one is refused.

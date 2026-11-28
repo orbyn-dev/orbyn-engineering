@@ -37,7 +37,7 @@ const three = [
 function serve(pulls: PullRequest[], watched: number[] = []) {
   vi.spyOn(pullsApi, "linked").mockResolvedValue(pulls);
   vi.spyOn(pullsApi, "refreshLinked").mockResolvedValue(pulls);
-  vi.spyOn(pullsApi, "watches").mockResolvedValue(watched.map((number) => ({ thread_id: "t1", number, created_at: "" })));
+  vi.spyOn(pullsApi, "watches").mockResolvedValue(watched.map((number) => ({ thread_id: "t1", repo_id: "p1", number, created_at: "" })));
   vi.spyOn(pullsApi, "detail").mockResolvedValue({ mergeable: "mergeable" } as never);
 }
 

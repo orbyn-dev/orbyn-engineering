@@ -8,6 +8,7 @@ mod threads;
 
 pub use scope::in_repo;
 pub(crate) use scope::repo_asked;
+pub(crate) use scope::trusted_worktrees;
 
 use crate::app::Core;
 use crate::error::{CoreError, Result};
