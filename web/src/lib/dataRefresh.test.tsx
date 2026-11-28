@@ -222,3 +222,67 @@ describe("an event that arrives while a read is running", () => {
     expect(result.current.data).toBe(2);
   });
 });
+
+describe("a read whose joined retry another screen cancelled", () => {
+  type Read = { resolve: (value: unknown) => void };
+  const screen = (name: string) => {
+    const reads: Read[] = [];
+    const load = (signal: AbortSignal) =>
+      new Promise<unknown>((resolve, reject) => {
+        const cancelled = () => reject(new DOMException("The request was aborted.", "AbortError"));
+        if (signal.aborted) cancelled();
+        else signal.addEventListener("abort", cancelled, { once: true });
+        reads.push({ resolve });
+      });
+    return {
+      reads,
+      use: () =>
+        useAsync(name, (signal, context) => readLimits("shared", () => load(signal), { force: context.force }), {
+          fresh: true,
+          refreshOn: topics("limits"),
+        }),
+    };
+  };
+  const tick = async (ms = 0) => {
+    await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  };
+
+  it("leaves the lane after a foreign cancellation, so a limits event reads again with no second retry", async () => {
+    const first = screen("first-screen");
+    const second = screen("second-screen");
+    const third = screen("third-screen");
+    const mountedFirst = renderHook(first.use);
+    await tick();
+    expect(first.reads).toHaveLength(1);
+    const mountedSecond = renderHook(second.use);
+    // Both later screens join the one shared check the first screen started.
+    const { result } = renderHook(third.use);
+    await tick();
+    expect(second.reads).toHaveLength(0);
+    expect(third.reads).toHaveLength(0);
+    // The screen that started the request goes: the second screen's join reads once on its own, and the
+    // third screen's join waits on that retry instead of starting a second one.
+    mountedFirst.unmount();
+    await tick();
+    expect(second.reads).toHaveLength(1);
+    expect(third.reads).toHaveLength(0);
+    // The retry's screen goes: the third screen's one retry is spent, so the retry's abort reaches it with
+    // its own signal still live. It must leave the lane rather than wait for an answer nobody will send.
+    mountedSecond.unmount();
+    await tick();
+    expect(third.reads).toHaveLength(0);
+    // A limits event now reads the third screen again, which it could not do while the lane was held.
+    dataChanged("limits");
+    await tick(COALESCE_MS);
+    expect(third.reads).toHaveLength(1);
+    await act(async () => {
+      third.reads[0]?.resolve({ windows: [] });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current).toMatchObject({ status: "ready", data: { windows: [] }, refreshing: false });
+    // No check was retried twice: the first screen read once, the second once (its one retry), the third
+    // only after the event.
+    expect(first.reads).toHaveLength(1);
+    expect(second.reads).toHaveLength(1);
+  });
+});

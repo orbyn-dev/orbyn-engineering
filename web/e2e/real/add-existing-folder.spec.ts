@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { libraryReady, startService, type Service } from "./service";
 
 /**
@@ -10,6 +10,11 @@ import { libraryReady, startService, type Service } from "./service";
  * this spec also covers the refusal when the same folder is added twice.
  */
 const WINDOW = { width: 1280, height: 792 };
+/** The home root renders in the home folder's own style: `~\` on Windows, `~/` elsewhere (pathInput.ts). */
+const SEP = process.platform === "win32" ? "\\" : "/";
+const HOME = `~${SEP}`;
+/** A listing row under the home root. */
+const underHome = (leaf: string) => `${HOME}${leaf}`;
 
 let service: Service;
 
@@ -22,20 +27,24 @@ test.afterAll(() => service.stop());
 
 test("an existing folder is added from the browse list, through its rows and the shortcut add", async ({ page }) => {
   await page.setViewportSize(WINDOW);
+  // The browse listing names the parent row for the folder it climbs to, so the row at my-repo is named for home.
+  const home = (await service.api<{ path: string }>("GET", "/api/fs/browse")).path;
   await page.goto(service.page);
   await page.getByRole("button", { name: "Skip for now" }).click();
-  await expect(page.getByRole("heading", { name: "Add your first project" })).toBeVisible();
-  // The empty home's Add a folder opens the add-project palette on its browse list.
+  // The shipped empty home is the Welcome page; its Projects section adds a folder.
+  await expect(page.getByRole("heading", { name: "Welcome to Orbyn Engineering", level: 1 })).toBeVisible();
+  const projects = page.getByRole("region", { name: "Projects" });
+  // The Welcome page's Add a folder opens the add-project palette on its browse list.
   const browsed = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/fs/browse");
-  await page.locator(".no-projects").getByRole("button", { name: "Add a folder" }).click();
+  await projects.getByRole("button", { name: "Add a folder" }).click();
   await browsed;
   const palette = page.getByRole("dialog", { name: "Command palette" });
   const field = palette.getByLabel("Folder path");
-  await expect(field).toHaveValue("~/");
+  await expect(field).toHaveValue(HOME);
 
   // The listing is the real service's browse of the home folder: the home listing includes my-folder (plain) and my-repo (Git).
-  const folder = palette.getByRole("button", { name: "~/my-folder" });
-  const repo = palette.getByRole("button", { name: "~/my-repo" });
+  const folder = palette.getByRole("button", { name: underHome("my-folder") });
+  const repo = palette.getByRole("button", { name: underHome("my-repo") });
   await expect(repo).toBeVisible();
   await expect(repo.locator(".add-project-hint")).toHaveText("Git");
   await expect(folder).toBeVisible();
@@ -44,11 +53,11 @@ test("an existing folder is added from the browse list, through its rows and the
   // Clicking a listing row descends into it; my-repo holds no folder of its own,
   // so its listing is the parent row alone.
   await repo.click();
-  await expect(field).toHaveValue("~/my-repo/");
-  await expect(palette.getByRole("button", { name: /^~\// })).toHaveCount(0);
+  await expect(field).toHaveValue(`${underHome("my-repo")}${SEP}`);
+  await expect(palette.getByRole("button", { name: /^~[\\/]/ })).toHaveCount(0);
   // The parent row climbs back up, so the listing returns to home.
-  await palette.getByRole("button", { name: "..", exact: true }).click();
-  await expect(field).toHaveValue("~/");
+  await palette.getByRole("button", { name: basename(home), exact: true }).click();
+  await expect(field).toHaveValue(HOME);
   await expect(folder).toBeVisible();
 
   // The shortcut add: the active row is added where it is, with Cmd/Ctrl+Enter.
@@ -72,7 +81,7 @@ test("adding the same folder twice is refused", async ({ page }) => {
   await page.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: "Add project" }).click();
   const palette = page.getByRole("dialog", { name: "Command palette" });
   const field = palette.getByLabel("Folder path");
-  await expect(field).toHaveValue("~/");
+  await expect(field).toHaveValue(HOME);
 
   // The typed path names the folder that is already a project.
   await field.fill("~/my-folder");
@@ -81,9 +90,9 @@ test("adding the same folder twice is refused", async ({ page }) => {
 
   // The browse list refuses the same folder through the shortcut add too.
   await field.fill("~/");
-  await expect(palette.getByRole("button", { name: "~/my-folder" })).toBeVisible();
-  await palette.getByRole("button", { name: "~/my-folder" }).hover();
-  await expect(palette.getByRole("button", { name: "~/my-folder" })).toHaveAttribute("data-active", "true");
+  await expect(palette.getByRole("button", { name: underHome("my-folder") })).toBeVisible();
+  await palette.getByRole("button", { name: underHome("my-folder") }).hover();
+  await expect(palette.getByRole("button", { name: underHome("my-folder") })).toHaveAttribute("data-active", "true");
   await field.click();
   await field.press("ControlOrMeta+Enter");
   await expect(palette.getByRole("alert")).toHaveText("This folder is already a project.");

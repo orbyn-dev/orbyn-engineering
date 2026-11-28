@@ -217,13 +217,14 @@ mod tests {
             "{login}"
         );
 
-        // A credential-shaped query is either shown with its value hidden or, when the redaction layer judges
-        // the line to hold a credential, the whole line is hidden - both keep the value out.
-        let token = outward("Could not reach https://agent.test/run?token=abc&x=1: denied");
-        assert!(!token.contains("abc"), "{token}");
-        assert!(
-            token.contains("?token=[hidden]") || token.contains("a line was hidden"),
-            "{token}"
+        // A credential-named query has its value replaced where it stands. `?code=` is not a line-level key, so
+        // clean() keeps this line and only the query pattern can hide the value: the assertion below fails if
+        // that pattern stops matching or stops replacing.
+        let code = outward("Could not reach https://agent.test/run?code=abc&x=1: denied");
+        assert!(!code.contains("abc"), "{code}");
+        assert_eq!(
+            code, "Could not reach https://agent.test/run?code=[hidden]&x=1: denied",
+            "{code}"
         );
     }
 

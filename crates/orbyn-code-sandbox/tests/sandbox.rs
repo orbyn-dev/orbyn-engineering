@@ -57,6 +57,19 @@ async fn finish(code: &str, limits: Limits) -> Step {
     run.drive(Instant::now() + Duration::from_secs(60)).await
 }
 
+/// The class a run ends with and the message a person would read, whether `prepare` refused the
+/// source or the run failed.
+async fn failure(code: &str, limits: Limits) -> (ErrorKind, String) {
+    let host = Arc::new(Host {
+        calls: AtomicUsize::new(0),
+    });
+    let error = match QuickJsExecutor.prepare(code, limits, seed(), host).await {
+        Err(error) => error,
+        Ok(mut run) => failed(run.drive(Instant::now() + Duration::from_secs(60)).await),
+    };
+    (error.kind, error.message)
+}
+
 fn done(step: Step) -> Value {
     match step {
         Step::Done { result, .. } => result,
@@ -309,4 +322,280 @@ async fn the_wall_clock_ends_a_run() {
     let (mut run, _) = start("await tools.slow({ ms: 5000 }); return 1;", limits).await;
     let error = failed(run.drive(Instant::now() + Duration::from_secs(30)).await);
     assert_eq!(error.kind, ErrorKind::Limit);
+}
+
+#[tokio::test]
+async fn each_failure_lands_in_its_own_class() {
+    let heap = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let cpu = Limits {
+        cpu: Duration::from_millis(200),
+        ..Limits::default()
+    };
+    let wall = Limits {
+        wall: Duration::from_millis(100),
+        ..Limits::default()
+    };
+    // The first row is the one that was classified as a runtime error: a heap full of live data
+    // leaves QuickJS unable to build even the error that says "out of memory", so it throws
+    // `null` and the text to match is gone. Every other row must keep its own class.
+    let cases = [
+        (
+            "heap limit, grown in a loop",
+            "const a = []; while (true) a.push('x'.repeat(1000));",
+            heap.clone(),
+            ErrorKind::Limit,
+            "heap",
+        ),
+        (
+            "heap limit, refused in one allocation",
+            "const a = 'x'.repeat(64 * 1024 * 1024); return a.length;",
+            heap.clone(),
+            ErrorKind::Limit,
+            "heap",
+        ),
+        (
+            "own throw after a heap refusal",
+            "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {} throw new Error('recovered');",
+            heap.clone(),
+            ErrorKind::Runtime,
+            "recovered",
+        ),
+        (
+            "syntax error",
+            "const a = 1;\nconst = ;",
+            Limits::default(),
+            ErrorKind::Syntax,
+            "syntax",
+        ),
+        ("cpu limit", "while (true) {}", cpu, ErrorKind::Limit, "cpu"),
+        (
+            "wall clock",
+            "await tools.slow({ ms: 5000 }); return 1;",
+            wall,
+            ErrorKind::Limit,
+            "time limit",
+        ),
+        (
+            "ordinary throw",
+            "throw new Error('boom');",
+            Limits::default(),
+            ErrorKind::Runtime,
+            "boom",
+        ),
+        (
+            "null throw",
+            "throw null;",
+            Limits::default(),
+            ErrorKind::Runtime,
+            "",
+        ),
+    ];
+    for (name, code, limits, kind, message) in cases {
+        let (got, text) = failure(code, limits).await;
+        assert_eq!(got, kind, "{name}: {text}");
+        assert!(text.to_lowercase().contains(message), "{name}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn a_heap_under_its_limit_is_fine() {
+    // The heap is counted by the executor, so a run that stays under the limit must still hold
+    // what it allocated: a limit that refuses too much, or that forgets what was freed, fails
+    // these. The second run allocates 200 MiB through a 8 MiB heap, one string at a time.
+    let limits = Limits {
+        heap_bytes: 8 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let step = finish(
+        "const a = 'x'.repeat(4 * 1024 * 1024); return a.length;",
+        limits.clone(),
+    )
+    .await;
+    assert_eq!(done(step), json!(4 * 1024 * 1024));
+    let step = finish(
+        "for (let i = 0; i < 2000; i++) { const a = 'x'.repeat(100_000); } return 'done';",
+        limits,
+    )
+    .await;
+    assert_eq!(done(step), json!("done"));
+}
+
+#[tokio::test]
+async fn a_script_message_is_not_a_limit() {
+    // A class of its own is read from the engine's error, never from the words in it: a script
+    // that copies a limit's message has still just thrown, and stays a runtime error.
+    for message in [
+        "The script used more than its CPU time.",
+        "The script used more than its memory limit (heap).",
+        "interrupted",
+        "out of memory",
+        "Maximum call stack size exceeded",
+    ] {
+        let (kind, text) =
+            failure(&format!("throw new Error({message:?});"), Limits::default()).await;
+        assert_eq!(kind, ErrorKind::Runtime, "{message}: {text}");
+        assert!(text.contains(message), "{message}: {text}");
+    }
+}
+
+#[tokio::test]
+async fn a_getter_on_the_thrown_error_still_ends_at_the_cpu_limit() {
+    // Classifying an exception reads its properties, and a getter there is the script's own code:
+    // a loop in it must end at the CPU limit like any other, not hold the executor past both.
+    let limits = Limits {
+        cpu: Duration::from_millis(100),
+        ..Limits::default()
+    };
+    let code = "const e = new Error('boom');\n\
+                Object.defineProperty(e, 'name', { get() { while (true) {} } });\n\
+                throw e;";
+    let (kind, text) = failure(code, limits).await;
+    assert_eq!(kind, ErrorKind::Limit, "{text}");
+    assert!(text.to_lowercase().contains("cpu"), "{text}");
+}
+
+#[tokio::test]
+async fn a_message_getter_that_answers_once_still_reports_the_script_error() {
+    // The class and the words come from one read of the exception: a getter that answers something else the second
+    // time cannot make a heap refusal's retained `heap_hit` replace the message the script threw.
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let code = "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+                let reads = 0;\n\
+                const error = new Error('recovered');\n\
+                Object.defineProperty(error, 'message', { get() { return ++reads === 1 ? 'recovered' : ''; } });\n\
+                Object.defineProperty(error, 'stack', { value: '' });\n\
+                throw error;";
+    let (kind, text) = failure(code, limits).await;
+    assert_eq!(kind, ErrorKind::Runtime, "{text}");
+    assert!(text.contains("recovered"), "{text}");
+}
+
+#[tokio::test]
+async fn a_message_getter_that_answers_late_cannot_change_the_class() {
+    // The first read of the message is the only one: an exception whose message reads empty is reasonless for the
+    // heap that refused, and the words shown must not come from a later read that answered something else.
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let code = "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+                let reads = 0;\n\
+                const error = new Error();\n\
+                Object.defineProperty(error, 'message', { get() { return ++reads === 1 ? '' : 'late'; } });\n\
+                Object.defineProperty(error, 'stack', { value: '' });\n\
+                throw error;";
+    let (kind, text) = failure(code, limits).await;
+    assert_eq!(kind, ErrorKind::Limit, "{text}");
+    assert!(text.to_lowercase().contains("heap"), "{text}");
+    assert!(
+        !text.contains("late"),
+        "no second read decided this: {text}"
+    );
+}
+
+#[tokio::test]
+async fn a_thrown_error_keeps_its_message_when_its_name_cannot_be_read() {
+    // A heap refusal is already recorded, but the script's own error explains itself: a `name` the
+    // engine cannot read must not turn that message into the heap's diagnostic.
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let code = "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+                const e = new Error('recovered');\n\
+                Object.defineProperty(e, 'name', { value: undefined });\n\
+                throw e;";
+    let (kind, text) = failure(code, limits).await;
+    assert_eq!(kind, ErrorKind::Runtime, "{text}");
+    assert!(text.contains("recovered"), "{text}");
+}
+
+#[tokio::test]
+async fn a_full_heap_ends_the_run_instead_of_the_wall_clock() {
+    // The fill breaks on an allocation the heap refused, so the refusal is recorded and the data
+    // stays live. A heap this full can leave the engine unable to allocate the job that would
+    // settle the promise the script awaits (QuickJS throws `null` when it cannot build its own
+    // error), so the future stays pending with nothing left that could run it. Before the drive
+    // rule the wall clock ended this run and reported a time limit; the heap is what stopped it.
+    let code = "globalThis.a = [];\n\
+        while (true) { try { globalThis.a.push('x'.repeat(1000)); } catch (e) { break; } }\n\
+        await new Promise(() => {});";
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        // Small on purpose: the assertion is about which rule ends the run, not about wall time.
+        wall: Duration::from_secs(2),
+        ..Limits::default()
+    };
+    let (mut run, _) = start(code, limits).await;
+    let began = Instant::now();
+    let step = run.drive(Instant::now() + Duration::from_secs(60)).await;
+    let elapsed = began.elapsed();
+    let error = failed(step);
+    assert_eq!(error.kind, ErrorKind::Limit);
+    assert!(error.message.contains("heap"), "{}", error.message);
+    assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+}
+
+#[tokio::test]
+async fn a_full_heap_after_a_tool_call_ends_the_run_instead_of_the_wall_clock() {
+    // The same heap ending, reached after a tool call: the refusal is recorded while the tool is in
+    // flight, so the check before the wait cannot tell the heap from a run waiting on a tool. Once
+    // the reply lands the script catches the refusal and awaits a promise it can never settle, and
+    // only the checks made while it waits can end the run — the wall clock would report a time
+    // limit and hold the runtime and the heap until then.
+    let code = "await tools.slow({ ms: 100 });\n\
+        try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+        await new Promise(() => {});";
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        // Small on purpose: the assertion is about which rule ends the run, and when.
+        wall: Duration::from_secs(2),
+        ..Limits::default()
+    };
+    let (mut run, _) = start(code, limits).await;
+    let began = Instant::now();
+    let step = run.drive(Instant::now() + Duration::from_secs(60)).await;
+    let elapsed = began.elapsed();
+    let error = failed(step);
+    assert_eq!(error.kind, ErrorKind::Limit);
+    assert!(error.message.contains("heap"), "{}", error.message);
+    assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+}
+
+#[tokio::test]
+async fn a_pending_run_under_its_heap_still_ends_at_the_wall_clock() {
+    // The same unsettleable promise with the heap untouched: the wall clock is still the rule that
+    // ends a run which stops making progress, so the heap rule did not take its place.
+    let limits = Limits {
+        wall: Duration::from_millis(200),
+        ..Limits::default()
+    };
+    let (mut run, _) = start("await new Promise(() => {});", limits).await;
+    let error = failed(run.drive(Instant::now() + Duration::from_secs(30)).await);
+    assert_eq!(error.kind, ErrorKind::Limit);
+    assert!(error.message.contains("time limit"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn a_heap_refusal_does_not_end_a_run_waiting_on_a_tool() {
+    // A refusal the script caught leaves the refusal recorded; the script is still waiting on a
+    // tool, so the run yields and resumes as before instead of ending as the heap.
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let code = "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+        await tools.slow({ ms: 400 });\n\
+        return 'slept';";
+    let (mut run, _) = start(code, limits).await;
+    let first = run.drive(Instant::now() + Duration::from_millis(40)).await;
+    assert!(matches!(first, Step::Yielded), "{first:?}");
+    let second = run.drive(Instant::now() + Duration::from_secs(30)).await;
+    assert_eq!(done(second), json!("slept"));
 }

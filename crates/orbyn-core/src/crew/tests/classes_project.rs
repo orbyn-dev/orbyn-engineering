@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use orbyn_contracts as wire;
 use serde_json::Value;
 
 use super::classes::{commit_crew, file, pin_origin_here, rule, two};
@@ -10,6 +11,15 @@ use super::harness::{Turn, World, world_with};
 
 fn project_of(w: &World) -> String {
     w.core.store.thread(&w.lead).unwrap().project_id
+}
+
+/// The read's row for `path`: the read lists the paths the caller asked for, so a test finds the path it asked about
+/// rather than reading a place in that list.
+fn path_row<'a>(test: &'a wire::CrewClassTest, path: &str) -> &'a wire::CrewClassTestPath {
+    test.paths
+        .iter()
+        .find(|row| row.path == path)
+        .unwrap_or_else(|| panic!("the read has no {path} row: {:?}", test.paths))
 }
 
 #[tokio::test]
@@ -132,7 +142,17 @@ async fn a_project_read_equals_the_thread_read_of_the_same_checkout() {
     assert_eq!(by_thread.thread.as_deref(), Some(w.lead.as_str()));
     assert!(by_project.thread.is_none());
     assert_eq!(asked_neutrally(&by_thread), asked_neutrally(&by_project));
-    assert_eq!(by_project.paths[0].classes[0].name, "auth");
+    let auth = path_row(&by_project, "src/auth/x.rs");
+    let classes: Vec<&str> = auth
+        .classes
+        .iter()
+        .map(|class| class.name.as_str())
+        .collect();
+    assert_eq!(
+        classes,
+        ["auth"],
+        "the auth rule is the one class the path matches"
+    );
 }
 
 #[tokio::test]
@@ -162,10 +182,11 @@ async fn a_project_read_keeps_the_default_branch_pin() {
         .crew_class_test(None, Some(&project), &paths)
         .await
         .unwrap();
-    let card = &test.paths[0].route_card;
+    let hit = path_row(&test, "src/a.rs");
+    let card = &hit.route_card;
     assert!(card.contains("The rules differ"), "{card}");
     // The stricter side applies: only what both allow.
-    let engines: Vec<&str> = test.paths[0]
+    let engines: Vec<&str> = hit
         .allowed_engines
         .as_ref()
         .unwrap()

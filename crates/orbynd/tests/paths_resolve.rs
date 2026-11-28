@@ -1,5 +1,6 @@
-//! A multi-repository thread resolves navigation coordinates in the repository a `repo_id` names,
-//! never in the task folder its engine runs in (docs/multi-repo.md).
+//! A multi-repository thread resolves navigation coordinates in the repository a `repo_id` names, or the
+//! repository a task-folder reference names by its first segment, never in the task folder its engine runs in
+//! (docs/multi-repo.md).
 
 mod support;
 
@@ -191,5 +192,92 @@ async fn navigation_coordinates_are_resolved_in_the_repository_its_repo_id_names
     .await;
     assert_eq!(code, 409, "{stale}");
     assert_eq!(stale["code"], "stale_owner");
+    service.stop().await;
+}
+
+/// A task-folder reference (a message link or a tool result) names a repository by the folder that repository
+/// sits in, so `planner/note.txt` is the `planner` repository's `note.txt`, and the answer says which repository
+/// that is (issue #1581).
+#[tokio::test]
+async fn a_task_folder_reference_resolves_in_the_repository_its_first_segment_names() {
+    let dir = TempDir::new();
+    let service = Service::start(&dir.path().join("data"), options());
+    let project_path = seed_repo(&dir.path().join("project"), &[("a.txt", "one\n")]);
+    let project = service.project(&project_path, true).await;
+    let other = seed_repo(&dir.path().join("other"), &[("a.txt", "other\n")]);
+    let other_id = add_trusted(&service, &project, &other).await;
+    let (status, thread) = service
+        .send(
+            &format!("/api/projects/{project}/repo-threads"),
+            json!({
+                "repos": [
+                    { "repo_id": project, "base_branch": "main" },
+                    { "repo_id": other_id, "base_branch": "main" },
+                ],
+                "engine": "codex",
+                "model": null,
+                "permission_mode": "supervised",
+                "message": null,
+                "branch_name": null,
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{thread}");
+    let thread_id = thread["id"].as_str().unwrap().to_owned();
+    let cwd = thread["cwd"].as_str().unwrap().to_owned();
+    let task = service
+        .json(&format!("/api/threads/{thread_id}/task-folder"))
+        .await;
+    let primary = worktree_of(&task, &project);
+    let second = worktree_of(&task, &other_id);
+    // One name with different bytes in each repository, so the answer says whose file it resolved.
+    std::fs::write(primary.join("note.txt"), "primary\n").unwrap();
+    std::fs::write(second.join("note.txt"), "other\n").unwrap();
+    let folder = |worktree: &Path| worktree.file_name().unwrap().to_string_lossy().into_owned();
+    let (second_folder, primary_folder) = (folder(&second), folder(&primary));
+    assert_ne!(
+        second_folder, primary_folder,
+        "each repository has its own folder"
+    );
+
+    // The reference the thread's own file tab makes, relative to the task folder, names the second repository.
+    let (code, named) = resolve(
+        &service,
+        &thread_id,
+        json!({ "cwd": cwd, "path": format!("{second_folder}/note.txt"), "basis": "thread" }),
+    )
+    .await;
+    assert_eq!(code, 200, "{named}");
+    assert_eq!(
+        named["checkout_path"], "note.txt",
+        "resolved in the repository the first segment names, not the primary worktree"
+    );
+    assert_eq!(named["repository_path"], "note.txt");
+    assert_eq!(
+        named["repo_id"], other_id,
+        "the answer names the repository the coordinates belong to"
+    );
+
+    // The primary's own folder name is its file, and the answer names the primary repository.
+    let (code, own) = resolve(
+        &service,
+        &thread_id,
+        json!({ "cwd": cwd, "path": format!("{primary_folder}/note.txt"), "basis": "thread" }),
+    )
+    .await;
+    assert_eq!(code, 200, "{own}");
+    assert_eq!(own["checkout_path"], "note.txt");
+    assert_eq!(own["repo_id"], project);
+
+    // A path under no repository's folder keeps its older meaning: the primary repository's worktree.
+    let (code, primary_file) = resolve(
+        &service,
+        &thread_id,
+        json!({ "cwd": cwd, "path": "a.txt", "basis": "thread" }),
+    )
+    .await;
+    assert_eq!(code, 200, "{primary_file}");
+    assert_eq!(primary_file["checkout_path"], "a.txt");
+    assert_eq!(primary_file["repo_id"], project);
     service.stop().await;
 }

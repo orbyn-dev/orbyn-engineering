@@ -14,6 +14,42 @@ use crate::testing::run_git;
 
 const NOW: i64 = 1_800_000_000;
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list. A read that returns none
+/// or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
+/// The review task of the one lane a test asks for, found by the name it asked for: a review answer lists its lanes in
+/// start order, not in a fixture's order, so a lane a repo rule adds must not stand in for the lane the test waits on.
+async fn one_lane(w: &World, subject: &str, asked: &str) -> String {
+    let (answer, error) = w
+        .lead("crew_review", json!({ "task": subject, "lanes": [asked] }))
+        .await;
+    assert!(!error, "{answer}");
+    let lanes = answer["lanes"]
+        .as_array()
+        .expect("the review answer lists its lanes");
+    assert_eq!(
+        lanes.len(),
+        1,
+        "the test asks for one lane, and no rule adds another: {answer}"
+    );
+    let lane = lanes[0]["lane"].as_str().expect("the lane's name");
+    assert_eq!(
+        lane, asked,
+        "the one lane is the lane the test asked for: {answer}"
+    );
+    lanes[0]["task"]
+        .as_str()
+        .expect("the lane's review task")
+        .to_owned()
+}
+
 fn project(w: &World) -> String {
     w.core.store.thread(&w.lead).unwrap().project_id
 }
@@ -98,10 +134,11 @@ async fn a_paused_comment_fix_says_it_is_waiting_for_capacity_and_a_later_commen
         "the Comment stays stored so a later trigger can use it"
     );
     assert_eq!(tasks(), before, "nothing was started");
-    let held = m.w.core.store.crew_paused_starts(&project(&m.w)).unwrap();
-    assert_eq!(held.len(), 1, "the refused fix is one held row: {held:?}");
-    assert_eq!(held[0].kind, PausedKind::CommentFix);
-    assert!(!held[0].started);
+    let rows = m.w.core.store.crew_paused_starts(&project(&m.w)).unwrap();
+    let refused = one(&rows, "refused comment fix row");
+    assert_eq!(refused.kind, PausedKind::CommentFix);
+    assert_eq!(refused.key, id, "the row is the refused fix's own trigger");
+    assert!(!refused.started);
 
     // No timer retries it: nothing changes by itself.
     let events = || m.w.core.store.crew_autopilot_events(&id).unwrap().len();
@@ -129,12 +166,11 @@ async fn a_paused_comment_fix_says_it_is_waiting_for_capacity_and_a_later_commen
         .await;
     assert!(!error, "{answer}");
     assert_eq!(tasks(), before + 1, "the fix started");
-    let held = m.w.core.store.crew_paused_starts(&project(&m.w)).unwrap();
-    assert_eq!(held.len(), 1, "still one row, not a second: {held:?}");
-    assert!(
-        held[0].started,
-        "the same trigger started, so the row says so"
-    );
+    let rows = m.w.core.store.crew_paused_starts(&project(&m.w)).unwrap();
+    let row = one(&rows, "started comment fix row");
+    assert_eq!(row.id, refused.id, "still one row, not a second");
+    assert_eq!(row.key, id, "the same trigger's row");
+    assert!(row.started, "the same trigger started, so the row says so");
     assert_eq!(
         m.w.core
             .store
@@ -210,11 +246,11 @@ async fn confirmed_while_paused() -> (World, String, String) {
     }))
     .await;
     let subject = w.built_work().await;
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(&w, &subject, "correctness").await;
+    w.until_state(&lane, "passed").await;
     let id = w.first_finding(&subject);
     wait_for_a_person(&w, &subject);
-    wait_for_a_person(&w, &lanes[0]);
+    wait_for_a_person(&w, &lane);
     pause_over_the_limit(&w);
     let (pending, error) = w.lead("crew_check_finding", json!({ "finding": id })).await;
     assert!(!error, "{pending}");
@@ -240,10 +276,18 @@ async fn a_paused_review_fix_tells_the_lead_it_is_waiting_for_capacity_and_a_lat
         .unwrap();
     assert!(told.contains("waiting"), "{told}");
     assert!(w.core.store.crew_fixes_of(&subject).unwrap().is_empty());
-    let held = w.core.store.crew_paused_starts(&project(&w)).unwrap();
-    assert_eq!(held.len(), 1, "{held:?}");
-    assert_eq!(held[0].kind, PausedKind::ReviewFix);
-    assert!(!held[0].started);
+    let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
+    let refused = one(&rows, "refused review fix row");
+    assert_eq!(
+        (
+            refused.kind,
+            refused.waiting,
+            refused.limit,
+            refused.started
+        ),
+        (PausedKind::ReviewFix, 2, 1, false),
+        "the held row is the refused review fix, with the counts of the refusal"
+    );
     let notices = || {
         w.sent_to(&w.lead)
             .iter()
@@ -256,8 +300,8 @@ async fn a_paused_review_fix_tells_the_lead_it_is_waiting_for_capacity_and_a_lat
     capacity_frees(&w);
     let (again, error) = w.lead("crew_check_finding", json!({ "finding": id })).await;
     assert!(error, "a decided finding is not checked twice: {again}");
-    let lanes = w.review(&subject, &["correctness"]).await;
-    w.until_state(&lanes[0], "passed").await;
+    let lane = one_lane(&w, &subject, "correctness").await;
+    w.until_state(&lane, "passed").await;
     let finding = w.status(&subject)["findings"]
         .as_array()
         .unwrap()

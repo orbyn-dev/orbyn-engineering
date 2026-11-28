@@ -44,6 +44,12 @@ export type Copied =
   | { kind: "prompt"; entry: Prompt }
   | { kind: "env_set"; entry: EnvSet };
 
+/** The four parts of an export document, in the service's `kinds` spelling (`profiles,workflows,prompts,env_sets`). */
+export type ExportKind = "profiles" | "workflows" | "prompts" | "env_sets";
+
+/** Every kind: what an export holds unless a caller narrows it. */
+export const EXPORT_KINDS: readonly ExportKind[] = ["profiles", "workflows", "prompts", "env_sets"];
+
 export const LIMITS = { name: 60, description: 200, command: 4000, body: 32 * 1024, params: 16, defaultValue: 500, choiceText: 60, choiceMin: 2, choiceMax: 20, envSetsPerWorkflow: 4, keysPerSet: 64, value: 8192 } as const;
 
 export interface LibraryApi {
@@ -77,4 +83,9 @@ export interface LibraryApi {
   copySuggestion(projectId: string, file: SuggestionFile, index: number): Promise<Copied>;
   /** Person write. `dryRun` answers what would be created, renamed or refused and writes nothing. Over `import_bytes` is `400 invalid_input`. */
   importLibrary(document: unknown, dryRun: boolean): Promise<ImportAnswer>;
+  /**
+   * `GET /api/library/export?kinds=`: the export document, every kind unless `kinds` narrows it. A Local read, so no person key
+   * and no write; core writes no file, so the caller saves it. A `404 not_found` is a service too old for export, and is reported.
+   */
+  exportLibrary(kinds?: readonly ExportKind[], signal?: AbortSignal): Promise<LibraryDocument>;
 }

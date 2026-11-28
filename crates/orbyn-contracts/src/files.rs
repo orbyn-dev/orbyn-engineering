@@ -77,6 +77,11 @@ pub struct ResolvedThreadPath {
     pub checkout_path: Option<String>,
     // Git-relative metadata can name missing/deleted files and checkout siblings.
     pub repository_path: Option<String>,
+    /// The repository the coordinates are in: the one asked for, or the one a task-folder
+    /// reference names; absent is an ordinary thread (docs/multi-repo.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub repo_id: Option<String>,
 }
 }
 

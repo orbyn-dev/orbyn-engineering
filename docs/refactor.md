@@ -161,7 +161,8 @@ The backend (B) and web (W) tracks can run in parallel.
   files). `features/tools` stays its own feature: `thread` and `panels` import it, and `settings`
   sits above them, so folding it into `settings/tools-connectors/` would be a cycle.
 - W7b: done. `app/Shell.tsx` (732 to 150 lines) is `app/shell/`: `Shell.tsx` (the component),
-  `routes.tsx` (home and the route switch), `commands.ts` (the commands the shell owns, focus
+  `routes.tsx` (home and the route switch), `ScreenBoundary.tsx` (where a deferred screen's failed
+  chunk import lands), `commands.ts` (the commands the shell owns, focus
   cycling, jump rows), `keys.ts` (the global key listener, its context, the undo shortcut and the
   slow-request toast), `loading.ts` (the one-at-a-time workspace and engine loads), `notifications.ts`
   (the announcer, the chime and thread notices), `focus.ts` (route focus and toast clearance),
