@@ -859,12 +859,16 @@ struct TemplateHeader {
 
 impl TemplateHeader {
     /// One line of the front matter block, as one `key: value` pair. A key this reader does not carry, an indented
-    /// continuation and a line without a colon are all dropped rather than guessed.
+    /// continuation and a line without a colon are all dropped rather than guessed, and so is a value that is an
+    /// unquoted block-scalar header: that names a block on the following lines, not a scalar.
     fn read(&mut self, line: &str) {
         if line.starts_with([' ', '\t']) {
             return;
         }
         let Some((key, value)) = line.split_once(':') else {
+            return;
+        };
+        let Some(value) = scalar(value) else {
             return;
         };
         match key.trim() {
@@ -904,18 +908,24 @@ fn unquoted(value: &str) -> Option<&str> {
 
 /// True for a YAML block-scalar header: `|` or `>` with at most one chomping modifier (`+`/`-`) and at most one
 /// indentation digit (`1`-`9`), in either order, as in `|-`, `>+`, `|2` or `>-2`, and with an optional inline comment
-/// after it, as in `> # what this is`. That header opens a block whose text is on the following, indented lines. This
-/// reader keeps one `key: value` line each and reads no block (an indented continuation is already dropped), so the
-/// header is not a value: kept as one it would put a `|` or `>-` into a template's name or description, or with a
-/// comment the raw `> # ...` line, and hide the file name a rejected `name` falls back to.
+/// after it, as in `> # what this is`, which a space or a tab separates. That header opens a block whose text is on
+/// the following, indented lines. This reader keeps one `key: value` line each and reads no block (an indented
+/// continuation is already dropped), so the header is not a value: kept as one it would put a `|` or `>-` into a
+/// template's name or description, or the raw `> # ...` line, and hide the file name a rejected `name` falls back to.
 fn block_scalar_header(value: &str) -> bool {
     let Some(rest) = value.strip_prefix(['|', '>']) else {
         return false;
     };
-    // A `#` after a space starts an inline comment, which is not part of the header.
-    let rest = rest.split_once(" #").map_or(rest, |(header, _)| header);
+    // The modifiers end at the first space or tab; what follows is nothing or an inline comment.
+    let (modifiers, after) = match rest.find([' ', '\t']) {
+        Some(at) => rest.split_at(at),
+        None => (rest, ""),
+    };
+    if !after.trim().is_empty() && !after.trim_start().starts_with('#') {
+        return false;
+    }
     let (mut chomp, mut indent) = (false, false);
-    for modifier in rest.trim_end().chars() {
+    for modifier in modifiers.chars() {
         match modifier {
             '+' | '-' if !chomp => chomp = true,
             '1'..='9' if !indent => indent = true,
@@ -925,14 +935,21 @@ fn block_scalar_header(value: &str) -> bool {
     true
 }
 
-/// One front matter value as a line of at most `chars` characters, or `None` when it is empty, carries an escape this
-/// reader does not decode, or is a block-scalar header. Only an unquoted value can be that header: a quoted `"|"` is
-/// one scalar whose text happens to be that character.
-fn one_line(value: &str, chars: usize) -> Option<String> {
+/// One front matter value, or `None` when it is an unquoted block-scalar header, which names a block on the following
+/// lines rather than a value (docs/issues.md, "As built (#1548)"). The whole value is checked before its quotes come
+/// off and before a `labels` value is split on its commas, so its quoting decides: a quoted `"|"` is one scalar,
+/// `labels: '|'` names the label `|`, and `name: |` names no name at all.
+fn scalar(value: &str) -> Option<&str> {
     let value = value.trim();
     if !value.starts_with(['\'', '"']) && block_scalar_header(value) {
         return None;
     }
+    Some(value)
+}
+
+/// One front matter value as a line of at most `chars` characters, or `None` when it is empty or carries an escape
+/// this reader does not decode.
+fn one_line(value: &str, chars: usize) -> Option<String> {
     let value: String = unquoted(value)?.trim().chars().take(chars).collect();
     (!value.is_empty()).then_some(value)
 }
@@ -1854,6 +1871,8 @@ mod tests {
             "> # what this is",
             "| # a comment",
             "|2- # a comment",
+            ">\t# a tabbed comment",
+            "|2\t# a tabbed comment",
         ] {
             let file =
                 format!("---\nname: {header}\nabout: {header}\nlabels: {header}\n---\nBody\n");
@@ -1879,11 +1898,24 @@ mod tests {
     fn a_quoted_scalar_that_looks_like_a_block_header_is_still_carried() {
         // A quoted value is one scalar whatever its text, so a `"|"` written in quotes is the single character `|`
         // and not the header of a block, and a quoted line that looks like a header with a comment stays that text.
+        // The quoting decides for `labels` too, because the whole value is checked before its commas are split.
         let (header, _) = markdown_template("---\nname: \"|\"\nabout: '>'\n---\nBody\n");
         assert_eq!(header.name, Some("|".to_owned()));
         assert_eq!(header.about, Some(">".to_owned()));
         let (header, _) = markdown_template("---\nname: \"> # not a header\"\n---\nBody\n");
         assert_eq!(header.name, Some("> # not a header".to_owned()));
+        let (header, _) = markdown_template("---\nlabels: '|'\n---\nBody\n");
+        assert_eq!(
+            header.labels,
+            vec!["|".to_owned()],
+            "a quoted `|` names the label `|`, while an unquoted `labels: |` names none"
+        );
+        let (header, _) = markdown_template("---\nlabels: |\n---\nBody\n");
+        assert!(
+            header.labels.is_empty(),
+            "an unquoted `labels: |` is a block header, not a label name: {:?}",
+            header.labels
+        );
     }
 
     #[test]
