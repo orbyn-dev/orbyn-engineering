@@ -57,7 +57,7 @@ export function IssueStateButton({ issue, write, writing }: { issue: IssueDetail
       if (answered === null) claimed.current = null;
     } catch (failure) {
       claimed.current = null;
-      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
+      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code, failure.message)) {
         markNotOffered("state");
         pushToast("This service does not offer state changes yet. Nothing changed.");
         return;

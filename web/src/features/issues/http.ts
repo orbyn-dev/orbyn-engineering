@@ -77,13 +77,14 @@ export function createHttpIssuesApi(): IssuesApi {
     connect: (tracker: TrackerKind, input) => request<TrackerRow>("POST", `/api/issues/trackers/${segment(tracker)}/connect`, input),
     disconnect: (tracker: TrackerKind) => request<TrackerRow>("POST", `/api/issues/trackers/${segment(tracker)}/disconnect`),
     startThread: (issue, input) => request("POST", "/api/issues/start-thread", { ...named(issue), message: input.message, project_id: input.project_id }),
-    // A read that changes nothing: with no query the route can only answer 400 or 409 when it exists, and a 404 or 405 says it does not.
+    // A read that changes nothing: with no query the route can only answer 400 or 409 when it exists, and a 405, a 404 whose code
+    // is not `not_found`, or the SPA fallback's own 404 `not_found` (its message is `NO_SUCH_ROUTE`) says it does not (#1530).
     offers: async (signal) => {
       try {
         await request<unknown>("GET", "/api/issues/candidates", undefined, signal);
         return true;
       } catch (failure) {
-        if (failure instanceof ApiFailure && failure.status > 0) return !routeAbsent(failure.status, failure.code);
+        if (failure instanceof ApiFailure && failure.status > 0) return !routeAbsent(failure.status, failure.code, failure.message);
         throw failure;
       }
     },

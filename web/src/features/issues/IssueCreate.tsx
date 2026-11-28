@@ -61,7 +61,7 @@ const scopeOf = (row: TrackerRow): string => row.scope ?? "";
 const badgeOf = (tracker: TrackerKind): string => TRACKER_NAMES[tracker].slice(0, 2).toUpperCase();
 
 /** Whether a candidates read means this tracker has no label and people list (`422 unsupported`) or no route at all. */
-const noCandidates = (failure: ApiFailure): boolean => failure.status === 422 || routeAbsent(failure.status, failure.code);
+const noCandidates = (failure: ApiFailure): boolean => failure.status === 422 || routeAbsent(failure.status, failure.code, failure.message);
 
 function NewIssueDialog({ rows, preferred, onClose, onCheckList }: { rows: TrackerRow[]; preferred: TrackerKind | null; onClose(): void; onCheckList(): void }) {
   const version = useApiVersion();
@@ -134,7 +134,7 @@ function NewIssueDialog({ rows, preferred, onClose, onCheckList }: { rows: Track
       if (outcomeUnknown(failure)) {
         // The service's own sentence is the screen's: it says the issue was possibly created, so nothing re-sends the draft.
         setUnknown(reasonOf(failure));
-      } else if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
+      } else if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code, failure.message)) {
         markNotOffered("create");
         onClose();
       } else {
