@@ -790,9 +790,9 @@ is one listing plus one body per markdown template, and a templated create re-ru
   line that is exactly `---`; a file whose block never closes is all body. Only three keys are read, one
   `key: value` line each: `name` (the template's name), `about` (its `description`) and `labels` (its label names,
   split on commas). A value in matching quotes is unquoted. This is not a YAML reader: an indented continuation, a
-  list, an escape, a block-scalar header (`|`, `>` and their modifiers such as `|-`, `>+` or `|2`, whose text is on
-  the following lines) and every other key are dropped rather than guessed, and a `name` the file does not give
-  falls back to the file's own name.
+  list, an escape, a block-scalar header (`|`, `>` and their modifiers such as `|-`, `>+` or `|2`, with or without an
+  inline comment, whose text is on the following lines) and every other key are dropped rather than guessed, and a
+  `name` the file does not give falls back to the file's own name.
 - **A form is skipped.** `.yml` and `.yaml` issue forms are not read at all, because their shape needs a YAML
   interpreter Orbyn does not carry and a form is not a body: a repository whose only templates are forms answers
   none (`[]`), which is honest but is not what GitHub's site offers. `config.yml`, a folder and anything else in the

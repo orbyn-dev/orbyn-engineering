@@ -903,16 +903,19 @@ fn unquoted(value: &str) -> Option<&str> {
 }
 
 /// True for a YAML block-scalar header: `|` or `>` with at most one chomping modifier (`+`/`-`) and at most one
-/// indentation digit (`1`-`9`), in either order, as in `|-`, `>+`, `|2` or `>-2`. That header opens a block whose
-/// text is on the following, indented lines. This reader keeps one `key: value` line each and reads no block (an
-/// indented continuation is already dropped), so the header is not a value: kept as one it would put a `|` or `>-`
-/// into a template's name or description and hide the file name a rejected `name` falls back to.
+/// indentation digit (`1`-`9`), in either order, as in `|-`, `>+`, `|2` or `>-2`, and with an optional inline comment
+/// after it, as in `> # what this is`. That header opens a block whose text is on the following, indented lines. This
+/// reader keeps one `key: value` line each and reads no block (an indented continuation is already dropped), so the
+/// header is not a value: kept as one it would put a `|` or `>-` into a template's name or description, or with a
+/// comment the raw `> # ...` line, and hide the file name a rejected `name` falls back to.
 fn block_scalar_header(value: &str) -> bool {
     let Some(rest) = value.strip_prefix(['|', '>']) else {
         return false;
     };
+    // A `#` after a space starts an inline comment, which is not part of the header.
+    let rest = rest.split_once(" #").map_or(rest, |(header, _)| header);
     let (mut chomp, mut indent) = (false, false);
-    for modifier in rest.chars() {
+    for modifier in rest.trim_end().chars() {
         match modifier {
             '+' | '-' if !chomp => chomp = true,
             '1'..='9' if !indent => indent = true,
@@ -1839,7 +1842,19 @@ mod tests {
         // docs/issues.md, "As built (#1548)": this is not a YAML reader, so the `|`/`>` header that opens a block of
         // following, indented lines is dropped rather than stored as the value. Keeping it would put a `|` or `>-` in
         // a template's name or description, and would hide the file name the rejected name falls back to.
-        for header in ["|", ">", "|-", ">+", "|2", ">-2", ">2+", "|9-"] {
+        for header in [
+            "|",
+            ">",
+            "|-",
+            ">+",
+            "|2",
+            ">-2",
+            ">2+",
+            "|9-",
+            "> # what this is",
+            "| # a comment",
+            "|2- # a comment",
+        ] {
             let file =
                 format!("---\nname: {header}\nabout: {header}\nlabels: {header}\n---\nBody\n");
             let (parsed, body) = markdown_template(&file);
@@ -1863,10 +1878,12 @@ mod tests {
     #[test]
     fn a_quoted_scalar_that_looks_like_a_block_header_is_still_carried() {
         // A quoted value is one scalar whatever its text, so a `"|"` written in quotes is the single character `|`
-        // and not the header of a block.
+        // and not the header of a block, and a quoted line that looks like a header with a comment stays that text.
         let (header, _) = markdown_template("---\nname: \"|\"\nabout: '>'\n---\nBody\n");
         assert_eq!(header.name, Some("|".to_owned()));
         assert_eq!(header.about, Some(">".to_owned()));
+        let (header, _) = markdown_template("---\nname: \"> # not a header\"\n---\nBody\n");
+        assert_eq!(header.name, Some("> # not a header".to_owned()));
     }
 
     #[test]

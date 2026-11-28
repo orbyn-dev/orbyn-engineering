@@ -847,8 +847,9 @@ async fn a_markdown_template_carries_its_front_matter_and_its_body() {
 #[tokio::test]
 async fn a_template_whose_name_is_a_block_header_uses_its_file_name() {
     // docs/issues.md, "As built (#1548)": a `|`/`>` header opens a block of following lines that this reader does not
-    // read, so it is not a value. Such a `name` falls back to the file's own name, and an `about` block gives no
-    // description, instead of naming the template `|` and describing it as `>-`.
+    // read, so it is not a value, whether it stands alone or carries an inline comment. Such a `name` falls back to
+    // the file's own name, and an `about` block gives no description, instead of naming the template `|` and
+    // describing it as `>-`.
     let fixture = Arc::new(
         |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
             let args = strings(args);
@@ -862,7 +863,7 @@ async fn a_template_whose_name_is_a_block_header_uses_its_file_name() {
             );
             Ok(contents_file(
                 ".github/ISSUE_TEMPLATE/block.md",
-                "---\nname: |\n  The whole name\nabout: >-\n  A folded description\n---\nBody\n",
+                "---\nname: |\n  The whole name\nabout: >- # folded\n  A folded description\n---\nBody\n",
             )
             .to_string())
         },
