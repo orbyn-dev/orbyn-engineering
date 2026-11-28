@@ -110,7 +110,9 @@ pub(crate) fn next_window(
     // fetch time reads as fresh too because the subtraction saturates. Neither of its bounds may bound a window this
     // read asks for: a walk derived from them is a walk after `now_ms`, where no event is, and it never reads the
     // newest end again. It answers nothing, so it is handled before the store answers the read and before any walk
-    // below; a window ending at or before the clock keeps its own path.
+    // below; a window ending at or before the clock keeps its own path. The read this asks for replaces that stored
+    // window instead of merging with it (`Store::record_account_report`), so its future end is not kept and later
+    // reads walk back again.
     if read.is_some_and(|read| read.until_ms > now_ms) {
         return Some(newest);
     }

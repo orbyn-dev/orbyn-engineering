@@ -354,6 +354,64 @@ fn a_covering_read_extends_the_window_and_a_disjoint_one_replaces_it() {
     );
 }
 
+/// A stored window that ends after the moment a report was read cannot be coverage that report
+/// keeps: no read names an instant after it was made. Merging it would keep that end, and a reader
+/// that finds an end after its clock answers with the newest window again, so older history would
+/// never be walked. The report replaces the stale window with the one it read.
+#[test]
+fn a_stored_window_that_ends_after_the_report_is_replaced_rather_than_merged() {
+    let (_dir, store) = open();
+    // A read made while the clock was ahead of where it is now, overlapping the reset window.
+    let ahead = STAMP + DAY;
+    store
+        .record_account_report("cursor", STAMP - 2 * HOUR, ahead, &[], ahead)
+        .unwrap();
+
+    // The clock is now behind that end, so the read covers the reset window and nothing later.
+    store
+        .record_account_report("cursor", STAMP - HOUR, STAMP, &[], STAMP)
+        .unwrap();
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: STAMP - HOUR,
+            until_ms: STAMP,
+            fetched_at_ms: STAMP,
+        }),
+        "the end after the clock is replaced by the window read, not merged into the record"
+    );
+}
+
+/// A read that extends coverage backwards is the walk the reader asks for, not a stale clock, so it
+/// merges with what was read and keeps the newer end.
+#[test]
+fn a_read_that_extends_coverage_backwards_merges_with_it() {
+    let (_dir, store) = open();
+    let newest_end = STAMP + DAY;
+    store
+        .record_account_report("cursor", newest_end - HOUR, newest_end, &[], newest_end)
+        .unwrap();
+
+    store
+        .record_account_report(
+            "cursor",
+            newest_end - HOUR - DAY,
+            newest_end - HOUR,
+            &[],
+            newest_end,
+        )
+        .unwrap();
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: newest_end - HOUR - DAY,
+            until_ms: newest_end,
+            fetched_at_ms: newest_end,
+        }),
+        "the older span joins the window and the newer end stays"
+    );
+}
+
 /// A day a read covers whole says what the day held, including nothing. A day only part of the
 /// read covers cannot say anything about the rest of that day, so its other rows stay.
 #[test]

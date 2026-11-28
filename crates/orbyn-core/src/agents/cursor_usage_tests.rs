@@ -453,30 +453,40 @@ fn a_settled_amount_is_seen_by_asking_for_the_last_covered_hour_again() {
     );
 }
 
-/// What the store would hold after reading `window`: two windows that meet or overlap are one
-/// window, the rule `store` keeps its billing window by.
-fn stored(
-    previous: Option<AccountRead>,
-    window: Window,
-    fetched_at_ms: u64,
-) -> Option<AccountRead> {
-    let (since_ms, until_ms) = match previous {
-        Some(previous)
-            if window.since_ms <= previous.until_ms.saturating_add(1)
-                && previous.since_ms <= window.until_ms.saturating_add(1) =>
-        {
-            (
-                previous.since_ms.min(window.since_ms),
-                previous.until_ms.max(window.until_ms),
+/// The store's own record of what was read, so these walks are checked against the write rule the
+/// store keeps rather than a second copy of it.
+struct Reads {
+    _dir: TempDir,
+    store: Store,
+}
+
+impl Reads {
+    fn new() -> Self {
+        let dir = TempDir::new();
+        let store = Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
+        Self { _dir: dir, store }
+    }
+
+    /// Records one read of `window`, as the reader hands it to the store: no events, because a
+    /// window that found no spend was still read.
+    fn record(&self, window: Window, fetched_at_ms: u64) -> Option<AccountRead> {
+        self.store
+            .record_account_report(
+                "cursor",
+                window.since_ms,
+                window.until_ms,
+                &[],
+                fetched_at_ms,
             )
-        }
-        _ => (window.since_ms, window.until_ms),
-    };
-    Some(AccountRead {
-        since_ms,
-        until_ms,
-        fetched_at_ms,
-    })
+            .expect("the window is recorded");
+        self.read()
+    }
+
+    fn read(&self) -> Option<AccountRead> {
+        self.store
+            .account_read("cursor")
+            .expect("the store answers")
+    }
 }
 
 /// A stored window whose end is after the clock was written before the clock moved back, or is stale: a future
@@ -527,15 +537,55 @@ fn a_stored_window_that_ends_after_the_clock_reads_the_newest_window() {
     );
 }
 
+/// The newest window a read takes when the store ends after the clock is recorded, so its end
+/// replaces that end. Until it did, the record's future end survived the write: every later call
+/// selected the same reset window again and the walk back never moved, so the period's start was
+/// never read.
+#[test]
+fn recording_the_reset_window_clears_the_stored_end_after_the_clock() {
+    let reads = Reads::new();
+    let ahead = NOW + DAY;
+    reads.record(
+        Window {
+            since_ms: NOW - DAY,
+            until_ms: ahead,
+        },
+        ahead,
+    );
+
+    let reset = next_window(reads.read(), 0, NOW, DAY).expect("the newest window is read");
+    assert_eq!(
+        reset,
+        Window {
+            since_ms: NOW - DAY,
+            until_ms: NOW,
+        }
+    );
+    let covered = reads.record(reset, NOW).expect("the read is recorded");
+    assert_eq!(
+        covered.until_ms, NOW,
+        "the stored end after the clock is replaced by the window that was read"
+    );
+    assert_eq!(
+        next_window(Some(covered), 0, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - 2 * DAY,
+            until_ms: NOW - DAY,
+        }),
+        "the next read walks history back instead of asking for the reset window again"
+    );
+}
+
 /// A period shorter than the one-hour overlap is walked back one span at a time, rather than the
 /// newest window being selected again on every call.
 #[test]
 fn a_period_shorter_than_the_overlap_is_walked_back_to_its_start() {
     let period_start = NOW - 30 * MINUTE;
+    let reads = Reads::new();
     let mut covered = None;
     let mut steps = 0;
     while let Some(window) = next_window(covered, period_start, NOW, MINUTE) {
-        covered = stored(covered, window, NOW);
+        covered = reads.record(window, NOW);
         steps += 1;
         assert!(
             steps <= 40,
@@ -554,6 +604,7 @@ fn a_period_shorter_than_the_overlap_is_walked_back_to_its_start() {
 #[test]
 fn a_clock_that_moves_between_reads_still_walks_back_to_the_period_start() {
     let period_start = NOW - 10 * DAY;
+    let reads = Reads::new();
     let mut covered = None;
     let mut steps = 0;
     for call in 0..20 {
@@ -562,7 +613,7 @@ fn a_clock_that_moves_between_reads_still_walks_back_to_the_period_start() {
         let Some(window) = next_window(covered, period_start, now, DAY) else {
             break;
         };
-        covered = stored(covered, window, now);
+        covered = reads.record(window, now);
         steps += 1;
     }
     let covered = covered.expect("the period is read");

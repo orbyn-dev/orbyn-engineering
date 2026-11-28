@@ -22,8 +22,9 @@
 //! held and its rows are replaced, including with nothing; a day it covers in part keeps its other
 //! rows, because a part says nothing about the rest of that day. Windows that meet or overlap are
 //! one window, since nothing between them was left unread; a window with a gap between it and the
-//! stored one claims only itself. Which window to read next is the reader's question
-//! (`crate::agents::cursor_usage::next_window`), not this store's.
+//! stored one claims only itself. A stored window ending after the report was read is replaced by
+//! it instead of merged with it, since no read names an instant after it was made. Which window to
+//! read next is the reader's question (`crate::agents::cursor_usage::next_window`), not this store's.
 //!
 //! Cursor sends no event id. A row is keyed by a digest of the fields that identify the event —
 //! the engine, the conversation, the timestamp, the model and the four counters — plus how many
@@ -337,6 +338,13 @@ fn count_recorded<'a>(
 /// Keeps the window the store says it has read. Two windows that meet or overlap are one window,
 /// because between them nothing was left unread. A window with a gap between it and the stored one
 /// claims only itself: the gap was never read, so it is not claimed.
+///
+/// A stored window that ends after the moment this report was read is not coverage the report
+/// keeps, whatever their bounds say about overlapping: no read names an instant after it was made,
+/// so that end is a clock that has since moved back. Merging it would keep an end after every later
+/// clock, and the reader answers a window ending after its own clock by selecting the newest window
+/// again, so the walk back would never reach older history. Such a report replaces the stale
+/// window with the one it read, the only window it can vouch for.
 fn merge_read(
     tx: &Transaction<'_>,
     engine: &str,
@@ -353,7 +361,8 @@ fn merge_read(
         .optional()?;
     let (since_ms, until_ms) = match previous {
         Some((stored_since, stored_until))
-            if since_ms <= stored_until.saturating_add(1)
+            if stored_until <= fetched_at_ms
+                && since_ms <= stored_until.saturating_add(1)
                 && stored_since <= until_ms.saturating_add(1) =>
         {
             (stored_since.min(since_ms), stored_until.max(until_ms))
@@ -432,7 +441,9 @@ impl Store {
     /// on an event already stored is counted as `settled`.
     ///
     /// `events` are this engine's; another engine's are not written here. A window that ends before
-    /// it starts is refused rather than read as empty.
+    /// it starts is refused rather than read as empty. A window the store holds that ends after
+    /// `fetched_at_ms` is replaced by this one rather than merged with it, because no read names an
+    /// instant after it was made; an older span that still ends at or before it merges as usual.
     pub fn record_account_report(
         &self,
         engine: &str,

@@ -550,7 +550,9 @@ backwards, one span at a time and never past the period's start, and a read stil
 history before the newest end is read again, so a period shorter than that overlap, and a clock that
 moved since the read, still reach the period's start. A window whose end is after the clock — a read
 kept across a backward clock adjustment — answers nothing and starts the read at the newest end
-again, because no bound taken from it names a window inside the period. A span bounds one read, not
+again, because no bound taken from it names a window inside the period; the read it starts there
+replaces that window instead of merging with it, so the end after the clock is not kept and later
+reads walk back again. A span bounds one read, not
 the history. Two windows that meet or overlap are one window, because nothing between them was left
 unread; a window with a gap between it and the stored one claims only itself, since the gap was
 never read. A day the read covers whole is what that day held, and the read replaces it, including
