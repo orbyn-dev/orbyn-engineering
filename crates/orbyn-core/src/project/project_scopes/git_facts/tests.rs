@@ -700,10 +700,10 @@ fn a_common_directory_ending_in_a_space_keeps_it() {
     assert_eq!(super::common_directory(&git_dir), Some(git_dir.clone()));
 }
 
-/// `commondir` is a name Git reads in a directory it accepts as a Git directory, and it names where
-/// that repository's configuration and signatures live. A folder discovery passed that later holds
-/// one is a folder whose part in discovery the answer cannot stand behind without asking Git again:
-/// a folder that keeps none of the names is still reused without spawning anything.
+/// `commondir` is a name Git reads in a directory it accepts as a Git directory, and it is where it
+/// finds the `objects` and `refs` the folder beside it does not hold. A nested folder that already
+/// has a valid `HEAD` becomes a repository of its own once one appears, so the enclosing checkout it
+/// was read as is not reused; a folder that keeps none of the names is still reused without Git.
 #[tokio::test]
 async fn a_passed_folder_that_gains_a_common_directory_is_observed_again() {
     let dir = TempDir::new();
@@ -713,6 +713,9 @@ async fn a_passed_folder_that_gains_a_common_directory_is_observed_again() {
     configure(&root, "origin", "git@host:Owner/Repo.git");
     let nested = root.join("nested");
     std::fs::create_dir_all(&nested).unwrap();
+    // A valid `HEAD` alone is not a repository: Git finds no `objects` or `refs` beside it, so it
+    // passes the folder, and that is the state this observation is kept from.
+    std::fs::write(nested.join("HEAD"), "ref: refs/heads/main\n").unwrap();
     core.add_project(nested.to_str().unwrap()).await.unwrap();
     let first = read(&core).await;
     assert_eq!(
@@ -726,41 +729,44 @@ async fn a_passed_folder_that_gains_a_common_directory_is_observed_again() {
     assert_eq!(
         since(&before, watched),
         [0],
-        "a folder that holds none of the names is reused without spawning Git"
+        "a folder that holds none of the other names is reused without spawning Git"
     );
     assert_eq!(
         first, second,
         "a reused observation answers as the read did"
     );
-    // The folder stays a folder of the repository above it: `commondir` alone names no repository
-    // either. It is still a name the answer cannot vouch for without asking Git again.
-    std::fs::write(nested.join("commondir"), "../.git\n").unwrap();
+    // The `commondir` names the directories Git accepts as this folder's `objects` and `refs`, so
+    // the folder is a repository of its own now and Git stops there instead of passing to the
+    // parent: the enclosing checkout it was read as is not reused.
+    run_git(&nested, &["init", "-q", "--bare", "gitdir"]);
+    std::fs::write(nested.join("commondir"), "gitdir\n").unwrap();
     let before = spawns(watched);
     let third = read(&core).await;
     assert_eq!(
         since(&before, watched),
-        [3],
-        "the folder that gained a commondir is observed again"
+        [1],
+        "the folder the commondir made a repository is observed again: Git stops there, which is \
+         one read and no configuration"
     );
+    let member = only_member(&third);
     assert_eq!(
-        third, first,
-        "and Git still names the repository above it as its boundary"
+        member.repository_key, None,
+        "the folder is not the repository above it any more"
     );
+    assert_eq!(member.repository_relative_path, None);
+    assert!(
+        !member.metadata_complete,
+        "Git names no work tree for it, so the checkout is left unobserved instead of described by \
+         the repository above it"
+    );
+    std::fs::remove_file(nested.join("commondir")).unwrap();
     let before = spawns(watched);
     let fourth = read(&core).await;
     assert_eq!(
         since(&before, watched),
-        [0],
-        "the observation that read the commondir is kept while it still holds"
-    );
-    assert_eq!(fourth, third, "and it answers as the read that kept it did");
-    std::fs::remove_file(nested.join("commondir")).unwrap();
-    let before = spawns(watched);
-    let fifth = read(&core).await;
-    assert_eq!(
-        since(&before, watched),
         [3],
-        "the folder that lost its commondir is observed again"
+        "the folder that lost its commondir is observed again, and it is a folder of the repository \
+         above it once more"
     );
-    assert_eq!(fifth, first, "and it is the folder it was");
+    assert_eq!(fourth, first, "and it is the folder it was");
 }
