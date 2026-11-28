@@ -1,12 +1,20 @@
 //! The Flow task's artifacts read (Crew Preview): the evidence rows of the build under way, the artifacts those rows name,
-//! and the change the checks read. The rows carry no command, output, `proves` text or Evidence id, and a task with no
-//! checkout still answers.
+//! the change the checks read and the commit the checkout is on now, which the checks bar marks a stale artifact against.
+//! The rows carry no command, output, `proves` text or Evidence id, and a task with no checkout still answers.
 
 use orbyn_contracts::{CheckKind, CheckOutcome};
 use serde_json::{Value, json};
 
 use super::harness::{Turn, world};
 use super::review_support::{arc, built, commit_all};
+
+/// The commit the checkout is on now, read the way the view reads it, so a test can say which way a checkout moved.
+async fn head_of(root: &std::path::Path) -> String {
+    let bytes = crate::source_control::git::git_byte_exact(root, &["rev-parse", "HEAD"])
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&bytes).trim().to_owned()
+}
 
 /// A key with one command check, and the command and `proves` text it must never give away.
 fn artifact_key() -> (Value, String, String) {
@@ -85,6 +93,72 @@ async fn the_read_serves_the_checks_the_artifacts_and_the_change() {
 }
 
 #[tokio::test]
+async fn the_read_reports_the_commit_the_checkout_is_on_now_so_a_pinned_artifact_is_stale() {
+    let w = world(true, arc(|_, root| built(root))).await;
+    let subject = w.built_work().await;
+
+    // The bar's rule: an artifact is pinned to the commit its check read, and it is stale once the commit moves on. The read
+    // answers both sides of that: the commit the checks read is on every row, and the commit the checkout is on now.
+    let checked = w.core.crew_flow_task_artifacts(&subject).await.unwrap();
+    let now = head_of(&w.repo).await;
+    assert_eq!(
+        checked.head.as_deref(),
+        Some(now.as_str()),
+        "the read reports the commit the checkout is on"
+    );
+    assert_eq!(checked.head_absent, None);
+    assert!(
+        checked.checks.iter().all(|row| row.commit.as_str() == now),
+        "every row is pinned to the commit the checks read, which the checkout is on, so none is stale"
+    );
+
+    // The builder's work is committed after the checks read it: the checkout is on a later commit, and every row is stale
+    // against it. Nothing about the rows themselves changed, so the mark comes from the two commits and never a guess.
+    commit_all(&w.repo, "the work");
+    let moved = w.core.crew_flow_task_artifacts(&subject).await.unwrap();
+    let later = head_of(&w.repo).await;
+    assert_eq!(moved.head.as_deref(), Some(later.as_str()));
+    assert_ne!(moved.head, checked.head, "the checkout moved on");
+    assert!(
+        moved.checks.iter().all(|row| row.commit.as_str() != later),
+        "a row pinned to the commit it read is stale against the head that moved on"
+    );
+}
+
+#[tokio::test]
+async fn a_checkout_git_cannot_read_answers_why_there_is_no_head() {
+    let w = world(true, arc(|_, root| built(root))).await;
+    let subject = w.built_work().await;
+    // A run whose checkout is a directory that is no repository: git can read neither the change nor the commit the checkout
+    // is on, and the read says why instead of guessing one. The checks are stored, so the bar still answers without it.
+    let empty = crate::testing::TempDir::new();
+    {
+        let conn = w.core.store.reader();
+        conn.execute(
+            "UPDATE crew_runs SET worktree=?2 WHERE task_id=?1",
+            rusqlite::params![subject, empty.path().to_string_lossy()],
+        )
+        .unwrap();
+    }
+
+    let view = w.core.crew_flow_task_artifacts(&subject).await.unwrap();
+    assert!(
+        view.head.is_none(),
+        "git could not say which commit it is on"
+    );
+    assert_eq!(view.head_absent.as_deref(), Some("unreadable"));
+    assert_eq!(
+        view.diff_absent.as_deref(),
+        Some("unreadable"),
+        "the change could not be read either"
+    );
+    assert!(
+        !view.checks.is_empty(),
+        "the checks are stored, so the bar still answers without a checkout"
+    );
+}
+
+#[tokio::test]
 async fn the_rows_never_carry_the_command_the_proves_text_or_an_evidence_id() {
     let (key, command, proves) = artifact_key();
     let w = world(true, arc(|_, root| built(root))).await;
@@ -153,6 +227,8 @@ async fn a_task_with_no_run_answers_no_checks_and_no_checkout() {
     assert!(view.checks.is_empty(), "no check ran");
     assert!(view.diff.is_none());
     assert_eq!(view.diff_absent.as_deref(), Some("no_checkout"));
+    assert!(view.head.is_none(), "there is no checkout to ask");
+    assert_eq!(view.head_absent.as_deref(), Some("no_checkout"));
 }
 
 #[tokio::test]

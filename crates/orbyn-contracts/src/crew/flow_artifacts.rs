@@ -1,7 +1,8 @@
 //! One Flow task's artifacts, check results and diff over HTTP (Preview): the evidence rows of the build under way, the
-//! artifacts those rows name, and the change the checks read, as a summary of files and counts. Every type is a view the
-//! core builds from what it already stores; none can hold an answer key or any part of a check: not its command, its output,
-//! what it proves or an Evidence id (H1). Free text is redacted and capped before it is put in one. Times are RFC 3339.
+//! artifacts those rows name, the change the checks read, and the commit the checkout is on now, which an artifact pinned to
+//! an earlier commit is stale against. Every type is a view the core builds from what it already stores; none can hold an
+//! answer key or any part of a check: not its command, its output, what it proves or an Evidence id (H1). Free text is
+//! redacted and capped before it is put in one. Times are RFC 3339.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -80,8 +81,10 @@ pub struct FlowTaskDiff {
 }
 
 wire! {
-/// One task's checks, the artifacts they named and the change they read: what the Flow's checks bar, artifacts list and
-/// artifact diff draw. A file the task left untracked is not in the diff, which reads the files git tracks.
+/// One task's checks, the artifacts they named, the change they read and the commit the checkout is on now: what the Flow's
+/// checks bar, artifacts list and artifact diff draw. A file the task left untracked is not in the diff, which reads the
+/// files git tracks. The checkout's head is what an artifact or a diff pinned to an earlier commit is stale against: it is
+/// stale once the checkout has moved on by itself, and this read never says whether it has, only which commit it is on.
 pub struct FlowTaskArtifacts {
     pub crew: String,
     pub task: String,
@@ -94,6 +97,15 @@ pub struct FlowTaskArtifacts {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub diff_absent: Option<String>,
+    /// The commit the task's checkout is on now, read from git when this is asked for, so it is the checkout as it is now and
+    /// not a record of the verification.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub head: Option<String>,
+    /// Why there is no head: `no_checkout` or `unreadable`. Absent when `head` is there.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub head_absent: Option<String>,
     /// A list was cut at its cap.
     pub truncated: bool,
 }

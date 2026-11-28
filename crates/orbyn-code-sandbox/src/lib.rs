@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 /// Every limit of a run, in one value so a test can set them small.
 #[derive(Clone, Debug)]
 pub struct Limits {
+    /// Bytes of engine heap a run may hold; 0 is no limit. The executor's allocator counts them,
+    /// so a run that goes over is classified as a limit even when the engine cannot say so.
     pub heap_bytes: usize,
     pub stack_bytes: usize,
     /// Time the script itself computes. Time spent waiting on a tool call does not count.

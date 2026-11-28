@@ -16,7 +16,7 @@ import { ConfirmDialog } from "../../../ui/Dialog";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { PageBar } from "../../../product/ui/PageBar";
-import { RunTab, runLinkClient } from "../../crew";
+import { RunTab, runLinkClient, useCrewFlag } from "../../crew";
 import { PullCode } from "./PullCode";
 import { PullConversation } from "./PullConversation";
 import { PullGuide } from "./PullGuide";
@@ -80,9 +80,9 @@ export function PullDetail({
   const [mergeMenu, setMergeMenu] = useState<{ x: number; y: number } | null>(null);
   const loadedAt = useMemo(() => (detail.data ? Date.now() : null), [detail.data]);
   const [tab, setTab] = useState<Tab>("summary");
-  // The Run tab is drawn only when the client says a Crew run made this pull request. The production client says none yet.
-  const runLink = useAsync(`pull-run:${projectId}:${number}:${page}`, (signal) => (page ? runLinkClient().forPull(projectId, number, signal) : Promise.resolve(null)));
-  const runTask = runLink.data?.task ?? null;
+  // The Run tab is drawn only when the client says a Crew run made this pull request; the flag is in the key, so turning it on reads again.
+  const crewPreview = useCrewFlag();
+  const runTask = useAsync(`pull-run:${projectId}:${number}:${page}:${crewPreview}`, (signal) => (page ? runLinkClient().forPull(projectId, number, signal) : Promise.resolve(null))).data?.task ?? null;
   useEffect(() => {
     if (tab === "run" && runTask === null) setTab("summary");
   }, [tab, runTask]);

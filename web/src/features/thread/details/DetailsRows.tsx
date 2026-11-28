@@ -258,7 +258,7 @@ export function LimitsRow({ threadId, engine }: { threadId: string; engine: stri
 function ReportedLimitsRow({ threadId, engine }: { threadId: string; engine: string }) {
   const limits = useAsync(
     `details-limits:${threadId}:${engine}`,
-    (signal, context) => readLimits(limitsKey(engine, threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force }),
+    (signal, context) => readLimits(limitsKey(engine, threadId), (force) => api.threadLimits(threadId, signal, force), { force: context.force, signal }),
     { fresh: true, keepOnManual: true, refreshOn: limitsRefreshOn(topics("limits", `limits:${engine}`), () => limitsKey(engine, threadId)) },
   );
   const checked = useLimitsChecked(limitsKey(engine, threadId), limits);

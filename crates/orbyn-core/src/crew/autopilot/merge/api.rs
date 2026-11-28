@@ -437,8 +437,9 @@ impl Core {
         self.set_crew_autopilot_mode(&ModeScope::Default, mode)
     }
 
-    /// Revert rates by area and engine over the window the risk score reads. With `project` only the merges made for that repository
-    /// are counted; with none, every repository on this device is (the total of the device).
+    /// Revert rates by area and engine over the window the risk score reads, and the reviewer numbers (slice 4g): the same rates for
+    /// each engine whose review lanes read a merge. With `project` only the merges made for that repository are counted; with none,
+    /// every repository on this device is (the total of the device).
     pub fn autopilot_trust(&self, now: i64, project: Option<&str>) -> Result<wire::AutopilotTrust> {
         self.crew_preview_only()?;
         let merges = match project {
@@ -453,6 +454,7 @@ impl Core {
         let mut total = Rate::default();
         let mut areas: BTreeMap<String, Rate> = BTreeMap::new();
         let mut engines: BTreeMap<String, Rate> = BTreeMap::new();
+        let mut reviewers: BTreeMap<String, Rate> = BTreeMap::new();
         for merge in merges.iter().filter(|m| m.merged_unix >= since) {
             let reverted = u32::from(merge.review_state == "reverted");
             let bump = |rate: &mut Rate| {
@@ -464,6 +466,22 @@ impl Core {
                 bump(areas.entry(area.clone()).or_default());
             }
             bump(engines.entry(merge.engine.clone()).or_default());
+            // A reviewer is the engine of a review lane, as `record_merge` wrote the proof. A lane that checks one finding is not
+            // review work, and an engine on two lanes of one merge is one reviewer of that merge, counted once.
+            let mut read: Vec<&str> = Vec::new();
+            for lane in merge.proof["reviewers"].as_array().into_iter().flatten() {
+                if lane["role"].as_str() != Some("review") {
+                    continue;
+                }
+                let Some(engine) = lane["engine"].as_str().filter(|e| !e.is_empty()) else {
+                    continue;
+                };
+                if read.contains(&engine) {
+                    continue;
+                }
+                read.push(engine);
+                bump(reviewers.entry(engine.to_owned()).or_default());
+            }
         }
         let rows = |map: BTreeMap<String, Rate>| {
             let mut rows: Vec<wire::AutopilotRateRow> = map
@@ -478,6 +496,7 @@ impl Core {
         };
         let (areas, more_areas) = rows(areas);
         let (engines, more_engines) = rows(engines);
+        let (reviewers, more_reviewers) = rows(reviewers);
         Ok(wire::AutopilotTrust {
             window_days: u32::try_from(WINDOW_DAYS).unwrap_or(60),
             min_sample: MIN_SAMPLE,
@@ -485,8 +504,9 @@ impl Core {
             total: rate_wire(total),
             areas,
             engines,
+            reviewers,
             autonomy_by_area: true,
-            truncated: more_areas || more_engines,
+            truncated: more_areas || more_engines || more_reviewers,
         })
     }
 

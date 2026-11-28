@@ -66,8 +66,8 @@ interface WorkspaceState {
   refreshProjects(): Promise<void>;
   refreshThreads(projectId: string): Promise<void>;
   refreshThread(id: string): Promise<void>;
-  /** One global list read supplies every project's threads and the scratch threads. */
-  refreshPolledThreads(projectIds: string[]): Promise<void>;
+  /** One global list read supplies every project's threads and the scratch threads; false when it failed. */
+  refreshPolledThreads(projectIds: string[]): Promise<boolean>;
   refreshApprovals(): Promise<void>;
   refreshEngines(): Promise<void>;
   /**
@@ -165,6 +165,12 @@ export function settleSteps(planned: UpdateRunStep[], result: ApplyAllResult): U
       : { ...step, state: "failed", error: ran.message };
   });
 }
+
+/** Approvals expire with their run, and an open thread's stream reads one as it lands: a poll reads them only
+ * while the thread list shows a run to wait on, or one is still on screen to clear. A never-read load is read. */
+export const approvalsToWatch = (threads: Record<string, Thread>, approvals: Loadable<Approval[]>): boolean =>
+  approvals.data === null || approvals.error !== null || approvals.data.length > 0
+  || Object.values(threads).some((thread) => Boolean(thread.active_run));
 
 export const useWorkspace = create<WorkspaceState>((set, get) => ({
   projects: idle(),
@@ -378,7 +384,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
     } catch {
       // Preserve independent project failures and keep scratch on a global-read failure.
       await Promise.all(projectIds.filter((id) => current.get(id)?.()).map((id) => get().refreshThreads(id)));
-      return;
+      return false;
     }
     for (const id of projectIds) {
       if (!current.get(id)?.()) continue;
@@ -399,6 +405,7 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
       const merged = reuseThreads(get().threads, scratch);
       if (merged.changed) set({ threads: merged.threads });
     }
+    return true;
   },
 
   async refreshThread(id) {
@@ -462,17 +469,23 @@ export const useWorkspace = create<WorkspaceState>((set, get) => ({
   },
 
   async refreshAll(options) {
-    const { refreshProjects, refreshApprovals, refreshManaged, refreshUpdates } = get();
+    const { refreshProjects, refreshManaged, refreshUpdates } = get();
     const quick = options?.quick === true;
     // The workspace status names each project's branch, so it starts with the projects.
     const managed = quick ? Promise.resolve() : refreshManaged();
     await refreshProjects();
     const projects = get().projects.data ?? [];
+    // One global read: the per-project lists are a slice of it, so reading them separately
+    // would only repeat the same thread rows on every full load.
+    const threads = get().refreshPolledThreads(projects.map((p) => p.id));
+    // A run known from the last poll is watched at once; otherwise this poll's thread list decides. A list
+    // or catalog read that failed cannot rule a run out, so approvals are read then too.
+    const watching = approvalsToWatch(get().threads, get().approvals);
+    const approvals = watching ? get().refreshApprovals()
+      : threads.then((observed) => !observed || get().projects.error || approvalsToWatch(get().threads, get().approvals) ? get().refreshApprovals() : undefined);
     await Promise.all([
-      // One global read: the per-project lists are a slice of it, so reading them separately
-      // would only repeat the same thread rows on every full load.
-      get().refreshPolledThreads(projects.map((p) => p.id)),
-      refreshApprovals(),
+      threads,
+      approvals,
       managed,
       quick ? Promise.resolve() : refreshUpdates(),
     ]);

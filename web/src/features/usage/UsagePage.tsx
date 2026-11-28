@@ -62,7 +62,7 @@ export function UsagePage() {
   // A refresh dims the figures only if it outlasts the same wait.
   const dimmed = useWaited(usage.pending && usage.data !== null);
   const limits = useAsync(`limits:${metric === "limits"}`, (signal, context) =>
-    metric === "limits" ? readLimits("overview", (force) => api.limits(force, signal), { force: context.force }) : Promise.resolve(null),
+    metric === "limits" ? readLimits("overview", (force) => api.limits(force, signal), { force: context.force, signal }) : Promise.resolve(null),
   { fresh: true, keepOnManual: true, refreshOn: metric === "limits" ? limitsRefreshOn(under("limits"), () => "overview") : undefined },
 );
   const checked = useLimitsChecked("overview", limits);

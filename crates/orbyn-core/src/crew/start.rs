@@ -428,6 +428,9 @@ impl Core {
             &machine.views,
             &thread.project_id,
         )?;
+        // H10: the live-lease check below and the grants it allows are one step with every other
+        // grant, so a member's request cannot slip between them.
+        let _lease_granting = self.crew_lease_grants.lock().await;
         self.refuse_lease_conflict(&brief, &member, now)?;
         // The commit the worker starts from is read once, before anything is stored, and the repository's data classes are
         // read at it: the classes and the worker's base are one commit, and an edit made after this has no effect on the
@@ -637,9 +640,10 @@ impl Core {
         .leases()?
         {
             self.store
-                .add_crew_object(&task.id, &CrewObject::Lease(lease))
+                .add_crew_lease_grant(&task.id, &lease)
                 .map_err(internal)?;
         }
+        drop(_lease_granting);
         // A fix uses up its finding's one only once the start is accepted (routed, and its files granted).
         if let Some(fix) = &links.fix {
             self.store.add_crew_fix(fix).map_err(internal)?;
@@ -858,16 +862,89 @@ impl Core {
             }
             _ => None,
         };
-        let thread = self
+        // Issue #436: a brief that writes gets a worktree of its own, made before the worker's
+        // thread so a change in the lead's checkout is not the worker's. A read-only brief keeps
+        // the lead's checkout, and a correction review keeps the checkout it recorded.
+        let worktree = match (self.config.crew_writer_worktrees, &correction_subject) {
+            (true, None) => self.crew_writer_worktree(lead, brief, member, base).await?,
+            _ => None,
+        };
+        let checkout = worktree
+            .as_ref()
+            .map(|worktree| worktree.worktree.path.as_str());
+        // The run records the worktree's own base, so the verifier reads the commit the worker
+        // began at, and its own checkout, so it reads the files the worker wrote.
+        let recorded_base = worktree
+            .as_ref()
+            .map_or(base, |worktree| Some(worktree.worktree.base.as_str()));
+        let thread = match self
             .attach_crew_worker_at(
                 &lead.id,
                 &task,
                 brief.id.as_str(),
-                base,
+                recorded_base,
                 correction_subject.as_deref(),
+                checkout,
             )
-            .await?;
+            .await
+        {
+            Ok(thread) => thread,
+            Err(error) => {
+                // A worker that never started leaves no checkout behind, unless it was an existing one:
+                // the member's own checkout keeps what it already held. A checkout this start made goes
+                // only once the worker is confirmed stopped: a run that may still be live in it keeps
+                // its folder, and the start says so instead of pulling the files out from under it.
+                if let Some(worktree) = &worktree
+                    && worktree.created
+                {
+                    if !self.worker_confirmed_stopped(brief.id.as_str()) {
+                        let path = &worktree.worktree.path;
+                        tracing::warn!(%path, "keeping a crew writer's worktree: its worker did not stop");
+                        return Err(CrewError::new(
+                            ErrorCode::InvalidTransition,
+                            format!(
+                                "{} The worker did not stop, so its checkout was kept at {path}.",
+                                error.message
+                            ),
+                        ));
+                    }
+                    self.discard_crew_worktree(lead, std::path::Path::new(&worktree.worktree.path))
+                        .await;
+                }
+                return Err(error);
+            }
+        };
         Ok(json!({ "thread": thread.id, "member": member }))
+    }
+
+    /// Whether a task's worker is confirmed gone, by the rule a stop confirms with: no run is left,
+    /// or its thread has no turn running and nothing queued. A checkout this start made is removed
+    /// only when this says so, so a worker that could not be stopped keeps the folder it runs in.
+    pub(super) fn worker_confirmed_stopped(&self, task_id: &str) -> bool {
+        let run = match self.store.crew_run(task_id) {
+            Ok(run) => run,
+            Err(error) => {
+                tracing::warn!(%error, "could not read the run of a crew task to confirm its worker stopped");
+                return false;
+            }
+        };
+        let Some(thread_id) = run.and_then(|run| run.worker_thread_id) else {
+            return true;
+        };
+        match self.store.thread(&thread_id) {
+            Err(crate::error::CoreError::NotFound(_)) => true,
+            Ok(thread) => {
+                thread.active_run.is_none()
+                    && self
+                        .store
+                        .list_queue(&thread_id)
+                        .is_ok_and(|queued| queued.is_empty())
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not read a crew worker's thread to confirm it stopped");
+                false
+            }
+        }
     }
 
     async fn attach_crew_worker_at(
@@ -877,9 +954,16 @@ impl Core {
         task_id: &str,
         base: Option<&str>,
         correction_subject: Option<&str>,
+        checkout: Option<&str>,
     ) -> Result<orbyn_contracts::Thread, CrewError> {
         let Some(subject) = correction_subject else {
-            return self.attach_crew_worker(lead_id, task, task_id, base).await;
+            return match checkout {
+                Some(checkout) => {
+                    self.attach_crew_worker_selected(lead_id, task, task_id, base, Some(checkout))
+                        .await
+                }
+                None => self.attach_crew_worker(lead_id, task, task_id, base).await,
+            };
         };
         let selected = self
             .correction_review_thread(&self.store.thread(lead_id).map_err(internal)?, subject)

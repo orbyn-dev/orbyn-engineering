@@ -229,6 +229,41 @@ async fn a_schedule_firing_starts_one_run_and_the_same_bucket_starts_nothing_new
 }
 
 #[tokio::test]
+async fn a_schedule_whose_interval_grows_fires_in_its_new_window() {
+    let w = world(true, good()).await;
+    let id = schedule_crew(&w, "Six hourly", 6, true).await;
+    w.core.crew_background_listeners_tick(NOW).await.unwrap();
+    let run = until_run(&w, &id, wire::BackgroundRunState::Running).await;
+    let task = task_of(&w, &run);
+    w.until_state(&task, "passed").await;
+    until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
+
+    // The person lengthens the interval from six hours to a day. The six-hour firing left a claim the new interval must
+    // not be measured against: two days on, its own window has passed and the crew fires again.
+    let update: wire::BackgroundCrewUpdate = serde_json::from_value(json!({
+        "trigger": { "kind": "schedule", "every_hours": 24 }
+    }))
+    .unwrap();
+    w.core.background_update(&id, &update).await.unwrap();
+    w.core
+        .crew_background_listeners_tick(NOW + 2 * 24 * 3600)
+        .await
+        .unwrap();
+    assert_eq!(
+        runs_of(&w, &id).len(),
+        2,
+        "the new interval's window fires: a longer interval must not be held back by the shorter one's claim"
+    );
+
+    // The rest of the new window is inert: one firing per window.
+    w.core
+        .crew_background_listeners_tick(NOW + 2 * 24 * 3600 + 60)
+        .await
+        .unwrap();
+    assert_eq!(runs_of(&w, &id).len(), 2);
+}
+
+#[tokio::test]
 async fn a_failed_check_at_the_watched_head_starts_one_run_and_a_repeat_starts_nothing_new() {
     let w = world(true, hung()).await;
     let branch = main_branch(&w.repo).await;
@@ -551,23 +586,23 @@ async fn a_stop_before_a_firing_claims_and_starts_nothing() {
 }
 
 #[tokio::test]
-async fn a_clock_that_moves_back_does_not_fire_an_earlier_bucket() {
+async fn a_clock_that_moves_back_does_not_fire_an_earlier_window() {
     let w = world(true, hung()).await;
     let id = schedule_crew(&w, "Hourly", 1, true).await;
     w.core.crew_background_listeners_tick(NOW).await.unwrap();
     assert_eq!(runs_of(&w, &id).len(), 1);
-    let bucket = NOW.div_euclid(3600);
+    let start = NOW.div_euclid(3600) * 3600;
     assert_eq!(
         w.core.store.latest_schedule_bucket(&id).unwrap(),
-        Some(bucket)
+        Some(start)
     );
-    // An earlier bucket the crew never claimed (it was created after it) is still never fired.
+    // An earlier window the crew never claimed (it was created after it) is still never fired.
     w.core
         .crew_background_listeners_tick(NOW - 3 * 3600)
         .await
         .unwrap();
     assert_eq!(runs_of(&w, &id).len(), 1);
-    assert_eq!(claims(&w), [format!("schedule:{id}:{bucket}")]);
+    assert_eq!(claims(&w), [format!("schedule:{id}:{start}")]);
     assert_eq!(
         w.core.store.latest_schedule_bucket("missing").unwrap(),
         None
@@ -682,7 +717,7 @@ async fn a_firing_refused_by_capacity_is_held_with_its_event_key() {
 
     // Both firings were refused by review capacity and held, each with its event key.
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
-    let bucket = NOW.div_euclid(3600);
+    let start = NOW.div_euclid(3600) * 3600;
     let mut keys = std::collections::BTreeSet::new();
     for row in &rows {
         assert_eq!(row.kind, PausedKind::Background, "{row:?}");
@@ -696,7 +731,7 @@ async fn a_firing_refused_by_capacity_is_held_with_its_event_key() {
         "one event per head and failing check: {keys:?}"
     );
     assert!(
-        keys.contains(&format!("{sched}:schedule:{bucket}")),
+        keys.contains(&format!("{sched}:schedule:{start}")),
         "{keys:?}"
     );
     assert!(runs_of(&w, &ci).is_empty());

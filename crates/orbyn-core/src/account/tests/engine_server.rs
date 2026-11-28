@@ -44,6 +44,15 @@ struct State {
     /// Session token to device id.
     tokens: BTreeMap<String, String>,
     approval: Option<Value>,
+    /// Approvals this server closed, by id: a second cancel answers 200, as the Engine's does
+    /// (`cancel_approval` reads the row by id and `close` writes the terminal state again).
+    closed: Vec<String>,
+    /// How many approvals a cancel closed. A second cancel of one closed approval adds nothing.
+    closures: usize,
+    /// Path parts, with how many requests are left to lose before the server sees them.
+    drop_next: Vec<(String, usize)>,
+    /// Path parts, with how many requests are left to do and then lose the answer to.
+    lose_answer: Vec<(String, usize)>,
     zones: BTreeMap<String, Zone>,
     envelopes: Vec<(String, Value)>,
     offline: bool,
@@ -134,6 +143,62 @@ impl Server {
 
     pub fn set_offline(&self, offline: bool) {
         self.lock().offline = offline;
+    }
+
+    /// The next `times` requests to a path that contains `part` never reach the server: they are
+    /// answered as a lost network would be, and nothing is done. They are logged, because the
+    /// client did make them.
+    pub fn drop_next(&self, part: &str, times: usize) {
+        self.lock().drop_next.push((part.to_owned(), times));
+    }
+
+    /// The next `times` requests to a path that contains `part` are done, and then their answer is
+    /// lost: the client is told the network failed, and only a second request finds out what
+    /// happened. This is the ambiguous failure the Engine cannot rule out for a timeout.
+    pub fn lose_next_answer(&self, part: &str, times: usize) {
+        self.lock().lose_answer.push((part.to_owned(), times));
+    }
+
+    /// How many approvals a cancel closed. A cancel of an approval this server already closed is
+    /// answered 200 and adds nothing, so this counts transitions, not requests.
+    pub fn closures(&self) -> usize {
+        self.lock().closures
+    }
+
+    /// Whether this request is one to lose before it is seen, taking one off the count.
+    fn drop_this(&self, request: &dc::Request) -> bool {
+        let mut state = self.lock();
+        let (path, _) = request
+            .path
+            .split_once('?')
+            .unwrap_or((request.path.as_str(), ""));
+        if !Self::take_one(&mut state.drop_next, path) {
+            return false;
+        }
+        // It was made, so it counts as a call.
+        state.log.push(format!("{:?} {path}", request.method));
+        true
+    }
+
+    /// Whether the answer to this request is lost after the server did it.
+    fn lose_this_answer(&self, request: &dc::Request) -> bool {
+        let mut state = self.lock();
+        let (path, _) = request
+            .path
+            .split_once('?')
+            .unwrap_or((request.path.as_str(), ""));
+        Self::take_one(&mut state.lose_answer, path)
+    }
+
+    fn take_one(counts: &mut [(String, usize)], path: &str) -> bool {
+        let Some((_, left)) = counts
+            .iter_mut()
+            .find(|(part, left)| *left > 0 && path.contains(part.as_str()))
+        else {
+            return false;
+        };
+        *left -= 1;
+        true
     }
 
     /// Every request whose path contains `part` is answered `status` `code`, until cleared.
@@ -303,7 +368,17 @@ impl Server {
                     .as_ref()
                     .is_some_and(|a| a["id"] == json!(id));
                 if !live {
-                    return failure(410, "approval_expired");
+                    // An approval this server closed is kept, and closing it again is answered
+                    // 200, as the Engine does: its `cancel_approval` reads the row by id and its
+                    // `close` writes the terminal state again. Every other step on it is over.
+                    let repeated_cancel = verb == "Post"
+                        && matches!(rest, ["cancel"])
+                        && state.closed.iter().any(|closed| closed == id);
+                    return if repeated_cancel {
+                        answer(200, &json!({}))
+                    } else {
+                        failure(410, "approval_expired")
+                    };
                 }
                 let step = rest.first().copied();
                 if let ("Get", None) = (verb, step) {
@@ -349,7 +424,11 @@ impl Server {
                         }
                         state.approval = None;
                     }
-                    Some("cancel") => state.approval = None,
+                    Some("cancel") => {
+                        state.approval = None;
+                        state.closed.push((*id).to_owned());
+                        state.closures += 1;
+                    }
                     _ => return failure(404, "not_found"),
                 }
                 answer(200, &json!({}))
@@ -500,7 +579,19 @@ impl dc::DeviceApi for Wire {
         &self,
         request: dc::Request,
     ) -> impl Future<Output = Result<dc::Response, dc::DeviceError>> + Send {
-        let outcome = self.0.handle(&request);
+        // A network that loses the request before the server sees it, and one that loses the
+        // answer after the server did it, are different failures with the same error.
+        let dropped = self.0.drop_this(&request);
+        let outcome = if dropped {
+            Err(dc::DeviceError::Transport)
+        } else {
+            self.0.handle(&request)
+        };
+        let outcome = if self.0.lose_this_answer(&request) {
+            Err(dc::DeviceError::Transport)
+        } else {
+            outcome
+        };
         let server = self.0.clone();
         let stalled = server
             .stall

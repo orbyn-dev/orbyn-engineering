@@ -32,11 +32,14 @@ function useOwnWorktreeLocked(threadId: string): boolean {
  * A file of the thread's own checkout, named by a link in a message or by the thread's worktree in the
  * left bar. The path may be one inside the checkout or a full path outside it, which only reads.
  */
-function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId: string; path: string; locked?: boolean }) {
+function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId: FileTabId; path: string; locked?: boolean }) {
   const cwd = useWorkspace((state) => state.threads[threadId]?.cwd);
+  const projectId = useWorkspace((state) => state.threads[threadId]?.project_id ?? "");
   const own = useOwnWorktreeLocked(threadId);
   const reveal = useUi((state) => state.fileReveal);
   const consume = useUi((state) => state.consumeFileReveal);
+  const revealFile = useUi((state) => state.revealFile);
+  const closeTab = useUi((state) => state.closePanelTab);
   // A link that named a line says it once; the line stays for this open.
   const [line, setLine] = useState<number | null>(null);
   useEffect(() => {
@@ -47,6 +50,18 @@ function ThreadFile({ threadId, tabId, path, locked }: { threadId: string; tabId
   }, [reveal, threadId, path, consume]);
   const resolved = useResolvedThreadPath(threadId, cwd ? { threadId, cwd, path, basis: "thread", nonce: 0 } : null);
   const full = fullPathOf(path);
+  // A task-folder reference can name another repository of a multi-repository thread. Then its coordinates are that
+  // repository's, and the file is that repository's tab, whose read carries the `repo_id` (the primary repository's
+  // is the thread's own tab, as it always was).
+  const owner = resolved.value?.repo_id;
+  const owned = resolved.value?.checkout_path;
+  const elsewhere = owner !== undefined && owner !== projectId && !!owned;
+  useEffect(() => {
+    if (!elsewhere || owner === undefined || !owned) return;
+    revealFile(owned, line, { threadId, cwd: cwd ?? "" }, owner);
+    closeTab(tabId);
+  }, [elsewhere, owner, owned, line, threadId, cwd, revealFile, closeTab, tabId]);
+  if (elsewhere) return <Loading label="Opening file" rows={6} />;
   if (resolved.value?.checkout_path) return <Viewer threadId={threadId} tabId={tabId} path={resolved.value.checkout_path} line={line} locked={locked ?? own} />;
   if (resolved.value && isFullPath(full)) return <OutsideFileViewer threadId={threadId} path={full} />;
   if (resolved.value || resolved.error) return <Empty title={resolved.error?.message ?? "That path is outside this checkout."} />;
@@ -144,7 +159,7 @@ function ReadOnlyFile({ threadId, tabId, target, worktree }: { threadId: string 
 }
 
 /** A file of the explorer's tree. In the worktree this thread runs in it is the thread's own file, with everything that has. */
-function ExplorerFile({ threadId, tabId, target }: { threadId: string | null; tabId: string; target: ExplorerTarget }) {
+function ExplorerFile({ threadId, tabId, target }: { threadId: string | null; tabId: FileTabId; target: ExplorerTarget }) {
   const kept = useExplorer((state) => state.worktrees[target.projectId]);
   const cwd = useWorkspace((state) => (threadId ? state.threads[threadId]?.cwd : undefined));
   useEffect(() => {
