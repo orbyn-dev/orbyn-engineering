@@ -93,6 +93,9 @@ describe("the thread pull request calls and repo_id", () => {
     await pullsApi.unlink("t 1", 4);
     await pullsApi.threadReview("t 1", 4, "approve", "ok");
     await pullsApi.threadMerge("t 1", 4, { method: "squash", auto: false, delete_branch: false, strip_credits: false });
+    await pullsApi.watches("t 1");
+    await pullsApi.watch("t 1", 4);
+    await pullsApi.unwatch("t 1", 4);
     expect(seen()).toEqual([
       ["GET", "/api/threads/t%201/pulls"],
       ["POST", "/api/threads/t%201/pulls/refresh"],
@@ -100,6 +103,9 @@ describe("the thread pull request calls and repo_id", () => {
       ["DELETE", "/api/threads/t%201/pulls/4"],
       ["POST", "/api/threads/t%201/pulls/4/review"],
       ["POST", "/api/threads/t%201/pulls/4/merge"],
+      ["GET", "/api/threads/t%201/watches"],
+      ["POST", "/api/threads/t%201/pulls/4/watch"],
+      ["DELETE", "/api/threads/t%201/pulls/4/watch"],
     ]);
   });
 
@@ -111,6 +117,9 @@ describe("the thread pull request calls and repo_id", () => {
     await pullsApi.unlink("t", 4, "r/1");
     await pullsApi.threadReview("t", 4, "approve", "", "r/1");
     await pullsApi.threadMerge("t", 4, { method: "merge", auto: false, delete_branch: false, strip_credits: false, remove_agent_credits: true }, "r/1");
+    await pullsApi.watches("t", undefined, "r/1");
+    await pullsApi.watch("t", 4, "r/1");
+    await pullsApi.unwatch("t", 4, "r/1");
     expect(seen().map(([, url]) => url)).toEqual([
       "/api/threads/t/pulls?repo_id=r%2F1",
       "/api/threads/t/pulls/refresh?repo_id=r%2F1",
@@ -118,6 +127,9 @@ describe("the thread pull request calls and repo_id", () => {
       "/api/threads/t/pulls/4?repo_id=r%2F1",
       "/api/threads/t/pulls/4/review?repo_id=r%2F1",
       "/api/threads/t/pulls/4/merge?repo_id=r%2F1",
+      "/api/threads/t/watches?repo_id=r%2F1",
+      "/api/threads/t/pulls/4/watch?repo_id=r%2F1",
+      "/api/threads/t/pulls/4/watch?repo_id=r%2F1",
     ]);
   });
 });

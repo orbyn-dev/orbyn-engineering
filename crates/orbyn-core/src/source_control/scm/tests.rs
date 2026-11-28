@@ -97,6 +97,174 @@ fn watch_news_skips_your_own_comments() {
 }
 
 #[test]
+fn a_watch_wake_quotes_repository_context_as_data() {
+    let repo = "repo\"\nnot-a-new-field";
+    let cwd = "C:\\work tree\\\"quoted\"\nnot-a-command";
+    let prompt = super::watch::wake_prompt(12, repo, cwd, &["- A check failed.".into()]);
+    let context = prompt
+        .lines()
+        .find_map(|line| line.strip_prefix("Repository: "))
+        .expect("the wake identifies its repository");
+    let context: serde_json::Value = serde_json::from_str(context).unwrap();
+    assert_eq!(context["id"], repo);
+    assert_eq!(context["worktree"], cwd);
+    assert_eq!(prompt.lines().last(), Some("- A check failed."));
+    assert!(!prompt.lines().any(|line| line == "not-a-command"));
+}
+
+#[tokio::test]
+async fn watch_wakes_for_the_same_number_identify_each_scoped_repository() {
+    use crate::source_control::forge::{Forge, with_crew_fixture};
+    use crate::store::thread_repos::ThreadRepoRecord;
+    use crate::store::{Admission, NewProject, NewThread};
+    use crate::testing::{TempDir, run_git};
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    let dir = TempDir::new();
+    let mut config =
+        crate::app::CoreConfig::new(dir.path().join("data"), "http://127.0.0.1:1".into());
+    config.engines.lookup_latest = false;
+    config.multi_repo = true;
+    let core = Core::open(config).unwrap();
+    let folders: Vec<_> = [
+        ("primary worktree", "primary"),
+        ("secondary worktree", "secondary"),
+    ]
+    .into_iter()
+    .map(|(name, remote)| {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        run_git(&path, &["init", "-q", "-b", "main"]);
+        run_git(
+            &path,
+            &[
+                "remote",
+                "add",
+                "origin",
+                &format!("https://github.com/example/{remote}.git"),
+            ],
+        );
+        crate::util::canonicalize(&path).unwrap()
+    })
+    .collect();
+    let primary = folders[0].to_string_lossy().into_owned();
+    let project = core
+        .store
+        .add_project(NewProject {
+            path: &primary,
+            name: "primary",
+            is_git: true,
+            managed: false,
+            scratch: false,
+        })
+        .unwrap()
+        .id;
+    core.store.trust_project(&project, "test").unwrap();
+    let thread = core
+        .store
+        .create_thread(NewThread {
+            project_id: project.clone(),
+            title: "watch both".into(),
+            engine: "codex".into(),
+            model: None,
+            cwd: primary,
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap();
+    // Keep wakes queued without launching any engine, even if a workspace becomes available.
+    core.store
+        .admit_run(Admission {
+            thread_id: &thread.id,
+            prompt: "busy",
+            actor: "test",
+        })
+        .unwrap();
+    let repos = [project, "secondary-repository".into()];
+    for (position, (repo, folder)) in repos.iter().zip(&folders).enumerate() {
+        core.store
+            .thread_repo_insert(
+                &ThreadRepoRecord {
+                    thread_id: thread.id.clone(),
+                    repo_id: repo.clone(),
+                    position: u32::try_from(position).unwrap(),
+                    name: format!("repository {position}"),
+                    branch: "main".into(),
+                    base_branch: Some("main".into()),
+                    worktree_path: folder.to_string_lossy().into_owned(),
+                },
+                "2026-11-26T00:00:00Z",
+            )
+            .unwrap();
+        core.store.watch_pull(&thread.id, repo, 12).unwrap();
+    }
+    let reads = Arc::new(Mutex::new(Vec::new()));
+    let seen = reads.clone();
+    let fixture = Arc::new(move |forge, cwd: &std::path::Path, args: &[&str]| {
+        assert_eq!(forge, Forge::GitHub);
+        seen.lock().unwrap().push((
+            cwd.to_owned(),
+            args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>(),
+        ));
+        let answer = match args {
+            ["pr", "view", "12", ..] => json!({
+                "number": 12, "state": "OPEN", "title": "same number", "url": "https://example.test/pull/12",
+                "headRefName": "work", "baseRefName": "main", "comments": [], "reviews": [],
+            }),
+            ["pr", "checks", "12", ..] => json!([{"name":"check", "state":"FAILURE"}]),
+            [
+                "api",
+                "--paginate",
+                "repos/{owner}/{repo}/issues/12/comments",
+            ] => json!([]),
+            ["api", "graphql", ..] => {
+                json!({"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}})
+            }
+            ["api", "user"] => json!({"login":"me"}),
+            _ => panic!("unexpected forge read: {args:?}"),
+        };
+        Ok(answer.to_string())
+    });
+    with_crew_fixture(fixture, async {
+        for watch in core.store.pull_watches(Some(&thread.id)).unwrap() {
+            core.check_watch(&watch).await.unwrap();
+        }
+    })
+    .await;
+    let queue = core.store.list_queue(&thread.id).unwrap();
+    assert_eq!(queue.len(), 2, "both repositories reported the same news");
+    let reads = reads.lock().unwrap();
+    for folder in &folders {
+        assert_eq!(
+            reads.iter().filter(|(cwd, _)| cwd == folder).count(),
+            6,
+            "each watch keeps its own worktree and adds no identity-only forge read"
+        );
+    }
+    let contexts: Vec<serde_json::Value> = queue
+        .iter()
+        .map(|message| {
+            assert!(message.prompt.ends_with("- A check failed."));
+            let context = message
+                .prompt
+                .lines()
+                .find_map(|line| line.strip_prefix("Repository: "))
+                .expect("queued wake must identify the repository actually read");
+            serde_json::from_str(context).unwrap()
+        })
+        .collect();
+    for (repo, folder) in repos.iter().zip(&folders) {
+        assert!(contexts.iter().any(|context| context["id"] == *repo
+            && context["worktree"] == folder.to_string_lossy().as_ref()));
+    }
+    assert_ne!(queue[0].prompt, queue[1].prompt);
+}
+
+#[test]
 fn ids_for_api_paths_stay_plain() {
     assert!(check_opaque("PRRT_kw-1=").is_ok());
     assert!(check_opaque("1/../2").is_err());

@@ -466,10 +466,12 @@ navigation coordinates.
   primary and the repository row id for the others, as everywhere else. `GET /api/projects/{id}/pulls/{number}/linked-threads` matches
   the project's own repository only, so another repository's #12 never lists a thread.
 - **`repo_id` on the thread pull request routes.** `?repo_id=` on `GET` and `POST /api/threads/{id}/pulls`, `POST .../pulls/refresh`,
-  `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`. Absent means the primary repository, so every
-  older client is unchanged. Unknown, untrusted or flag-off repositories are refused as for the Git routes. Watches
-  (`.../pulls/{number}/watch`) stay on the primary repository for now; unlinking a primary link drops its watch, any other link does not.
-  The watch pass refreshes the open links of each repository of a thread.
+  `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`, and on the watches (`GET .../watches`,
+  `POST`/`DELETE .../pulls/{number}/watch`). Absent means the primary repository, so every older client is unchanged. Unknown, untrusted or
+  flag-off repositories are refused as for the Git routes. A watch is kept by (thread, repository, number) (migration 92), so two
+  repositories can both watch a #12; every watch made before it moved to the thread's own project, which is its primary repository.
+  Unlinking a link drops that repository's watch. The watch pass refreshes the open links of each repository of a thread and reads each
+  watch in its own repository's worktree.
 - **`ThreadRepo.pull_request`.** The repository's open pull request with the highest number, else the latest one it has; absent when none.
 - **`FileDiff.repo_id`.** Set on a thread diff of a multi-repository thread: the repository asked for, else the primary. Absent for an
   ordinary thread.
@@ -488,7 +490,9 @@ Web side of pull requests and removal (mock-tested, not run against a live `orby
 - **Remove from thread.** A button on each non-primary row of the Repos popover, behind a confirm dialog; the service's `400` message is shown as written.
 - **Diff.** The service answers one repository per read, so the Changes panel still reads once per trusted repository; `FileDiff.repo_id` is not needed to group.
 - **Merge dialog.** The "Remove agent credits" switch is the person's choice for that merge and is sent as `remove_agent_credits` (the account setting when untouched).
-- **Not done.** A pull request screen per repository (the pulls page is keyed by project, not repository) and watches for a non-primary repository.
+- **Not done.** A pull request screen per repository (the pulls page is keyed by project, not repository), and a Watch control for
+  another repository's pull request: the service keeps that watch (`repo_id` on the watch routes), but the header PR chip and its Watch
+  switch read the primary repository only (the `multirepo-pr-*` frames cover the other repository's state word, Review and Merge).
 
 ## Not in the beta
 

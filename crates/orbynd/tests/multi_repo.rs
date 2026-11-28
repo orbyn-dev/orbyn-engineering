@@ -338,3 +338,108 @@ async fn a_thread_without_the_projects_folder_names_its_first_repository() {
         "{second_diff}"
     );
 }
+#[tokio::test]
+async fn a_watch_names_the_repository_its_pull_request_is_in() {
+    let dir = TempDir::new();
+    let service = Service::start(&dir.path().join("data"), options());
+    let project = service.project(&dir.path().join("project"), true).await;
+    seed_repo(
+        &dir.path().join("library/repo/project"),
+        &[("base.txt", "base\n")],
+    );
+    let other = seed_repo(&dir.path().join("other"), &[("a.txt", "one\n")]);
+    let other_id = add_trusted(&service, &project, &other).await;
+    let (status, thread) = service
+        .send(
+            &format!("/api/projects/{project}/repo-threads"),
+            json!({
+                "repos": [
+                    { "repo_id": project, "base_branch": "main" },
+                    { "repo_id": other_id, "base_branch": "main" },
+                ],
+                "engine": "codex",
+                "model": null,
+                "permission_mode": "supervised",
+                "message": null,
+                "branch_name": null,
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{thread}");
+    let thread_id = thread["id"].as_str().unwrap().to_owned();
+    // Both repositories have a #12: each watch names its own repository.
+    let (status, primary) = service
+        .send(
+            &format!("/api/threads/{thread_id}/pulls/12/watch"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 201, "{primary}");
+    assert_eq!(primary["repo_id"], project);
+    let (status, second) = service
+        .send(
+            &format!("/api/threads/{thread_id}/pulls/12/watch?repo_id={other_id}"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 201, "{second}");
+    assert_eq!(second["repo_id"], other_id);
+    // The watches read names one repository; no repo_id is the primary one.
+    let watches = service
+        .json(&format!("/api/threads/{thread_id}/watches"))
+        .await;
+    assert_eq!(watches.as_array().unwrap().len(), 1);
+    assert_eq!(watches[0]["repo_id"], project);
+    assert_eq!(watches[0]["number"], 12);
+    let watches = service
+        .json(&format!(
+            "/api/threads/{thread_id}/watches?repo_id={other_id}"
+        ))
+        .await;
+    assert_eq!(watches.as_array().unwrap().len(), 1);
+    assert_eq!(watches[0]["repo_id"], other_id);
+    // An unknown repository is not found, and an ordinary thread has no repository to name.
+    let missing = service
+        .get(&format!(
+            "/api/threads/{thread_id}/watches?repo_id=no-such-repo"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status().as_u16(), 404);
+    let plain = service.thread(&project, "codex").await;
+    let (status, _) = service
+        .send(
+            &format!("/api/threads/{plain}/pulls/12/watch?repo_id={project}"),
+            json!({}),
+        )
+        .await;
+    assert_eq!(status, 404, "an ordinary thread has no repository to name");
+    let (status, ordinary) = service
+        .send(&format!("/api/threads/{plain}/pulls/12/watch"), json!({}))
+        .await;
+    assert_eq!(status, 201, "{ordinary}");
+    assert_eq!(ordinary["repo_id"], project);
+    // Ending the second repository's watch leaves the primary's.
+    let response = service
+        .client
+        .delete(format!(
+            "{}/api/threads/{thread_id}/pulls/12/watch?repo_id={other_id}",
+            service.url
+        ))
+        .bearer_auth(&service.token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 204);
+    let watches = service
+        .json(&format!(
+            "/api/threads/{thread_id}/watches?repo_id={other_id}"
+        ))
+        .await;
+    assert!(watches.as_array().unwrap().is_empty());
+    let watches = service
+        .json(&format!("/api/threads/{thread_id}/watches"))
+        .await;
+    assert_eq!(watches.as_array().unwrap().len(), 1);
+}

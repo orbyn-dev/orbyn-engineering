@@ -80,6 +80,14 @@ impl Core {
         Ok(thread)
     }
 
+    /// As `scm_thread`, with `cwd` at the worktree of `repo_id`. The thread's own project is its primary repository,
+    /// the one no `repo_id` names, so a pull request keyed by either is read in the worktree it always was.
+    async fn scm_thread_in(&self, id: &str, repo_id: &str) -> Result<Thread> {
+        let primary = self.store.thread(id)?.project_id;
+        let scope = (primary != repo_id).then(|| repo_id.to_owned());
+        crate::in_repo(scope, async { self.scm_thread(id) }).await
+    }
+
     /// Git writes would race an engine in the same folder.
     pub(crate) fn scm_idle(&self, id: &str) -> Result<Thread> {
         let thread = self.scm_thread(id)?;

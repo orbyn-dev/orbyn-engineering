@@ -1207,6 +1207,91 @@ async fn each_repository_of_a_thread_shows_its_own_pull_request_even_with_the_sa
 }
 
 #[tokio::test]
+async fn a_watch_is_kept_per_repository_of_a_multi_repository_thread() {
+    let dir = TempDir::new();
+    let (core, project, other_id, _main, _other) = two_trusted(&dir).await;
+    let thread = core
+        .start_repo_thread(
+            &project,
+            start_input(&[(&project, "main"), (&other_id, "main")]),
+        )
+        .await
+        .unwrap();
+    // No repository named watches the primary repository, as every pull request call reads it.
+    let primary = core.watch_pull(&thread.id, 7).unwrap();
+    assert_eq!(primary.repo_id, project);
+    assert_eq!(primary.number, 7);
+    // The second repository's #7 is its own watch, told apart from the primary's.
+    let second = crate::in_repo(Some(other_id.clone()), async {
+        core.watch_pull(&thread.id, 7)
+    })
+    .await
+    .unwrap();
+    assert_eq!(second.repo_id, other_id);
+    let left = |scope: Option<String>| {
+        let core = core.clone();
+        let id = thread.id.clone();
+        async move {
+            crate::in_repo(scope, async { core.thread_watches(&id) })
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|watch| (watch.repo_id, watch.number))
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(left(None).await, [(project.clone(), 7)]);
+    assert_eq!(left(Some(other_id.clone())).await, [(other_id.clone(), 7)]);
+    // Ending one repository's watch leaves the other's.
+    crate::in_repo(Some(other_id.clone()), async {
+        core.unwatch_pull(&thread.id, 7)
+    })
+    .await
+    .unwrap();
+    assert_eq!(left(None).await, [(project.clone(), 7)]);
+    assert!(left(Some(other_id.clone())).await.is_empty());
+    // A repository that is not the thread's is not found, for a write and for a read alike.
+    let refused = crate::in_repo(Some("no-such-repo".to_owned()), async {
+        core.watch_pull(&thread.id, 8)
+    })
+    .await;
+    assert!(
+        matches!(refused, Err(CoreError::NotFound(_))),
+        "{refused:?}"
+    );
+    let unread = crate::in_repo(Some("no-such-repo".to_owned()), async {
+        core.thread_watches(&thread.id)
+    })
+    .await;
+    assert!(matches!(unread, Err(CoreError::NotFound(_))), "{unread:?}");
+    // An ordinary thread has one repository, its project, and no other to name.
+    let plain = core
+        .store
+        .create_thread(crate::store::NewThread {
+            project_id: project.clone(),
+            title: "p".into(),
+            engine: "claude".into(),
+            model: None,
+            cwd: path_text(&dir.path().join("main")),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap()
+        .id;
+    let watched = core.watch_pull(&plain, 3).unwrap();
+    assert_eq!(watched.repo_id, project);
+    assert_eq!(core.thread_watches(&plain).unwrap().len(), 1);
+    let refused = crate::in_repo(Some(project.clone()), async { core.watch_pull(&plain, 4) }).await;
+    assert!(
+        matches!(refused, Err(CoreError::NotFound(_))),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
 async fn deleting_a_repo_thread_removes_clean_worktrees_keeps_branches_and_keeps_a_dirty_one() {
     let dir = TempDir::new();
     let (core, project, other_id, main, other) = two_trusted(&dir).await;
