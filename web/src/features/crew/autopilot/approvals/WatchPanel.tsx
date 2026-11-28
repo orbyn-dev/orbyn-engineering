@@ -53,7 +53,7 @@ export interface WatchPanelProps {
   onToggle?(crew: WireCrew, enabled: boolean): void;
   /** Opens the Needs you inbox, where the row this change raised waits. */
   onOpenNeeds?(): void;
-  /** Opens the run the newest change started, when the read holds that run. */
+  /** Opens the newest run the watch's own runs read holds; a change row carries no run id, so the banner's change only names it. */
   onOpenRun?(): void;
 }
 

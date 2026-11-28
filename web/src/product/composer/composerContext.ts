@@ -51,7 +51,7 @@ export interface ReviewChip extends ChipBase {
   endLine?: number;
   /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
   repoId?: string;
-  /** That repository's name, so the comment says where the file is; set only with `repoId`. */
+  /** The name of that repository, or of the thread's primary repository, so the comment says where the file is. */
   repoName?: string;
   /** File annotations belong to the displayed source snapshot, not a later read. */
   sourceRevision?: string;

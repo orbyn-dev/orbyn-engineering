@@ -89,6 +89,13 @@
 }
 .task-actions { gap: 6px; }
 .task-delete { margin-right: auto; color: var(--color-danger); }
+
+/* Target size (WCAG 2.2 AA 2.5.8): this page draws the Settings section's table but outside .settings-page, so its
+   task-name links were 20 px tall. The same hit token gives them the Settings section's box without changing the type. */
+.tasks-page .set-link {
+  min-height: var(--hit);
+  min-width: var(--hit);
+}
 .set-pill.bad { background: var(--color-dangerSoft); color: var(--color-danger); }
 .task-last[data-tone="fail"] { padding: 0 9px; height: 22px; border-radius: var(--radius-pill); background: var(--color-dangerSoft); }
 

@@ -208,6 +208,9 @@
 .cx-apchip.cx-no{background:transparent;box-shadow:inset 0 0 0 1px var(--color-borderStrong);color:var(--color-text)}
 .cx-linkname{appearance:none;background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;text-align:inherit;cursor:pointer}
 .cx-linkname:focus-visible{outline:2px solid var(--color-borderStrong);outline-offset:2px;border-radius:4px}
+/* Target size (WCAG 2.2 AA 2.5.8): the escape log's row titles and the way back these pages carry are inline text links 17
+   to 18 px tall. The same 24 px box as .cx-t10r keeps the label and its line; the negative block margin leaves the row. */
+.cx-linkname{display:inline-flex;align-items:center;min-height:24px;margin-block:-3px}
 .cx-apchip.cx-am{background:var(--color-warnSoft);color:var(--color-warnText);box-shadow:inset 0 0 0 1px var(--color-warnBorder)}
 .cx-apchip.cx-dim{background:transparent;color:var(--color-muted);box-shadow:inset 0 0 0 1px var(--color-borderStrong)}
 .cx-apck{width:16px;height:16px;border-radius:5px;background:var(--color-text);color:var(--color-surface);display:grid;place-items:center;flex:none;margin-top:2px}

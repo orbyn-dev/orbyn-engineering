@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MockApi } from "../../../../mock/api";
+import "../../../app/routeScreens.test-support";
 import { App } from "../../../app/App";
 import { useUi } from "../../../product/state/ui";
 import { installMockFetch } from "../../../test-support";

@@ -183,11 +183,13 @@ describe("the quick refresh", () => {
   });
 
   it("reads projects and approvals but not the Git-backed workspace and update status", async () => {
+    // A pending approval is on screen, which keeps the approvals read going (see idle approval polling).
+    useWorkspace.setState({ approvals: { data: [approval("a")], error: null, loading: false } });
     const spies = stub();
     try {
       await useWorkspace.getState().refreshAll({ quick: true });
       expect(spies.projects).toHaveBeenCalled();
-      expect(spies.approvals).toHaveBeenCalled();
+      expect(spies.approvals).toHaveBeenCalledTimes(1);
       expect(spies.workspace).not.toHaveBeenCalled();
       expect(spies.updates).not.toHaveBeenCalled();
     } finally {
