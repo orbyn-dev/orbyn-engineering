@@ -382,6 +382,37 @@ async fn content_in(
     (status, response.json().await.unwrap_or(Value::Null))
 }
 
+/// One file search of a thread's checkout, for `repo`: absent is the primary repository.
+async fn search_in(
+    service: &Service,
+    thread: &str,
+    query: &str,
+    content: bool,
+    repo: Option<&str>,
+) -> (u16, Value) {
+    let mut request = service
+        .get(&format!("/api/threads/{thread}/files/search"))
+        .query(&[
+            ("q", query),
+            ("content", if content { "true" } else { "false" }),
+        ]);
+    if let Some(repo) = repo {
+        request = request.query(&[("repo_id", repo)]);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
+/// The paths of a search answer, in order.
+fn paths(body: Value) -> Vec<String> {
+    body.as_array()
+        .unwrap()
+        .iter()
+        .map(|hit| hit["path"].as_str().unwrap().to_owned())
+        .collect()
+}
+
 /// The file names of a tree answer, in order; anything but `200` fails here.
 fn names((status, body): (u16, Value)) -> Vec<String> {
     assert_eq!(status, 200, "{body}");
@@ -666,6 +697,91 @@ async fn a_repo_id_names_the_repository_a_file_read_and_write() {
     // Only the repo_id is refused: the ordinary thread's own read is unchanged.
     let (code, _) = content_in(&fixture.service, &plain, "same.png", None).await;
     assert_eq!(code, 200);
+}
+
+/// The command palette's "Go to file" and "Search in project" are one file search of a thread's
+/// checkout (`docs/multi-repo.md`): it takes `repo_id` too, so a multi-repository thread searches
+/// the repository its chip names and never another repository's same-named files.
+#[tokio::test]
+async fn a_repo_id_names_the_repository_a_file_search() {
+    let fixture = repo_thread().await;
+    // A name each worktree alone holds, so an answer says which repository was searched.
+    std::fs::write(
+        fixture.primary_root.join("primary-only.txt"),
+        "in the primary\n",
+    )
+    .unwrap();
+    std::fs::write(fixture.other_root.join("other-only.txt"), "in the other\n").unwrap();
+
+    // No repo_id is the primary repository, and naming it explicitly searches the same worktree.
+    for repo in [None, Some(fixture.project.as_str())] {
+        let (code, found) = search_in(&fixture.service, &fixture.thread, "only", false, repo).await;
+        assert_eq!(code, 200, "{repo:?}: {found}");
+        assert_eq!(paths(found), vec!["primary-only.txt"], "{repo:?}");
+    }
+    // The other repository's file is found only when its repo_id names it.
+    let (code, found) = search_in(
+        &fixture.service,
+        &fixture.thread,
+        "only",
+        false,
+        Some(&fixture.other),
+    )
+    .await;
+    assert_eq!(code, 200, "{found}");
+    assert_eq!(paths(found), vec!["other-only.txt"]);
+
+    // A search of lines follows the same repository: the other worktree holds the text.
+    let (code, found) = search_in(
+        &fixture.service,
+        &fixture.thread,
+        "in the other",
+        true,
+        Some(&fixture.other),
+    )
+    .await;
+    assert_eq!(code, 200, "{found}");
+    assert_eq!(paths(found), vec!["other-only.txt"]);
+    let (code, found) = search_in(
+        &fixture.service,
+        &fixture.thread,
+        "in the other",
+        true,
+        None,
+    )
+    .await;
+    assert_eq!(code, 200, "{found}");
+    let listed = paths(found);
+    assert!(
+        listed.is_empty(),
+        "the primary has no such line: {listed:?}"
+    );
+
+    // A repository that is not the thread's, and any repo_id on an ordinary thread, is not found.
+    let (code, refused) = search_in(
+        &fixture.service,
+        &fixture.thread,
+        "only",
+        false,
+        Some("no-such-repository"),
+    )
+    .await;
+    assert_eq!(code, 404, "{refused}");
+    assert_eq!(refused["code"], "not_found", "{refused}");
+    let plain = fixture.service.thread(&fixture.project, "codex").await;
+    let (code, refused) = search_in(
+        &fixture.service,
+        &plain,
+        "same.png",
+        false,
+        Some(&fixture.project),
+    )
+    .await;
+    assert_eq!(code, 404, "{refused}");
+    // Only the repo_id is refused: the ordinary thread's own search is unchanged.
+    let (code, own) = search_in(&fixture.service, &plain, "same.png", false, None).await;
+    assert_eq!(code, 200, "{own}");
+    assert_eq!(paths(own), vec!["same.png"]);
 }
 
 #[cfg(unix)]

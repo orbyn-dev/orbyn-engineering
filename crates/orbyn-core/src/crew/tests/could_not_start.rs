@@ -6,7 +6,8 @@
 use std::sync::Arc;
 
 use orbyn_contracts::{
-    FlowCellState as State, FlowColumnId as Column, FlowFilter, FlowStage as Stage,
+    FlowCellState as State, FlowColumnId as Column, FlowFilter, FlowStage as Stage, FlowTaskList,
+    FlowTaskRow,
 };
 use serde_json::json;
 
@@ -15,6 +16,14 @@ use super::harness::{Turn, World, brief, key, world};
 use super::review_support::{arc, crew};
 use crate::crew::retry_start::NO_OTHER_ENGINE;
 use crate::error::CoreError;
+
+/// The list's row for `task`, found by id: the read owns the row order, so a test does not.
+fn task_row<'a>(list: &'a FlowTaskList, task: &str) -> &'a FlowTaskRow {
+    list.tasks
+        .iter()
+        .find(|row| row.id == task)
+        .expect("the task's row in its crew's list")
+}
 
 /// A task routed to `alpha` whose worker is running, then moved to `needs_person` before any report: the stored shape of a task
 /// whose start was refused after it was routed.
@@ -42,7 +51,12 @@ fn card_of(w: &World, id: &str) -> orbyn_contracts::FlowCard {
         .core
         .crew_flow_board(&crew, None, None, None, Some("needs_you"), None, page())
         .unwrap();
-    board.columns[0]
+    // The board was asked for one column, but its answer is a list: find the column by name, not place.
+    board
+        .columns
+        .iter()
+        .find(|column| column.column == Column::NeedsYou)
+        .expect("the board's Needs you column")
         .cards
         .iter()
         .find(|c| c.id == id)
@@ -86,7 +100,12 @@ async fn a_route_refusal_is_could_not_start_and_leaves_the_needs_you_filter() {
     );
     assert!(asked.tasks.is_empty());
     let failed = list(FlowFilter::Failed);
-    let row = &failed.tasks[0];
+    assert_eq!(
+        failed.tasks.len(),
+        1,
+        "the refused task is the only failed row"
+    );
+    let row = task_row(&failed, &id);
     assert!(row.could_not_start);
     for stage in [Stage::Route, Stage::Build] {
         let cell = row.cells.iter().find(|c| c.stage == stage).unwrap();
@@ -141,12 +160,9 @@ async fn a_task_waiting_on_a_real_decision_is_unchanged() {
         .crew_flow_tasks(&crew_id, Some("needs_you"), None, None, page())
         .unwrap();
     assert_eq!(asked.counts.needs_you, 1);
-    assert!(!asked.tasks[0].could_not_start);
-    let build = asked.tasks[0]
-        .cells
-        .iter()
-        .find(|c| c.stage == Stage::Build)
-        .unwrap();
+    let row = task_row(&asked, &id);
+    assert!(!row.could_not_start);
+    let build = row.cells.iter().find(|c| c.stage == Stage::Build).unwrap();
     assert_eq!(build.state, State::NeedsYou);
     let board = w
         .core

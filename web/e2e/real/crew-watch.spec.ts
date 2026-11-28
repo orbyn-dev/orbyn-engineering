@@ -24,6 +24,8 @@ import { startProject, type Service } from "./service";
 const WINDOW = { width: 1280, height: 792 };
 const PAGE_READY = 30_000;
 const CHECK_MS = 120_000;
+/** A command that prints its last line and fails, in the shell the host runs watch commands with. */
+const FAILING_COMMAND = process.platform === "win32" ? "echo boom & exit 1" : "sh -c 'echo boom; exit 1'";
 
 let service: Service;
 let projectId: string;
@@ -48,7 +50,7 @@ test("a watch's failing baseline runs its fixed command with no model call, and 
     project_id: projectId,
     name: "Main build",
     template: "fix_failing_ci",
-    trigger: { kind: "watch", command: "sh -c 'echo boom; exit 1'", every_hours: 1, on_failing: "needs_you" },
+    trigger: { kind: "watch", command: FAILING_COMMAND, every_hours: 1, on_failing: "needs_you" },
     budget: { turns: 10, minutes: 30 },
     daily: { runs: 1, turns: 10 },
     utc_offset_minutes: 0,
@@ -91,14 +93,14 @@ test("a watch's failing baseline runs its fixed command with no model call, and 
   const crews = page.getByRole("table", { name: "Background crews" });
   await expect(crews).toBeVisible({ timeout: PAGE_READY });
   const row = crews.getByRole("row").filter({ hasText: "Main build" });
-  await expect(row).toContainText("Watch · no model · sh -c 'echo boom; exit 1'");
+  await expect(row).toContainText(`Watch · no model · ${FAILING_COMMAND}`);
   await expect(row).toContainText("Every 1 hour · raises Needs you");
   await expect(row).toContainText(/Checked .* · exit 1/);
   await row.getByRole("button", { name: "Open the Main build watch" }).click();
   const panel = page.getByRole("region", { name: "Main build watch" });
   await expect(panel.getByRole("heading", { name: "Failing: baseline" })).toBeVisible({ timeout: PAGE_READY });
   await expect(panel.getByText(/A first failing check never raises/)).toBeVisible();
-  await expect(panel.getByText("sh -c 'echo boom; exit 1'", { exact: true })).toBeVisible();
+  await expect(panel.getByText(FAILING_COMMAND, { exact: true })).toBeVisible();
   await expect(panel.getByText("Every 1 hour · no network · 5 minutes at most")).toBeVisible();
   await expect(panel.getByText("Raise Needs you")).toBeVisible();
   await expect(panel.getByText("None. A check makes no model call.")).toBeVisible();

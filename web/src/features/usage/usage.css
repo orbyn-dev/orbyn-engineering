@@ -301,6 +301,14 @@
 .usage-table td:last-child {
   color: var(--color-text);
 }
+/* Target size (WCAG 2.2 AA 2.5.8): the model cell's Set price link was a 19 px inline box. The crew links' 24 px box,
+   with the negative block margin that leaves the row, clears the minimum. */
+.usage-table .text-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin-block: -3px;
+}
 
 /* Limits: a group per engine, a row per window; a quota window only for Codex (usage-claude-windows*, usage-providers*) */
 .usage-body.limits {

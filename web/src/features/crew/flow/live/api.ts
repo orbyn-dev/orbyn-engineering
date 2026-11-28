@@ -5,6 +5,7 @@ import { ApiFailure, request } from "../../../../api/client";
 import type { FlowCrewList } from "../../../../generated/FlowCrewList";
 import type { FlowCrewRow } from "../../../../generated/FlowCrewRow";
 import type { FlowFilter } from "../../../../generated/FlowFilter";
+import type { FlowRunLink } from "../../../../generated/FlowRunLink";
 import type { FlowRunPage } from "../../../../generated/FlowRunPage";
 import type { FlowTaskArtifacts } from "../../../../generated/FlowTaskArtifacts";
 import type { FlowTaskDetail } from "../../../../generated/FlowTaskDetail";
@@ -43,6 +44,13 @@ export function tasksPath(query: TaskQuery): string {
 export const readRun = (id: string, signal?: AbortSignal): Promise<FlowRunPage> =>
   get<FlowRunPage>(`/api/crew/flow/tasks/${encodeURIComponent(id)}/run`, signal);
 
+/**
+ * The Crew task whose run published one project's pull request: what the pull request page's Run tab reads. A `404` means
+ * no Crew task made it (or this service has no such read), and there is no Run tab.
+ */
+export const readRunLink = (project: string, number: number, signal?: AbortSignal): Promise<FlowRunLink> =>
+  get<FlowRunLink>(`/api/crew/flow/run-link?project=${encodeURIComponent(project)}&number=${number}`, signal);
+
 /** One task's checks, the artifacts they named and the change they read, pinned to the commit the task started from. */
 export const readTaskArtifacts = (id: string, signal?: AbortSignal): Promise<FlowTaskArtifacts> =>
   get<FlowTaskArtifacts>(`/api/crew/flow/tasks/${encodeURIComponent(id)}/artifacts`, signal);
@@ -66,5 +74,6 @@ export const flowApi = {
   tasks: (query: TaskQuery, signal?: AbortSignal): Promise<FlowTaskList> => get<FlowTaskList>(tasksPath(query), signal),
   task: (id: string, signal?: AbortSignal): Promise<FlowTaskDetail> => get<FlowTaskDetail>(`/api/crew/flow/tasks/${encodeURIComponent(id)}`, signal),
   run: readRun,
+  runLink: readRunLink,
   artifacts: readTaskArtifacts,
 };

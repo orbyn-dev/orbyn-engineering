@@ -179,6 +179,23 @@ impl Store {
             .collect()
     }
 
+    /// The work task whose forge intent published pull request `number` in the repository at `repo`, if one did. Never a
+    /// match by branch name or title: only the intent Orbyn recorded when it published says a run made a pull request. The
+    /// newest intent wins, so a task that republished its pull request is the one the page shows.
+    pub fn crew_task_for_pull(&self, repo: &str, number: u64) -> Result<Option<String>> {
+        let task: Option<String> = self
+            .reader()
+            .query_row(
+                "SELECT task_id FROM crew_forge_merges
+                 WHERE json_extract(body,'$.repo') = ?1 AND json_extract(body,'$.pull') = ?2
+                 ORDER BY rowid DESC LIMIT 1",
+                params![repo, number as i64],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(task)
+    }
+
     pub fn crew_forge_merge(&self, task_id: &str) -> Result<Option<ForgeMerge>> {
         let body: Option<String> = self
             .reader()
