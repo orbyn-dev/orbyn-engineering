@@ -1,4 +1,4 @@
-import { act, configure, render, screen, waitFor, within } from "@testing-library/react";
+import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { dataChanged } from "../../../api/shell";
@@ -6,16 +6,19 @@ import "../../../app/routeScreens.test-support";
 import { App } from "../../../app/App";
 import { createReposMock } from "../../../../mock/repos";
 import { startDataRefresh } from "../../../lib/dataRefresh";
+import { useComposerChips } from "../../../product/state/composerChipStore";
 import { fileTabId, useUi } from "../../../product/state/ui";
 import { useThreadLogs } from "../../../product/state/threadLogs";
 import { installMockFetch } from "../../../test-support";
+import { FILE_MENTION_REPO_TYPE, FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { setReposApi, type RepoRow, type ThreadRepo } from "../../repos";
 import { useExplorer } from "./store";
 
 // F70 (#1058): the left explorer browses the open multi-repository thread's chosen repository through the thread's own
 // file tree route (`?repo_id=`); a thread in one repository keeps exactly the explorer it had, with no chooser and no
-// such read. The repository also governs the file tab: a file of the primary repository opens as the thread's own tab,
-// a file of another repository as that repository's tab, so its read and write name that repository.
+// such read. The repository also governs the file tab: a file opens as its repository's tab, which names it. The primary
+// repository's tab is still the thread's own for reads, writes and failures and only names the repository; another
+// repository's tab reads and writes with its `repo_id`.
 const THREAD = "t-done";
 const PRIMARY = "p-app";
 const OTHER = "orbyn-planner";
@@ -87,6 +90,7 @@ configure({ asyncUtilTimeout: 8000 });
 
 beforeEach(() => {
   useExplorer.getState().reset();
+  useComposerChips.setState({ chips: {}, reviewDrafts: {} });
   installMockFetch();
   useUi.setState({ projectFolders: true, panelOpen: false, panelTab: null, panelTabOrder: ["diff", "browser", "activity", "side", "tools"], panelTabsClosed: ["diff", "browser", "activity", "side", "tools"], layouts: {}, leftBarView: "files", explorerOpen: {}, sidebarWidth: 224 });
   useUi.getState().setPrefs({ welcomeDone: true });
@@ -149,13 +153,54 @@ it("switching loads the other repository's tree with repo_id, and each file open
   await user.click(await findRow(/^plan\.md/));
   expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "plans/plan.md", repoId: OTHER }));
 
-  // The primary repository's own file opens as the thread's own tab, without a repository on it, as the rest of the app
-  // opens its files: preview, line comments and the composer's actions are the normal file tab's.
+  // The primary repository's own file opens as the thread's own tab, which names the repository: its read, write and
+  // failure paths stay the thread's own, and its chip and Copy path say `<name>/<path>` rather than the task folder's.
   await waitFor(() => expect(chooser()).toHaveAccessibleName("Repository: orbyn-planner"));
   await user.click(chooser());
   await user.click(await screen.findByRole("menuitem", { name: "orbyn-engineering" }));
   await user.click(await findRow(/^main\.ts/));
-  expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "main.ts" }));
+  expect(useUi.getState().panelTab).toBe(fileTabId({ kind: "thread", path: "main.ts", repoId: PRIMARY, primary: true }));
+});
+
+it("carries another repository's identity when its file is dragged or added, and leaves the primary's file alone", async () => {
+  const user = userEvent.setup();
+  twoRepositories();
+  serveTrees();
+  render(<App />);
+
+  // The primary repository's checkout row is the thread's own: its files stay undraggable and unaddable from here, as before.
+  const primary = await findRow(/^main\.ts/);
+  const primaryDrag = vi.fn();
+  fireEvent.dragStart(primary, { dataTransfer: { setData: primaryDrag } });
+  expect(primaryDrag).not.toHaveBeenCalled();
+  expect(primary).not.toHaveAttribute("draggable");
+
+  // The other repository's file carries its client-only id and name beside the path in its worktree.
+  await waitFor(() => expect(chooser()).toHaveAccessibleName("Repository: orbyn-engineering"));
+  await user.click(chooser());
+  await user.click(await screen.findByRole("menuitem", { name: "orbyn-planner" }));
+  const foreign = await findRow(/^planner\.ts/);
+  const setData = vi.fn();
+  fireEvent.dragStart(foreign, { dataTransfer: { setData } });
+  expect(setData).toHaveBeenCalledWith(FILE_MENTION_TYPE, "planner.ts");
+  expect(setData).toHaveBeenCalledWith(FILE_MENTION_REPO_TYPE, JSON.stringify({ repoId: OTHER, repoName: "orbyn-planner" }));
+
+  // Its own row menu adds it to the open thread's message as that repository's file.
+  await user.pointer({ keys: "[MouseRight]", target: foreign });
+  const menu = await screen.findByRole("menu", { name: "File actions" });
+  expect(within(menu).queryByRole("menuitem", { name: /Add to this thread/ })).toBeInTheDocument();
+  await user.click(within(menu).getByRole("menuitem", { name: /Add to this thread/ }));
+  expect(useComposerChips.getState().chips[THREAD]?.[0]).toMatchObject({
+    kind: "file",
+    path: "planner.ts",
+    repoId: OTHER,
+    repoName: "orbyn-planner",
+  });
+
+  // Put the shared repository choice back to the primary for the tests after this one.
+  await waitFor(() => expect(chooser()).toHaveAccessibleName("Repository: orbyn-planner"));
+  await user.click(chooser());
+  await user.click(await screen.findByRole("menuitem", { name: "orbyn-engineering" }));
 });
 
 it("an ordinary thread draws no chooser and asks for no repository tree", async () => {

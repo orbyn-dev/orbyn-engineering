@@ -10,7 +10,7 @@ const handlers = { onActivate: () => undefined, onMenu: () => undefined, onFocus
 
 it("shows nothing for a read that finishes within 400 ms, then quiet placeholder rows with no motion", () => {
   vi.useFakeTimers();
-  const { container } = render(<ExplorerRow row={loading} selected={false} focusable={false} menuOpen={false} dragPath={null} handlers={handlers} />);
+  const { container } = render(<ExplorerRow row={loading} selected={false} focusable={false} menuOpen={false} drag={null} handlers={handlers} />);
   // The label is read at once; nothing is drawn yet.
   expect(screen.getByRole("treeitem", { name: "Loading files" })).toBeInTheDocument();
   expect(container.querySelector(".x2sk")).toBeNull();
@@ -24,19 +24,19 @@ const file = (change: Row["change"]): Row => ({ key: "f", kind: "file", depth: 3
 
 it("draws M A D R U at the right of a file", () => {
   for (const [change, letter] of [["modified", "M"], ["added", "A"], ["deleted", "D"], ["renamed", "R"], ["untracked", "U"]] as const) {
-    const { unmount } = render(<ExplorerRow row={file(change)} selected={false} focusable={false} menuOpen={false} dragPath={null} handlers={handlers} />);
+    const { unmount } = render(<ExplorerRow row={file(change)} selected={false} focusable={false} menuOpen={false} drag={null} handlers={handlers} />);
     expect(screen.getByText(letter)).toBeInTheDocument();
     unmount();
   }
 });
 
 it("draws a conflict as a bold ! in neutral ink on a tinted row, and a deleted file struck through", () => {
-  const { unmount } = render(<ExplorerRow row={file("conflicted")} selected={false} focusable={false} menuOpen={false} dragPath={null} handlers={handlers} />);
+  const { unmount } = render(<ExplorerRow row={file("conflicted")} selected={false} focusable={false} menuOpen={false} drag={null} handlers={handlers} />);
   expect(screen.getByText("!")).toHaveClass("xg-bang");
   expect(screen.getByRole("treeitem")).toHaveClass("xg-c");
   expect(screen.getByRole("treeitem")).toHaveAccessibleName("a.ts, Conflicted");
   unmount();
-  render(<ExplorerRow row={file("deleted")} selected={false} focusable={false} menuOpen={false} dragPath={null} handlers={handlers} />);
+  render(<ExplorerRow row={file("deleted")} selected={false} focusable={false} menuOpen={false} drag={null} handlers={handlers} />);
   expect(screen.getByRole("treeitem")).toHaveClass("xg-d");
   expect(screen.getByText("D")).toBeInTheDocument();
 });

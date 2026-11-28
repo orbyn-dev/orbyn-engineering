@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
 import type { Thread } from "../../api/types";
+import { createReposMock } from "../../../mock/repos";
+import { setReposApi } from "../repos";
 import { useWorkspace } from "../../product/state/workspace";
 import { useConnection } from "../../product/state/connection";
 import { fileTabId, useUi, type RightTab } from "../../product/state/ui";
@@ -52,6 +54,30 @@ function panel(props: { mode?: PanelMode; onReturn?: () => void; onToggleMaximiz
 }
 
 describe("surface tabs", () => {
+  it("passes the full repository folder to file actions even when its display label is shortened", async () => {
+    const user = userEvent.setup();
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { written.push(text); } }, configurable: true });
+    const fullName = `repo-${"x".repeat(59)}`;
+    setReposApi(createReposMock({ threads: { "thread-1": [{ repo_id: "long-repo", name: fullName, branch: "main", added: 0, deleted: 0, trusted: true }] } }));
+    useWorkspace.setState({ threads: { "thread-1": { id: "thread-1", project_id: "p", cwd: "/w" } as never } });
+    const file = fileTabId({ kind: "thread", path: "notes.txt", repoId: "long-repo" });
+    useUi.setState({ panelTab: file, panelTabOrder: [file] });
+    try {
+      panel();
+      // The real tab menu builds its absolute path from the repository's own folder name, never from the shortened label.
+      await user.click(await screen.findByRole("button", { name: "Tab menu" }));
+      const copy = await screen.findByRole("menuitem", { name: "Copy path" });
+      await waitFor(() => expect(copy).toBeEnabled());
+      await user.click(copy);
+      expect(written).toContain(`/w/${fullName}/notes.txt`);
+    } finally {
+      setReposApi(null);
+      Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+      useWorkspace.setState({ threads: {} });
+    }
+  });
+
   it("opens the file picker from the launcher and shows its configured shortcut", async () => {
     const user = userEvent.setup();
     vi.mocked(api.keybindings).mockResolvedValue({ rules: [{ key: "ctrl+shift+o", command: "filePicker.toggle", when: "!terminalFocus" }], issues: [] } as never);
@@ -743,6 +769,48 @@ describe("unsaved files and the tab menu", () => {
     await user.click(screen.getByRole("button", { name: "Tab menu" }));
     const items = screen.getAllByRole("menuitem").map((item) => item.textContent);
     expect(items).toEqual(expect.arrayContaining(["Copy path", "Copy relative path", "Close tabAlt+W", "Close other tabs", "Close all tabs", "Maximise panel"]));
+  });
+
+  it("copies the open tab's absolute path with the repository folder the thread names", async () => {
+    const user = userEvent.setup();
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { written.push(text); } }, configurable: true });
+    setReposApi(createReposMock({ threads: { "thread-1": [{ repo_id: "planner", name: "orbyn-planner", branch: "orbyn/1058", added: 0, deleted: 0, trusted: true }] } }));
+    useWorkspace.setState({ threads: { "thread-1": { id: "thread-1", cwd: "/w" } as never } });
+    const FOREIGN = fileTabId({ kind: "thread", path: "notes.txt", repoId: "planner" });
+    useUi.setState({ panelTab: FOREIGN, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", "review", "devices", "library", FOREIGN] });
+    panel();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    const copy = await screen.findByRole("menuitem", { name: "Copy path" });
+    // The menu builds the path once the thread's repositories have been read and name this repository.
+    await waitFor(() => expect(copy).toBeEnabled());
+    await user.click(copy);
+    expect(written).toContain("/w/orbyn-planner/notes.txt");
+    setReposApi(null);
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    useWorkspace.setState({ threads: {} });
+  });
+
+  it("copies a primary-repository tab's absolute path with that repository's folder and names it on the tab", async () => {
+    const user = userEvent.setup();
+    const written: string[] = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { written.push(text); } }, configurable: true });
+    setReposApi(createReposMock({ threads: { "thread-1": [{ repo_id: "p", name: "orbyn-engineering", branch: "orbyn/1058", added: 0, deleted: 0, trusted: true }] } }));
+    useWorkspace.setState({ threads: { "thread-1": { id: "thread-1", project_id: "p", cwd: "/w" } as never } });
+    const PRIMARY = fileTabId({ kind: "thread", path: "main.ts", repoId: "p", primary: true });
+    useUi.setState({ panelTab: PRIMARY, panelTabOrder: ["diff", "browser", "activity", "side", "tools", "linked", "review", "devices", "library", PRIMARY] });
+    panel();
+    // The primary repository's tab names it, so two files of the same name in two repositories are told apart.
+    expect(await screen.findByRole("tab", { name: "main.ts (orbyn-engineering)" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Tab menu" }));
+    const copy = await screen.findByRole("menuitem", { name: "Copy path" });
+    // The menu builds the path once the thread's repositories have been read and name this repository.
+    await waitFor(() => expect(copy).toBeEnabled());
+    await user.click(copy);
+    expect(written).toContain("/w/orbyn-engineering/main.ts");
+    setReposApi(null);
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    useWorkspace.setState({ threads: {} });
   });
 });
 

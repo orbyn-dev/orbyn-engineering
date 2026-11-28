@@ -4,9 +4,9 @@ import { compactAge } from "../../../lib/format";
 import { useWaited } from "../../../lib/motion";
 import { useThreadWaiting } from "../../../product/state/waitingThreads";
 import { attentionRank } from "../sidebar/groups";
-import { CHANGE, MAX_DEPTH, crumb, type Row } from "./model";
+import { CHANGE, MAX_DEPTH, crumb, type FileMention, type Row } from "./model";
 import { ChangeLetter, MiddleName } from "./ChangeLetter";
-import { FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
+import { FILE_MENTION_REPO_TYPE, FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { Button } from "../../../ui/controls";
 
 export function ThreadStatus({ thread }: { thread: NonNullable<Row["thread"]> }) {
@@ -44,7 +44,7 @@ export const ExplorerRow = memo(function ExplorerRow({
   selected,
   focusable,
   menuOpen,
-  dragPath,
+  drag,
   place,
   handlers,
 }: {
@@ -52,8 +52,8 @@ export const ExplorerRow = memo(function ExplorerRow({
   selected: boolean;
   focusable: boolean;
   menuOpen: boolean;
-  /** A file of the open thread's own folder can be dragged into its message, by this path. */
-  dragPath: string | null;
+  /** A file the open thread's message can name can be dragged into it: its path, and another repository's identity. */
+  drag: FileMention | null;
   /** Its place among its siblings, for a list that draws only some of its rows. */
   place?: { pos: number; size: number };
   handlers: RowHandlers;
@@ -106,8 +106,14 @@ export const ExplorerRow = memo(function ExplorerRow({
       title={title}
       aria-posinset={place?.pos}
       aria-setsize={place?.size}
-      draggable={dragPath !== null || undefined}
-      onDragStart={dragPath !== null ? (event) => event.dataTransfer.setData(FILE_MENTION_TYPE, dragPath) : undefined}
+      draggable={drag !== null || undefined}
+      onDragStart={drag !== null ? (event) => {
+        event.dataTransfer.setData(FILE_MENTION_TYPE, drag.path);
+        // Another repository's file carries its client-only id and name too, so the message names `<name>/<path>`.
+        if (drag.repoId !== undefined && drag.repoName !== undefined) {
+          event.dataTransfer.setData(FILE_MENTION_REPO_TYPE, JSON.stringify({ repoId: drag.repoId, repoName: drag.repoName }));
+        }
+      } : undefined}
       onClick={(event) => handlers.onActivate(row, event)}
       onContextMenu={(event) => {
         if (row.kind !== "file" && row.kind !== "worktree") return;
