@@ -84,7 +84,7 @@ interface NotebookCell {
 
 const joined = (value: string | string[] | undefined) => (Array.isArray(value) ? value.join("") : (value ?? ""));
 
-function Notebook({ text }: { text: string }) {
+function Notebook({ text, repoId }: { text: string; repoId?: string }) {
   const cells = useMemo<NotebookCell[] | null>(() => {
     try {
       const parsed = JSON.parse(text) as { cells?: NotebookCell[] };
@@ -98,7 +98,7 @@ function Notebook({ text }: { text: string }) {
     <div className="file-notebook">
       {cells.map((cell, at) =>
         cell.cell_type === "markdown" ? (
-          <Markdown key={at} text={joined(cell.source)} />
+          <Markdown key={at} text={joined(cell.source)} {...(repoId === undefined ? {} : { repoId })} />
         ) : (
           <div key={at}>
             <pre tabIndex={0} className="file-source">{joined(cell.source)}</pre>
@@ -112,12 +112,13 @@ function Notebook({ text }: { text: string }) {
   );
 }
 
-export function FilePreview({ kind, text }: { kind: PreviewKind; text: string }) {
+/** A file drawn by what it holds. `repoId` is another repository of the thread: what the rendered text links to or draws is that repository's. */
+export function FilePreview({ kind, text, repoId }: { kind: PreviewKind; text: string; repoId?: string }) {
   switch (kind) {
     case "markdown":
       return (
         <div className="file-preview">
-          <Markdown text={text} />
+          <Markdown text={text} {...(repoId === undefined ? {} : { repoId })} />
         </div>
       );
     case "delimited":
@@ -132,6 +133,6 @@ export function FilePreview({ kind, text }: { kind: PreviewKind; text: string })
       // No scripts and no same-origin access: a checkout's page can't reach the app.
       return <iframe className="file-frame" title="HTML preview" sandbox="" srcDoc={text} />;
     case "notebook":
-      return <Notebook text={text} />;
+      return <Notebook text={text} {...(repoId === undefined ? {} : { repoId })} />;
   }
 }
