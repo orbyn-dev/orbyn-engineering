@@ -878,28 +878,45 @@ impl TemplateHeader {
 
 /// One front matter value as the file means it: trimmed, and without a matching pair of `'` or `"` around the whole
 /// value, which GitHub's own templates write around every one.
-fn unquoted(value: &str) -> &str {
+///
+/// A quoted value carrying the escape syntax of its own quoting answers `None` instead: a `\` inside a `"` pair
+/// (YAML's double-quoted escapes, as in `"help\u0020wanted"`) and a doubled `''` inside a `'` pair (as in
+/// `'Can''t start'`) each stand for a character this reader does not decode, and stripping only the outer quotes
+/// would put the backslash or the doubled apostrophe into a name or a label name. This is not a YAML reader, so an
+/// escape is dropped rather than guessed (docs/issues.md, "As built (#1548)"); an unquoted value and a quoted value
+/// without an escape are carried as they are.
+fn unquoted(value: &str) -> Option<&str> {
     let value = value.trim();
     let bytes = value.as_bytes();
     let paired =
         bytes.len() >= 2 && matches!(bytes[0], b'\'' | b'"') && bytes[bytes.len() - 1] == bytes[0];
-    if paired {
-        &value[1..value.len() - 1]
-    } else {
-        value
+    if !paired {
+        return Some(value);
     }
+    let inner = &value[1..value.len() - 1];
+    let escaped = if bytes[0] == b'"' {
+        inner.contains('\\')
+    } else {
+        inner.contains("''")
+    };
+    (!escaped).then_some(inner)
 }
 
-/// One front matter value as a line of at most `chars` characters, or `None` when it is empty.
+/// One front matter value as a line of at most `chars` characters, or `None` when it is empty or carries an escape
+/// this reader does not decode.
 fn one_line(value: &str, chars: usize) -> Option<String> {
-    let value: String = unquoted(value).trim().chars().take(chars).collect();
+    let value: String = unquoted(value)?.trim().chars().take(chars).collect();
     (!value.is_empty()).then_some(value)
 }
 
 /// The label names one `labels: bug, ui` line lists. The whole value is one scalar, so its quotes go before the
-/// commas are split: GitHub's own templates write `labels: 'bug, ui'`, and splitting first would keep the quotes.
+/// commas are split: GitHub's own templates write `labels: 'bug, ui'`, and splitting first would keep the quotes. A
+/// quoted value with an escape in it is not carried at all rather than read as a list of its raw text.
 fn label_names(value: &str) -> Vec<String> {
-    unquoted(value)
+    let Some(value) = unquoted(value) else {
+        return Vec::new();
+    };
+    value
         .split(',')
         .filter_map(|label| one_line(label, MAX_TEMPLATE_LABEL_CHARS))
         .take(MAX_TEMPLATE_LABELS)
@@ -1752,6 +1769,43 @@ mod tests {
         assert_eq!(
             body, "\r\nThe body\n",
             "the block is not part of the body and the rest of the file is"
+        );
+    }
+
+    #[test]
+    fn a_quoted_front_matter_value_with_an_escape_is_dropped_rather_than_guessed() {
+        // docs/issues.md, "As built (#1548)": an escape is dropped rather than guessed. A `"` pair's `\` escape and a
+        // `'` pair's doubled apostrophe are both undecoded here, so the value is not carried at all: keeping its raw
+        // text would put a backslash or a doubled apostrophe into a template name or a label name.
+        let (header, _) = markdown_template(
+            "---\nname: 'Can''t start'\nabout: \"help\\u0020wanted\"\nlabels: \"help\\u0020wanted\"\n---\nBody\n",
+        );
+        assert_eq!(
+            header.name, None,
+            "a doubled apostrophe is an escape this reader cannot decode, so the name falls back to the file's name"
+        );
+        assert_eq!(
+            header.about, None,
+            "a decoded escape is never produced, so an escaped description is dropped"
+        );
+        assert!(
+            header.labels.is_empty(),
+            "an escaped label value is dropped, not carried as its raw text: {:?}",
+            header.labels
+        );
+    }
+
+    #[test]
+    fn quoted_front_matter_values_without_an_escape_are_still_carried() {
+        let (header, _) = markdown_template(
+            "---\r\nname: \"Bug report\"\r\nabout: 'Something is wrong'\r\nlabels: 'bug, ui'\r\n---\r\n",
+        );
+        assert_eq!(header.name, Some("Bug report".to_owned()));
+        assert_eq!(header.about, Some("Something is wrong".to_owned()));
+        assert_eq!(
+            header.labels,
+            vec!["bug".to_owned(), "ui".to_owned()],
+            "`'bug, ui'` is one quoted scalar whose two names are split on the comma inside the quotes"
         );
     }
 
