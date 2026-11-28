@@ -804,6 +804,10 @@ export const FRAMES = {
   // pinned to the commit the task started from, from GET /api/crew/flow/tasks/{id}/artifacts.
   "flow-artifacts": { route: "#/crew/flow", scenario: "crew", steps: [click("button", "Use next in the auth redirect", { prefix: true }), click("button", "Artifacts")] },
 
+  // The gates view of the Flow task zoom (docs/crew.md): one card per gate the per-task detail read serves, with who decided
+  // it, the reviewer lane when it names one and the reason the task's final state makes readable.
+  "flow-gates": { route: "#/crew/flow", scenario: "crew", steps: [click("button", "Update the login docs", { prefix: true }), click("button", "Gates")] },
+
   // Approved two-control additions @ git:6e509d39c0486c2c51a119416d24c5443937acd5.
   "lane-remove-reason": { route: "#/crew/flow", scenario: "crew-review-remove", steps: [click("button", "Review dependency licences", { prefix: true }), click("button", "Remove…"), { do: "fill", label: "Reason", value: "This change only updates documentation; the dependency licences are unchanged." }] },
   "settings-acp-tier-editor": { route: "#/settings/crew", scenario: "crew", steps: [click("button", "Edit tiers"), click("region", "Engine tiers")] },
