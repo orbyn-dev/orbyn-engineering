@@ -38,6 +38,10 @@ const REVERTS_MAX: usize = 20;
 const RECENT_MAX: usize = 20;
 /// The most weeks one answer holds: 90 days is thirteen weeks and a part.
 const WEEKS_MAX: usize = 14;
+/// The most repositories the project menu's counts answer. A person's project list is far shorter,
+/// so this bound is never reached in practice; it is here so one answer is always small, and
+/// `truncated` says when a list this long was cut rather than drawn as whole.
+const PROJECTS_MAX: usize = 200;
 /// The widest UTC offset a person can name, in minutes.
 const OFFSET_MINUTES_MAX: i32 = 840;
 const DAY_SECS: i64 = 86_400;
@@ -382,6 +386,70 @@ impl Core {
         // `history_unreadable` as the rest when a record cannot be read.
         answer.live = self.dashboard_live(project).map_err(history_unreadable)?;
         Ok(answer)
+    }
+
+    /// The project menu's counts (issue 975): every repository the service lists with its merges in
+    /// the window, in one answer. The menu would otherwise read each repository's `trust` or
+    /// `dashboard` before it could draw a count beside a name, which is why the built page shows no
+    /// count at all. Counts only: nothing here is scrubbed because nothing here is text, and a
+    /// repository with no Crew use answers `0` rather than being left out.
+    pub fn crew_dashboard_projects(
+        &self,
+        days: Option<u32>,
+        now: i64,
+    ) -> Result<wire::CrewDashboardProjects> {
+        self.crew_dashboard_projects_with(days, now, PROJECTS_MAX)
+    }
+
+    /// The same read with the repository list cut at `cap`, so a test can prove `truncated` without
+    /// writing more projects than production holds.
+    #[cfg(test)]
+    pub(crate) fn crew_dashboard_projects_with_cap(
+        &self,
+        days: Option<u32>,
+        now: i64,
+        cap: usize,
+    ) -> Result<wire::CrewDashboardProjects> {
+        self.crew_dashboard_projects_with(days, now, cap)
+    }
+
+    fn crew_dashboard_projects_with(
+        &self,
+        days: Option<u32>,
+        now: i64,
+        cap: usize,
+    ) -> Result<wire::CrewDashboardProjects> {
+        self.crew_preview_only()?;
+        let days = days.unwrap_or(wire::CREW_DASHBOARD_DAYS_DEFAULT);
+        if !wire::CREW_DASHBOARD_DAYS.contains(&days) {
+            return Err(CoreError::Invalid("days is 30, 60 or 90".into()));
+        }
+        let since = now - i64::from(days) * DAY_SECS;
+        // Every project's count in one query, bounded in SQL by the window.
+        let counts: BTreeMap<String, u32> = self
+            .store
+            .crew_merge_counts_since(since)
+            .map_err(history_unreadable)?
+            .into_iter()
+            .collect();
+        // The list itself is the service's projects, so the menu names every repository it can show. A list
+        // that cannot be read is an error, never an empty menu, which would read as "no repository has merges".
+        let projects = self.store.list_projects().map_err(history_unreadable)?;
+        let truncated = projects.len() > cap;
+        let rows = projects
+            .iter()
+            .take(cap)
+            .map(|project| wire::CrewDashboardProjectCount {
+                project: project.id.clone(),
+                merges: counts.get(&project.id).copied().unwrap_or(0),
+            })
+            .collect();
+        Ok(wire::CrewDashboardProjects {
+            days,
+            as_of: now,
+            projects: rows,
+            truncated,
+        })
     }
 
     /// What waits and what works right now, for one repository (KC3): the dashboard's "Right now" row. Both

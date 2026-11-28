@@ -9,8 +9,10 @@ import type { MockResponse, Scenario } from "./api.ts";
  * lessons: three in the repository and two for all of them, one disabled and one hidden), "crew-lessons-empty" (nothing
  * learned yet), "crew-lessons-unreadable" (every read answers 500, as a damaged store does), "crew-lessons-off" (the
  * repository's switch is off, every lesson still readable) and "crew-lessons-states" (one lesson left out of a brief,
- * one over the five-lesson brief limit, one active confirmed escape and one repository revert). Every other scenario
- * answers an empty list.
+ * one over the five-lesson brief limit, one active confirmed escape and one repository revert). The states that need a
+ * write to fail: "crew-lessons-add-secret" (the scan refuses an add whose text holds a key), "crew-lessons-add-fails",
+ * "crew-lessons-save-fails" and "crew-lessons-delete-fails" (the service fails that write with a 500 of its own). Every
+ * other scenario answers an empty list.
  */
 
 const T = "2026-11-07T17:00:00Z";
@@ -148,11 +150,24 @@ export const PROPOSAL_LESSONS: SkillProposalLesson[] = [
   { id: "les-loginlink", evidence: EVIDENCE.loginlink },
 ];
 
+/** The contract's scan sentence, exactly (docs/crew-lessons.md, "Errors"): the screen relays it, never its own. */
+const SECRET_REFUSED = "Not saved: this looks like it holds a secret. Edit it and save again.";
+
+/**
+ * A write the service failed for a reason of its own. The contract fixes no 5xx of its own; the client relays whatever
+ * message the service sends, and this stands in for the store or the disk behind it.
+ */
+const writeFailed = (message: string): MockResponse => ({ status: 500, body: { code: "write_failed", message } });
+
 export function createLessonsMock() {
   let rows: Lesson[] = [];
   let useLessons = true;
   let unreadable = false;
   let added = 0;
+  /** The scan refuses an add whose text holds a key, as the service does (never the text or its scope). */
+  let scanRefuses = false;
+  /** The one write this scenario fails, so the screen's failure state can be drawn. */
+  let failingWrite: "add" | "save" | "delete" | null = null;
   const deleted = new Map<string, { lesson: Lesson; until: string }>();
 
   function reset(scenario: Scenario) {
@@ -183,6 +198,15 @@ export function createLessonsMock() {
     // With the repository switch off, in_next_brief is false for every lesson of it, as the service says.
     if (!useLessons) rows = rows.map((one) => ({ ...one, in_next_brief: false }));
     unreadable = scenario === "crew-lessons-unreadable";
+    scanRefuses = scenario === "crew-lessons-add-secret";
+    failingWrite =
+      scenario === "crew-lessons-add-fails"
+        ? "add"
+        : scenario === "crew-lessons-save-fails"
+          ? "save"
+          : scenario === "crew-lessons-delete-fails"
+            ? "delete"
+            : null;
     added = 0;
     deleted.clear();
   }
@@ -255,6 +279,10 @@ export function createLessonsMock() {
       if (!scope) return bad("The scope is repo or global.");
       if (!text || text.length > 300) return bad("A lesson is 1 to 300 characters.");
       if (scope === "repo" && (typeof write.repo !== "string" || !write.repo)) return bad("A repository lesson names its repository.");
+      // The scan's refusal, in the contract's own sentence: a text that holds a key is not saved.
+      if (scanRefuses && /sk-/.test(text))
+        return { status: 400, body: { code: "secret_refused", message: SECRET_REFUSED } };
+      if (failingWrite === "add") return writeFailed("The service could not save the lesson. Try again.");
       const one = lesson({
         id: `les-added-${++added}`,
         scope,
@@ -270,6 +298,7 @@ export function createLessonsMock() {
     }
     if (!id) return undefined;
     if (method === "PATCH" && pathname === `/api/crew/lessons/${id[1]}`) {
+      if (failingWrite === "save") return writeFailed("The service could not save the lesson. Try again.");
       const refuse = stale(one, write.rev);
       if (refuse) return refuse;
       const text = typeof write.text === "string" ? write.text.trim() : "";
@@ -283,6 +312,7 @@ export function createLessonsMock() {
       return { status: 200, body: one };
     }
     if (method === "DELETE" && !suffix) {
+      if (failingWrite === "delete") return writeFailed("The service could not delete the lesson. Try again.");
       const rev = Number(search.get("rev"));
       const refuse = stale(one, rev);
       if (refuse) return refuse;

@@ -14,6 +14,16 @@ use crate::crew::leases::timestamp;
 use crate::crew::stamp::Stamper;
 use crate::crew::start::{Launch, Links};
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
 fn project(w: &World) -> String {
     w.core.store.thread(&w.lead).unwrap().project_id
 }
@@ -146,8 +156,7 @@ async fn a_refused_crew_start_stores_one_row_with_counts_and_no_task() {
         tasks
     );
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
-    assert_eq!(rows.len(), 1, "{rows:?}");
-    let row = &rows[0];
+    let row = one(&rows, "refused start row");
     assert_eq!(
         (row.kind, row.waiting, row.limit, row.started),
         (PausedKind::CommentFix, 3, 2, false)
@@ -179,8 +188,10 @@ async fn a_repeat_of_the_same_trigger_updates_the_one_row_and_a_different_one_ad
     .await
     .unwrap_err();
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
-    assert_eq!(rows.len(), 1, "no duplicate: {rows:?}");
-    assert_eq!(rows[0].waiting, 4, "the counts of the last refusal");
+    // A repeat updates the row it already had: it is the trigger's own row, unpacked rather than read by place.
+    let row = one(&rows, "refused start row after the retry");
+    assert_eq!(row.key, "merge-1");
+    assert_eq!(row.waiting, 4, "the counts of the last refusal");
     launch(
         &w,
         "src/other/**",
@@ -233,8 +244,10 @@ async fn when_the_same_trigger_later_starts_its_row_is_marked_started_not_duplic
     .unwrap();
     assert!(started["task"].is_string(), "{started}");
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
-    assert_eq!(rows.len(), 1, "{rows:?}");
-    assert!(rows[0].started && rows[0].started_unix.is_some());
+    // The one row is the trigger's: started, not a duplicate for the same trigger.
+    let row = one(&rows, "stored refused start row");
+    assert_eq!(row.key, "merge-1");
+    assert!(row.started && row.started_unix.is_some());
     // A trigger that never was refused leaves no row.
     launch(
         &w,
@@ -296,8 +309,8 @@ async fn the_capacity_state_lists_the_held_starts_and_an_old_client_reading_none
     .await
     .unwrap_err();
     let state = w.core.crew_capacity_state(&project(&w)).unwrap();
-    assert_eq!(state.held.len(), 1);
-    let held = &state.held[0];
+    let held = one(&state.held, "held start");
+    assert_eq!(held.key, "merge-1");
     assert_eq!(
         (held.kind, held.state, held.waiting, held.limit),
         (
@@ -347,9 +360,9 @@ async fn retried_ends_with_one_started_row(kind: PausedKind, key: &str) {
         .await
         .unwrap();
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
-    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = one(&rows, "started row");
     assert!(
-        rows[0].started && rows[0].kind == kind && rows[0].key == key,
+        row.started && row.kind == kind && row.key == key,
         "{rows:?}"
     );
 }
@@ -376,6 +389,6 @@ async fn a_crew_started_launch_without_a_trigger_is_unknown_and_never_a_comment_
     save(&w, 2, true);
     launch(&w, "src/clean/**", true, None).await.unwrap_err();
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].kind, PausedKind::Unknown);
+    let row = one(&rows, "refused start row");
+    assert_eq!(row.kind, PausedKind::Unknown, "never a comment fix");
 }

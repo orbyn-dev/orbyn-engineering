@@ -1213,6 +1213,8 @@ mod tests {
                         position: position as u32,
                         name: name.to_owned(),
                         branch: "orbyn/thread".into(),
+                        // The fixture writes the row itself, with no base: a thread stored before the column.
+                        base_branch: None,
                         worktree_path: worktree.to_string_lossy().into_owned(),
                     },
                     &crate::util::now(),

@@ -515,3 +515,87 @@ async fn a_thrown_error_keeps_its_message_when_its_name_cannot_be_read() {
     assert_eq!(kind, ErrorKind::Runtime, "{text}");
     assert!(text.contains("recovered"), "{text}");
 }
+
+#[tokio::test]
+async fn a_full_heap_ends_the_run_instead_of_the_wall_clock() {
+    // The fill breaks on an allocation the heap refused, so the refusal is recorded and the data
+    // stays live. A heap this full can leave the engine unable to allocate the job that would
+    // settle the promise the script awaits (QuickJS throws `null` when it cannot build its own
+    // error), so the future stays pending with nothing left that could run it. Before the drive
+    // rule the wall clock ended this run and reported a time limit; the heap is what stopped it.
+    let code = "globalThis.a = [];\n\
+        while (true) { try { globalThis.a.push('x'.repeat(1000)); } catch (e) { break; } }\n\
+        await new Promise(() => {});";
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        // Small on purpose: the assertion is about which rule ends the run, not about wall time.
+        wall: Duration::from_secs(2),
+        ..Limits::default()
+    };
+    let (mut run, _) = start(code, limits).await;
+    let began = Instant::now();
+    let step = run.drive(Instant::now() + Duration::from_secs(60)).await;
+    let elapsed = began.elapsed();
+    let error = failed(step);
+    assert_eq!(error.kind, ErrorKind::Limit);
+    assert!(error.message.contains("heap"), "{}", error.message);
+    assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+}
+
+#[tokio::test]
+async fn a_full_heap_after_a_tool_call_ends_the_run_instead_of_the_wall_clock() {
+    // The same heap ending, reached after a tool call: the refusal is recorded while the tool is in
+    // flight, so the check before the wait cannot tell the heap from a run waiting on a tool. Once
+    // the reply lands the script catches the refusal and awaits a promise it can never settle, and
+    // only the checks made while it waits can end the run — the wall clock would report a time
+    // limit and hold the runtime and the heap until then.
+    let code = "await tools.slow({ ms: 100 });\n\
+        try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+        await new Promise(() => {});";
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        // Small on purpose: the assertion is about which rule ends the run, and when.
+        wall: Duration::from_secs(2),
+        ..Limits::default()
+    };
+    let (mut run, _) = start(code, limits).await;
+    let began = Instant::now();
+    let step = run.drive(Instant::now() + Duration::from_secs(60)).await;
+    let elapsed = began.elapsed();
+    let error = failed(step);
+    assert_eq!(error.kind, ErrorKind::Limit);
+    assert!(error.message.contains("heap"), "{}", error.message);
+    assert!(elapsed < Duration::from_secs(1), "took {elapsed:?}");
+}
+
+#[tokio::test]
+async fn a_pending_run_under_its_heap_still_ends_at_the_wall_clock() {
+    // The same unsettleable promise with the heap untouched: the wall clock is still the rule that
+    // ends a run which stops making progress, so the heap rule did not take its place.
+    let limits = Limits {
+        wall: Duration::from_millis(200),
+        ..Limits::default()
+    };
+    let (mut run, _) = start("await new Promise(() => {});", limits).await;
+    let error = failed(run.drive(Instant::now() + Duration::from_secs(30)).await);
+    assert_eq!(error.kind, ErrorKind::Limit);
+    assert!(error.message.contains("time limit"), "{}", error.message);
+}
+
+#[tokio::test]
+async fn a_heap_refusal_does_not_end_a_run_waiting_on_a_tool() {
+    // A refusal the script caught leaves the refusal recorded; the script is still waiting on a
+    // tool, so the run yields and resumes as before instead of ending as the heap.
+    let limits = Limits {
+        heap_bytes: 4 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let code = "try { 'x'.repeat(64 * 1024 * 1024); } catch (e) {}\n\
+        await tools.slow({ ms: 400 });\n\
+        return 'slept';";
+    let (mut run, _) = start(code, limits).await;
+    let first = run.drive(Instant::now() + Duration::from_millis(40)).await;
+    assert!(matches!(first, Step::Yielded), "{first:?}");
+    let second = run.drive(Instant::now() + Duration::from_secs(30)).await;
+    assert_eq!(done(second), json!("slept"));
+}

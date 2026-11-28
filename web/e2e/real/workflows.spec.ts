@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { openDetails, openExplorer, openPanelTab, send, settled, startProject, threadIdOf, type Service } from "./service";
 
 /** Smaller flows that cross the UI and the service: presets, servers, scripts, editors, stops. */
-const FAKE = resolve(import.meta.dirname, "../../../target/debug/orbyn-fake-engine");
+const FAKE = resolve(import.meta.dirname, `../../../target/debug/orbyn-fake-engine${process.platform === "win32" ? ".exe" : ""}`);
 
 let service: Service;
 let projectId = "";
@@ -22,6 +22,22 @@ const thread = (title: string, extra: object = {}) =>
     ...extra,
   });
 const row = (page: Page, title: string) => page.locator("li[data-thread-item]").filter({ hasText: title });
+
+/**
+ * A stand-in `code` editor on the service's PATH that records its arguments. Windows cannot run the shebang script the
+ * Unix branch writes, so it gets an npm-style `.cmd` shim beside a Node script the service follows without a shell.
+ */
+function standInEditor(): string {
+  const log = join(service.binDir, "code-calls");
+  const script = `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(log)}, process.argv.slice(2).join(" ") + "\\n");\n`;
+  if (process.platform === "win32") {
+    writeFileSync(join(service.binDir, "code.mjs"), script);
+    writeFileSync(join(service.binDir, "code.cmd"), '@echo off\r\nnode "%~dp0\\code.mjs" %*\r\n');
+  } else {
+    writeFileSync(join(service.binDir, "code"), `#!/usr/bin/env node\n${script}`, { mode: 0o755 });
+  }
+  return log;
+}
 
 test.beforeAll(async () => {
   ({ service, projectId } = await startProject({ fakeEngines: true, forge: true }));
@@ -64,12 +80,16 @@ test("a snoozed row wakes from its own button", async ({ page }) => {
 test("a server from this checkout is listed and can be stopped", async ({ page }) => {
   const made = await thread("Servers");
   const server = spawn(process.execPath, ["-e", "require('http').createServer((_,r)=>r.end('ok')).listen(0,'127.0.0.1');setTimeout(()=>{},60000)"], { cwd: made.cwd, stdio: "ignore" });
-  await expect.poll(async () => (await service.api<unknown[]>("GET", `/api/threads/${made.id}/servers`)).length, { timeout: 15_000 }).toBeGreaterThan(0);
+  // The route lists every loopback listener on the machine: one whose folder the OS will not name is shown with
+  // in_checkout false and cannot be stopped. The server this test started is the row in this thread's checkout.
+  const inCheckout = async () =>
+    (await service.api<{ in_checkout: boolean }[]>("GET", `/api/threads/${made.id}/servers`)).filter((row) => row.in_checkout);
+  await expect.poll(async () => (await inCheckout()).length, { timeout: 15_000 }).toBeGreaterThan(0);
   await page.goto(`${service.page}#/threads/${made.id}`);
   await openPanelTab(page, "Browser");
   await page.getByRole("button", { name: /^Stop localhost:/ }).click();
   await expect.poll(() => server.exitCode ?? server.signalCode, { timeout: 15_000 }).not.toBeNull();
-  await expect.poll(async () => (await service.api<unknown[]>("GET", `/api/threads/${made.id}/servers`)).length).toBe(0);
+  await expect.poll(async () => (await inCheckout()).length).toBe(0);
 });
 
 test("a project script runs in its own terminal, and a watch-only terminal sends nothing", async ({ page }) => {
@@ -126,8 +146,7 @@ test("a new worktree starts from the base the draft names", async ({ page }) => 
 });
 
 test("the editor menu lists what's installed and opens the chosen one", async ({ page }) => {
-  const log = join(service.binDir, "code-calls");
-  writeFileSync(join(service.binDir, "code"), `#!/bin/sh\necho "$@" >> '${log}'\n`, { mode: 0o755 });
+  const log = standInEditor();
   const made = await thread("Editors");
   await page.goto(`${service.page}#/threads/${made.id}`);
   const card = await openDetails(page);
@@ -139,8 +158,7 @@ test("the editor menu lists what's installed and opens the chosen one", async ({
 });
 
 test("a file's menu opens it elsewhere, and dragging it mentions it", async ({ page }) => {
-  const log = join(service.binDir, "code-calls");
-  writeFileSync(join(service.binDir, "code"), `#!/bin/sh\necho "$@" >> '${log}'\n`, { mode: 0o755 });
+  const log = standInEditor();
   const made = await thread("File menu");
   await page.setViewportSize({ width: 1500, height: 900 });
   await page.goto(`${service.page}#/threads/${made.id}`);
@@ -181,7 +199,15 @@ test("a local ACP command becomes a provider", async ({ page }) => {
   await dialog.getByRole("textbox", { name: "Arguments", exact: true }).fill("acp");
   await dialog.getByRole("textbox", { name: "Display name", exact: true }).fill("House agent");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "House agent", exact: true })).toBeVisible({ timeout: 15_000 });
+  // A local ACP command is listed as a provider with the program it runs; only the claude, codex and opencode families
+  // have a detail page, so the provider's row is where a saved instance appears.
+  const providers = page.getByRole("table", { name: "Providers" });
+  await expect(providers.getByRole("row").filter({ hasText: "House agent" })).toContainText("via ACP", { timeout: 15_000 });
+  // The service resolved the platform binary and lists the saved instance as installed; its own path is what the person typed.
+  const saved = (await service.api<{ name: string; installed: boolean; path: string | null; instance_of?: string }[]>("GET", "/api/engines"))
+    .find((entry) => entry.name === "House agent");
+  expect(saved).toMatchObject({ installed: true, instance_of: "_local_acp" });
+  expect(saved?.path?.toLowerCase()).toBe(FAKE.toLowerCase());
   await page.goto(`${service.page}#/settings/general`);
   await expect(page.getByRole("switch", { name: "Check providers for updates" })).toBeVisible();
   await expect(page.getByRole("switch", { name: "Prefer saved login" })).toHaveCount(0);

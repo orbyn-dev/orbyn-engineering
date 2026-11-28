@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../api/client";
-import type { Project, Thread } from "../../api/types";
+import type { Approval, Project, Thread } from "../../api/types";
 import { projects } from "../../../mock/fixtures";
 import { useWorkspace } from "./workspace";
 
@@ -71,5 +71,92 @@ describe("consolidated thread polling", () => {
     expect(useWorkspace.getState().threadIds.a?.data).toEqual(["new"]);
     expect(useWorkspace.getState().threads.old).toBeUndefined();
     expect(useWorkspace.getState().threadIds.b?.data).toEqual(["other"]);
+  });
+});
+/**
+ * Issue #1118's idle poll: one project list, one global thread list, and the approvals only while
+ * there is a run they can belong to. Pending approvals are created by a waiting run and expired when
+ * it finishes, and an open thread's stream reads one the moment it lands, so an idle app can leave
+ * the list alone; the polled threads' `active_run` is what says whether one can exist.
+ */
+describe("idle approval polling", () => {
+  const a = project("a");
+  const active = (value: Thread): Thread => ({ ...value, active_run: { id: `run-${value.id}` } as never });
+
+  it("reads one project list and one thread list, and no approvals, with no run to watch", async () => {
+    useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: {}, approvals: ready([]) });
+    const projectsRead = vi.spyOn(api, "projects").mockResolvedValue([a]);
+    const all = vi.spyOn(api, "allThreads").mockResolvedValue([thread("one", "a")]);
+    const perProject = vi.spyOn(api, "threads");
+    const approvals = vi.spyOn(api, "pendingApprovals");
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(projectsRead).toHaveBeenCalledTimes(1);
+    expect(all).toHaveBeenCalledTimes(1);
+    expect(perProject).not.toHaveBeenCalled();
+    expect(approvals).not.toHaveBeenCalled();
+  });
+
+  it("reads approvals when the thread list fails, since a run elsewhere may be waiting", async () => {
+    useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: {}, approvals: ready([]) });
+    vi.spyOn(api, "projects").mockResolvedValue([a]);
+    vi.spyOn(api, "allThreads").mockRejectedValue(new Error("unavailable"));
+    vi.spyOn(api, "threads").mockResolvedValue([]);
+    const approvals = vi.spyOn(api, "pendingApprovals").mockResolvedValue([{ id: "ap" } as Approval]);
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(approvals).toHaveBeenCalledTimes(1);
+    expect(useWorkspace.getState().approvals.data?.map((entry) => entry.id)).toEqual(["ap"]);
+  });
+
+  it("reads approvals while the project catalog fails, then idles again once it reads", async () => {
+    useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: {}, approvals: ready([]) });
+    const projectsRead = vi.spyOn(api, "projects").mockRejectedValue(new Error("unavailable"));
+    vi.spyOn(api, "allThreads").mockResolvedValue([thread("one", "a")]);
+    const approvals = vi.spyOn(api, "pendingApprovals").mockResolvedValue([{ id: "ap" } as Approval]);
+    // The failed read may hide a project added since the last good one, so its waiting run is unseen.
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(useWorkspace.getState().projects.error).not.toBeNull();
+    expect(approvals).toHaveBeenCalledTimes(1);
+    expect(useWorkspace.getState().approvals.data?.map((entry) => entry.id)).toEqual(["ap"]);
+    // The catalog reads again and the pending clears, then the idle poll leaves approvals alone.
+    projectsRead.mockResolvedValue([a]);
+    vi.mocked(api.pendingApprovals).mockResolvedValue([]);
+    await useWorkspace.getState().refreshAll({ quick: true });
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(useWorkspace.getState().projects.error).toBeNull();
+    expect(approvals).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps one approvals read a poll while a run known from the last poll can wait on one", async () => {
+    const one = active(thread("one", "a"));
+    useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: { one }, approvals: ready([]) });
+    vi.spyOn(api, "projects").mockResolvedValue([a]);
+    vi.spyOn(api, "allThreads").mockResolvedValue([one]);
+    const approvals = vi.spyOn(api, "pendingApprovals").mockResolvedValue([{ id: "ap" } as Approval]);
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(approvals).toHaveBeenCalledTimes(1);
+    expect(useWorkspace.getState().approvals.data?.map((entry) => entry.id)).toEqual(["ap"]);
+  });
+
+  it("asks in the same poll that first sees a run that started since the last one", async () => {
+    useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: {}, approvals: ready([]) });
+    vi.spyOn(api, "projects").mockResolvedValue([a]);
+    vi.spyOn(api, "allThreads").mockResolvedValue([active(thread("one", "a"))]);
+    const approvals = vi.spyOn(api, "pendingApprovals").mockResolvedValue([{ id: "ap" } as Approval]);
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(approvals).toHaveBeenCalledTimes(1);
+    expect(useWorkspace.getState().approvals.data?.map((entry) => entry.id)).toEqual(["ap"]);
+  });
+
+  it("keeps reading one pending on screen so it clears when its run ends elsewhere", async () => {
+    useWorkspace.setState({ projects: ready([a]), threadIds: {}, threads: {}, approvals: ready([{ id: "ap" } as Approval]) });
+    vi.spyOn(api, "projects").mockResolvedValue([a]);
+    vi.spyOn(api, "allThreads").mockResolvedValue([thread("one", "a")]);
+    const approvals = vi.spyOn(api, "pendingApprovals").mockResolvedValue([]);
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(approvals).toHaveBeenCalledTimes(1);
+    expect(useWorkspace.getState().approvals.data).toEqual([]);
+    // The list is empty and no run is listed now: the next idle poll leaves it alone.
+    await useWorkspace.getState().refreshAll({ quick: true });
+    expect(approvals).toHaveBeenCalledTimes(1);
   });
 });

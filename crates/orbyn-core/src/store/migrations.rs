@@ -97,7 +97,8 @@ pub const MIGRATIONS: &[(i64, &str)] = &[
     (87, include_str!("crew_watch_change_reason.sql")),
     (88, include_str!("crew_eval_samples.sql")),
     (89, include_str!("project_issue_trackers.sql")),
-    (90, include_str!("checkpoint_repositories.sql")),
+    (90, include_str!("thread_repos_base.sql")),
+    (92, include_str!("checkpoint_repositories.sql")),
 ];
 
 // What each install, update and removal of an engine did: when, whether it worked, why not, the

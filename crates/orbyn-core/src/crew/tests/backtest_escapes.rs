@@ -102,6 +102,16 @@ fn log(rig: &Rig, files: Files) -> EscapeLog {
     EscapeLog::new(rig.w.core.store.clone(), Arc::new(files))
 }
 
+/// The one item a read returned, unpacked by pattern so a test names what it expects instead of counting places. A read
+/// that returns none or several fails here with the items attached.
+fn one<'a, T: std::fmt::Debug>(items: &'a [T], what: &str) -> &'a T {
+    match items {
+        [item] => item,
+        [] => panic!("no {what}: {items:?}"),
+        _ => panic!("{} {what}s where one is expected: {items:?}", items.len()),
+    }
+}
+
 fn lane(name: &str) -> wire::BacktestLaneInput {
     wire::BacktestLaneInput {
         lane: name.into(),
@@ -118,7 +128,8 @@ fn finding(fp: &str, file: &str) -> ReplayedFinding {
     }
 }
 
-/// Runs a backtest of one lane over `rig`'s merges with the given source and findings per pull request; returns its lane.
+/// Runs a backtest of one lane over `rig`'s merges with the given source and findings per pull request; returns that
+/// lane's run, found by its name.
 async fn run_lane(
     rig: &Rig,
     source: Arc<dyn EscapeSource + Send + Sync>,
@@ -149,17 +160,23 @@ async fn run_lane(
     core.crew_backtest_report(&started.id)
         .unwrap()
         .lanes
-        .remove(0)
+        .into_iter()
+        .find(|lane| lane.lane == "correctness")
+        .expect("the correctness lane the backtest started")
 }
 
 const FILES: [&str; 5] = ["a.rs", "b.rs", "c.rs", "d.rs", "e.rs"];
 
-/// Five confirmed escapes, each fixed in one file, on merges 40 days old; and one possible escape that is not counted.
-async fn five_confirmed(rig: &mut Rig, files: &mut Files) -> Vec<String> {
-    let mut tasks = Vec::new();
+/// Five confirmed escapes, each fixed in one file, on merges 40 days old and keyed by that file; and one possible escape
+/// that is not counted.
+async fn five_confirmed(rig: &mut Rig, files: &mut Files) -> BTreeMap<String, String> {
+    let mut tasks = BTreeMap::new();
     for (i, file) in FILES.iter().enumerate() {
         let n = i as u64 + 1;
-        tasks.push(reverted(rig, files, n, 40, 2, Some(&[file]), true).await);
+        tasks.insert(
+            (*file).to_owned(),
+            reverted(rig, files, n, 40, 2, Some(&[file]), true).await,
+        );
     }
     reverted(rig, files, 9, 40, 2, Some(&["f.rs"]), false).await;
     tasks
@@ -170,14 +187,15 @@ async fn known_files_give_caught_unmatched_and_the_rate_from_five_escapes() {
     let mut rig = rig().await;
     let mut files = Files::default();
     let tasks = five_confirmed(&mut rig, &mut files).await;
-    let pr = |i: usize| pr_of(&rig, &tasks[i]);
+    // Each finding names the escape by the file its fix changed, never a place in the fixture's list.
+    let pr = |file: &str| pr_of(&rig, &tasks[file]);
     let lane = run_lane(
         &rig,
         Arc::new(log(&rig, files)),
         vec![
-            (pr(0), finding("fp1", "./a.rs")),
-            (pr(1), finding("fp2", "z.rs")),
-            (pr(2), finding("fp3", "c.rs")),
+            (pr("a.rs"), finding("fp1", "./a.rs")),
+            (pr("b.rs"), finding("fp2", "z.rs")),
+            (pr("c.rs"), finding("fp3", "c.rs")),
         ],
     )
     .await;
@@ -200,9 +218,10 @@ async fn known_files_give_caught_unmatched_and_the_rate_from_five_escapes() {
 async fn below_five_escapes_only_counts_show() {
     let mut rig = rig().await;
     let mut files = Files::default();
-    let mut tasks = Vec::new();
+    let mut tasks = BTreeMap::new();
     for (i, file) in FILES[..3].iter().enumerate() {
-        tasks.push(
+        tasks.insert(
+            (*file).to_owned(),
             reverted(
                 &mut rig,
                 &mut files,
@@ -215,10 +234,11 @@ async fn below_five_escapes_only_counts_show() {
             .await,
         );
     }
+    // The one finding names its escape by the file the fix changed, not by a place in the fixture.
     let lane = run_lane(
         &rig,
         Arc::new(log(&rig, files)),
-        vec![(pr_of(&rig, &tasks[0]), finding("fp1", "a.rs"))],
+        vec![(pr_of(&rig, &tasks["a.rs"]), finding("fp1", "a.rs"))],
     )
     .await;
     let score = lane.score.unwrap();
@@ -258,12 +278,13 @@ async fn an_escape_that_cannot_be_resolved_is_counted_as_unresolved_never_droppe
     // No file list was invented for either.
     assert!(read.escapes.iter().all(|e| e.changed_files.len() == 1));
 
-    let first = pr_of(&rig, &tasks[0]);
+    // The finding on a.rs's escape is about the file its fix changed: one of the five the log counts.
+    let on_a = pr_of(&rig, &tasks["a.rs"]);
     let lane = run_lane(
         &rig,
         Arc::new(source),
         vec![
-            (first, finding("fp1", "a.rs")),
+            (on_a, finding("fp1", "a.rs")),
             (pr_of(&rig, &unreadable), finding("fp2", "q.rs")),
         ],
     )
@@ -272,13 +293,15 @@ async fn an_escape_that_cannot_be_resolved_is_counted_as_unresolved_never_droppe
     // The finding on the unresolved PR is neither a hit nor a miss: it is not in precision and does not read "no escape".
     assert_eq!(lane.findings_n, 2);
     assert_eq!(score.findings_n, 1);
-    let run = rig
+    let runs = rig
         .w
         .core
         .store
         .crew_backtest_runs_of(&rig.project)
         .unwrap();
-    let results = rig.w.core.store.crew_backtest_results(&run[0].id).unwrap();
+    // The run this test started, unpacked as the one the project recorded.
+    let run = one(&runs, "backtest run");
+    let results = rig.w.core.store.crew_backtest_results(&run.id).unwrap();
     let on_unresolved = results.iter().find(|r| r.finding_fp == "fp2").unwrap();
     assert_eq!(
         on_unresolved.outcome,
@@ -345,9 +368,10 @@ async fn only_confirmed_escapes_inside_the_window_count() {
 
     let read = log(&rig, files).read(&rig.project, window()).unwrap();
     assert_eq!(read.unresolved.len(), 0);
-    assert_eq!(read.escapes.len(), 1);
-    assert_eq!(read.escapes[0].pr, pr_of(&rig, &inside));
-    assert_eq!(read.escapes[0].changed_files, vec!["in.rs".to_owned()]);
+    // The one escape in the window is the in.rs fix: named by what it changed, not by its place in the read.
+    let escape = one(&read.escapes, "escape");
+    assert_eq!(escape.pr, pr_of(&rig, &inside));
+    assert_eq!(escape.changed_files, vec!["in.rs".to_owned()]);
 }
 
 #[tokio::test]
@@ -364,7 +388,7 @@ async fn an_unreadable_log_is_not_measured_never_partial() {
             "PRAGMA ignore_check_constraints = ON;
              UPDATE crew_escapes SET state = 'bogus' WHERE merge_task_id = '{}';
              PRAGMA ignore_check_constraints = OFF;",
-            tasks[0]
+            tasks["a.rs"]
         ))
         .unwrap();
     let source = log(&rig, files);
@@ -374,7 +398,7 @@ async fn an_unreadable_log_is_not_measured_never_partial() {
     let lane = run_lane(
         &rig,
         Arc::new(source),
-        vec![(pr_of(&rig, &tasks[1]), finding("fp1", "b.rs"))],
+        vec![(pr_of(&rig, &tasks["b.rs"]), finding("fp1", "b.rs"))],
     )
     .await;
     // Findings are counted; nothing is scored, and no zero is implied.
@@ -414,8 +438,13 @@ async fn with_no_escape_log_the_default_source_says_not_measured() {
         .unwrap();
     core.crew_backtest_join().await;
     let run = core.crew_backtest_report(&started.id).unwrap();
-    assert_eq!(run.lanes[0].outcome, wire::BacktestLaneOutcome::NotMeasured);
-    assert_eq!(run.lanes[0].score, None);
+    let lane = run
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == "correctness")
+        .expect("the correctness lane of the report");
+    assert_eq!(lane.outcome, wire::BacktestLaneOutcome::NotMeasured);
+    assert_eq!(lane.score, None);
 }
 
 #[tokio::test]

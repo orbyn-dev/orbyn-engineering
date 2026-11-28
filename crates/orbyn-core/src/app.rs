@@ -187,6 +187,9 @@ pub struct Core {
     /// The last lists of tools and connectors each engine reported.
     /// What each engine's tools check last said, served at once while it is asked again.
     pub(crate) health_reads: crate::util::swr::Swr<orbyn_contracts::DependencyHealth>,
+    /// The project scope catalog's observations, shared by the settings reads that
+    /// ask together. No answer is kept between calls (`project_scopes`).
+    pub(crate) project_scope_reads: crate::util::swr::Swr<orbyn_contracts::ProjectScopeCatalog>,
     /// The explorer's worktree lists and Git statuses, served from the last known value.
     pub explorer: Arc<crate::project::explorer::ExplorerReads>,
     pub(crate) tool_reads: crate::util::swr::Swr<Option<orbyn_contracts::EngineTools>>,
@@ -369,6 +372,15 @@ impl Core {
                 2,
             )
             .same_as(crate::operations::health::same_health),
+            // Concurrent identical scope reads share one observation; a completed one is
+            // never served, so every settings read still observes the workspace now.
+            project_scope_reads:
+                crate::util::swr::Swr::<orbyn_contracts::ProjectScopeCatalog>::new(
+                    Duration::ZERO,
+                    Duration::ZERO,
+                    8,
+                )
+                .keeping(|_| false),
             tool_reads: crate::util::swr::Swr::<Option<orbyn_contracts::EngineTools>>::new(
                 crate::agents::engine_tools::TOOLS_FRESH,
                 crate::agents::engine_tools::TOOLS_MAX_AGE,

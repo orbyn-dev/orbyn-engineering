@@ -352,6 +352,8 @@ mod tests {
                         position: position as u32,
                         name: name.clone(),
                         branch: "orbyn/thread".into(),
+                        // The fixture writes the row itself, with no base: a thread stored before the column.
+                        base_branch: None,
                         worktree_path: text_of(worktree),
                     },
                     &crate::util::now(),
@@ -522,6 +524,8 @@ mod tests {
                         position: position as u32,
                         name: name.to_owned(),
                         branch: "orbyn/thread".into(),
+                        // The fixture writes the row itself, with no base: a thread stored before the column.
+                        base_branch: None,
                         worktree_path: text_of(worktree),
                     },
                     &crate::util::now(),
