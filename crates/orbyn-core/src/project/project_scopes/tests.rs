@@ -773,11 +773,18 @@ async fn catalog_reads_together_share_one_observation_and_a_later_one_sees_chang
 /// A folder whose name ends in a space. Windows keeps such a name only when the folder is named
 /// through its verbatim form, and Git refuses to enter one at all (it drops the space and finds no
 /// such folder), so this is how a test can hold the path Git reports for one.
+#[cfg(windows)]
 fn space_ending_folder(path: &Path) -> PathBuf {
-    #[cfg(windows)]
     let path = PathBuf::from(format!(r"\\?\{}", path.display()));
     std::fs::create_dir_all(&path).unwrap();
     path
+}
+
+/// A folder whose name ends in a space, which every other target names as it is.
+#[cfg(unix)]
+fn space_ending_folder(path: &Path) -> PathBuf {
+    std::fs::create_dir_all(path).unwrap();
+    path.to_path_buf()
 }
 
 /// Git names the work tree root it resolved, and `lines` has already dropped the line terminator:
