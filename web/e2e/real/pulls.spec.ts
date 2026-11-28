@@ -538,7 +538,7 @@ test("the chip lists this thread's pull request, and a thread without one has no
   await expect(chip).toHaveCount(0);
 });
 
-test("a thread links, watches and unlinks; Work on this opens a thread on the branch", async ({ page }) => {
+test("Work on this opens a thread on the pull request's branch", async ({ page }) => {
   execFileSync("git", ["push", "-q", "origin", "main:refs/heads/feat-one"], { cwd: service.repo });
   const article = await openPull(page, "First layer");
   await moreAction(page, article, "Check out in a worktree");
@@ -550,35 +550,50 @@ test("a thread links, watches and unlinks; Work on this opens a thread on the br
   expect(current.title).toBe("First layer");
   expect(current.worktree?.branch).toBe("feat-one");
   await expect.poll(async () => (await service.api<{ number: number }[]>("GET", `/api/threads/${thread}/pulls`)).map((pull) => pull.number)).toEqual([1]);
+  expect(projectId).not.toBe("");
+});
+
+// Kept apart from Work on this above: creating a worktree is forge work, and sharing one 30 s test budget
+// with the dialog's own answer left the assertion too little of it under load, so the failure read as a
+// dialog with no error. Each behaviour now has a budget of its own.
+test("a thread links, watches and unlinks, and a missing number keeps its input with the 404", async ({ page }) => {
+  const thread = await service.api<{ id: string }>("POST", "/api/threads", { project_id: projectId, engine: "codex", title: "Link and unlink" });
+  await service.api("POST", `/api/threads/${thread.id}/pulls`, { number: 1 });
+  await page.goto(`${service.page}#/threads/${thread.id}`);
+  await expect(page.getByRole("heading", { name: "Link and unlink", exact: true })).toBeVisible();
 
   await page.locator(".pr-chip").click();
   const popover = page.getByRole("dialog", { name: "Pull requests" });
   await popover.getByRole("switch", { name: "Watch" }).check();
-  await expect.poll(async () => (await service.api<{ number: number }[]>("GET", `/api/threads/${thread}/watches`)).map((watch) => watch.number)).toEqual([1]);
+  await expect.poll(async () => (await service.api<{ number: number }[]>("GET", `/api/threads/${thread.id}/watches`)).map((watch) => watch.number)).toEqual([1]);
   await popover.getByRole("button", { name: "Unlink #1" }).click();
   await expect(page.locator(".pr-chip")).toHaveCount(0);
   // With none linked the details card still offers to link one.
   await page.getByRole("button", { name: "Details" }).click();
   await page.getByRole("button", { name: "Link by number" }).click();
   const link = page.getByRole("dialog", { name: "Link by number" });
-  await link.getByRole("textbox", { name: "Pull request number" }).fill("9999");
-  const linkUrl = new URL(`/api/threads/${thread}/pulls`, page.url()).href;
-  const [response] = await Promise.all([
-    page.waitForResponse((response) =>
-      response.url() === linkUrl && response.request().method() === "POST" && response.request().postDataJSON()?.number === 9999,
-    ),
-    link.getByRole("button", { name: "Link", exact: true }).click(),
-  ]);
-  // The forge's own "could not resolve" answer is a 404 from the service.
-  // Start the UI's error budget after the response body arrives; forge work has the remaining test budget.
-  expect(response.status()).toBe(404);
-  expect(await response.finished()).toBeNull();
-  await expect(link.getByText("No pull request #9999 in this repository.")).toBeVisible();
-  await expect(link.getByRole("textbox", { name: "Pull request number" })).toHaveValue("9999");
-  await link.getByRole("textbox", { name: "Pull request number" }).fill("1");
+  const input = link.getByRole("textbox", { name: "Pull request number" });
+  await input.fill("9999");
+  const linkUrl = new URL(`/api/threads/${thread.id}/pulls`, page.url()).href;
+  // The service's answer is recorded, never waited on: the test follows what the person sees, so a slow or
+  // missing answer fails on the dialog's own state and not on a request wait that hides it.
+  const answers: number[] = [];
+  const collect = (response: Response) => {
+    if (response.url() === linkUrl && response.request().method() === "POST") answers.push(response.status());
+  };
+  page.on("response", collect);
+  try {
+    await link.getByRole("button", { name: "Link", exact: true }).click();
+    await expect(link.getByText("No pull request #9999 in this repository.")).toBeVisible();
+    await expect(input).toHaveValue("9999");
+    // The forge's own "could not resolve" answer is a 404 from the service.
+    expect(answers).toEqual([404]);
+  } finally {
+    page.off("response", collect);
+  }
+  await input.fill("1");
   await link.getByRole("button", { name: "Link", exact: true }).click();
   await expect(page.locator(".pr-chip")).toHaveText("#1");
-  expect(projectId).not.toBe("");
 });
 
 test("a pending link keeps its input through a thread refresh and shows the service's 404", async ({ page }) => {
