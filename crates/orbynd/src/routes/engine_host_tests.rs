@@ -37,14 +37,32 @@ fn node_or_skip(found: Option<String>, required: bool) -> Option<String> {
     found
 }
 
+/// The node this run can start, named the way this platform starts a program. Windows
+/// cannot spawn the `/c/...` path a Git Bash `sh` answers `command -v` with, so it asks
+/// `where`; elsewhere the POSIX answer is the path itself.
 fn node() -> Option<String> {
-    let found = std::process::Command::new("sh")
-        .args(["-c", "command -v node"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
-        .filter(|path| !path.is_empty());
+    let found = if cfg!(windows) {
+        std::process::Command::new("where")
+            .arg("node")
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| {
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .map(str::to_owned)
+            })
+    } else {
+        std::process::Command::new("sh")
+            .args(["-c", "command -v node"])
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+            .filter(|path| !path.is_empty())
+    };
     node_or_skip(
         found,
         std::env::var("ORBYN_REQUIRE_NODE").is_ok_and(|v| v == "1"),
@@ -62,7 +80,7 @@ fn a_missing_node_skips_when_it_is_not_required() {
     assert_eq!(node_or_skip(None, false), None);
 }
 
-/// A service whose Claude host is the stand-in, started through a launcher script that ignores the
+/// A service whose Claude host is the stand-in, started through a launcher that ignores the
 /// family argument the core passes.
 async fn serve(name: &str, flag_on: bool) -> Option<Served> {
     let node = node()?;
@@ -71,15 +89,23 @@ async fn serve(name: &str, flag_on: bool) -> Option<Served> {
     std::fs::create_dir_all(&dir).unwrap();
     let standin = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../orbyn-core/src/agents/driver/host/tests/standin.mjs");
-    let launcher = dir.join("host.sh");
-    std::fs::write(
-        &launcher,
+    // The host program has to be one this platform starts: Windows cannot spawn a
+    // `#!/bin/sh` script, so it gets a batch file, which `CreateProcess` reaches through
+    // `cmd.exe`; anywhere else keeps the launcher script. Both set the family the
+    // stand-in answers as and ignore the family argument the core passes.
+    let launcher = dir.join(if cfg!(windows) { "host.cmd" } else { "host.sh" });
+    let text = if cfg!(windows) {
+        format!(
+            "@echo off\r\nset \"STANDIN_FAMILY=claude\"\r\n\"{node}\" \"{}\"\r\n",
+            standin.display()
+        )
+    } else {
         format!(
             "#!/bin/sh\nSTANDIN_FAMILY=claude exec \"{node}\" \"{}\"\n",
             standin.display()
-        ),
-    )
-    .unwrap();
+        )
+    };
+    std::fs::write(&launcher, text).unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
