@@ -122,3 +122,53 @@ async fn a_remote_viewer_may_read_and_the_flag_off_hides_both_routes() {
     assert_eq!(status, 404);
     assert_eq!(body, unknown, "it answers as an absent route does");
 }
+
+/// The Autopilot digest's `needs_person` count is this read's count over HTTP: an empty day, a task waiting on a person,
+/// and the same day after that wait was dismissed. The digest's own bounds still refuse a bad window.
+#[tokio::test]
+async fn the_digest_needs_person_count_is_this_read() {
+    let app = serve("needs-you-digest", true, false).await;
+    let (status, digest) = app.get("/api/crew/autopilot/digest").await;
+    assert_eq!(status, 200);
+    assert_eq!(digest["needs_person"], 0);
+    assert_eq!(digest["quiet"], true);
+    let (_, empty) = app.get("/api/crew/needs-you").await;
+    assert_eq!(empty["count"], 0);
+
+    let (task, _) = seed_task(&app.core, "needs-you-digest");
+    app.core
+        .store
+        .add_crew_run(&task, "lead-1", "member-01")
+        .unwrap();
+    app.core
+        .store
+        .move_crew_task(&task, "needs_person", None)
+        .unwrap();
+    let (_, list) = app.get("/api/crew/needs-you").await;
+    assert_eq!(list["count"], 1);
+    let (status, digest) = app.get("/api/crew/autopilot/digest").await;
+    assert_eq!(status, 200);
+    assert_eq!(digest["needs_person"], list["count"]);
+    assert_eq!(digest["quiet"], false);
+
+    let (status, _) = post(
+        &app,
+        "/api/crew/needs-you/dismiss",
+        json!({ "kind": "could_not_start", "id": task }),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (_, list) = app.get("/api/crew/needs-you").await;
+    assert_eq!(list["count"], 0);
+    let (status, digest) = app.get("/api/crew/autopilot/digest").await;
+    assert_eq!(status, 200);
+    assert_eq!(digest["needs_person"], list["count"]);
+    assert_eq!(
+        digest["quiet"], true,
+        "a dismissed wait is not something to say"
+    );
+
+    let (status, body) = app.get("/api/crew/autopilot/digest?hours=0").await;
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "invalid_input");
+}

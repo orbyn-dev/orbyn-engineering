@@ -49,6 +49,17 @@ pub struct RuleLane {
 }
 
 impl RuleLane {
+    /// The paths the rule names, when it names any: the lane runs only when the change touches one. `None` when the rule
+    /// always asks for the lane. A read shows them as the rule wrote them (`src/**` stays a pattern, never a path it covered).
+    pub fn condition_paths(&self) -> Option<Vec<String>> {
+        self.when.as_ref().map(|patterns| {
+            patterns
+                .iter()
+                .map(|pattern| pattern.as_str().to_owned())
+                .collect()
+        })
+    }
+
     /// Whether the rule asks for this lane for a change that touched `changed`. When the changed paths are
     /// not known, a lane with a condition runs: not knowing is never a reason to skip a review.
     pub fn applies(&self, changed: Option<&[String]>) -> bool {

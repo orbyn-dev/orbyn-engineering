@@ -172,6 +172,8 @@ describe("the Right now row", () => {
   it("gives every wait and reason its own words, and an unknown one its raw word", () => {
     expect(waitingKindLabel("task_needs_person")).toBe("Asked a question");
     expect(waitingKindLabel("merge_waiting")).toBe("A merge that waits");
+  expect(waitingKindLabel("merge_gate_waiting")).toBe("A merge to release");
+  expect(waitingKindLabel("command_approval")).toBe("A command to approve");
     expect(waitingKindLabel("manual_check")).toBe("A check only you can make");
     expect(waitingKindLabel("could_not_start")).toBe("A task that could not start");
     expect(waitingKindLabel("could_not_stop")).toBe("A task that could not be stopped");

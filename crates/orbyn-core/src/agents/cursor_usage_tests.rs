@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::issues::fake_http::{Reply, Seen, Server};
-use crate::store::{Store, parse_billed_events};
+use crate::store::{AccountRead, Store, parse_billed_events};
 use crate::testing::TempDir;
 use serde_json::{Value, json};
 
@@ -318,4 +318,343 @@ fn only_the_exact_loopback_hosts_may_take_the_token_over_plain_http() {
     ] {
         assert!(!is_loopback(base), "{base}");
     }
+}
+
+const MINUTE: u64 = 60_000;
+const HOUR: u64 = 3_600_000;
+const DAY: u64 = 86_400_000;
+/// A wall clock the policy is asked about, so no test waits or reads the machine's own clock.
+/// 2026-10-11T04:00:00Z, far enough from the epoch for a month of history behind it.
+const NOW: u64 = 1_791_691_200_000;
+
+fn read(since_ms: u64, until_ms: u64, fetched_at_ms: u64) -> Option<AccountRead> {
+    Some(AccountRead {
+        since_ms,
+        until_ms,
+        fetched_at_ms,
+    })
+}
+
+/// The first read of an account starts at the newest end, because that is where the spend a
+/// person opens the screen to see is, and it reaches back only as far as one span allows.
+#[test]
+fn the_first_read_starts_at_the_newest_end_of_the_period() {
+    assert_eq!(
+        next_window(None, 0, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - DAY,
+            until_ms: NOW,
+        })
+    );
+    assert_eq!(
+        next_window(None, NOW - 30 * DAY, NOW, u64::MAX),
+        Some(Window {
+            since_ms: NOW - 30 * DAY,
+            until_ms: NOW,
+        }),
+        "with no span limit the read reaches back to the period's own start"
+    );
+}
+
+/// A read the store still holds is not repeated, and one that no longer covers the period asked
+/// for is not used as an answer.
+#[test]
+fn a_read_is_answered_from_the_store_only_while_it_is_fresh_and_covers_the_period() {
+    let fresh = read(0, NOW - 30_000, NOW - 30_000);
+    assert_eq!(next_window(fresh, 0, NOW, DAY), None);
+
+    // A minute after it was read, the same window is read again.
+    let stale = read(0, NOW - HOUR, NOW - FRESH_FOR_MS);
+    let window = next_window(stale, 0, NOW, DAY).expect("a stale read is repeated");
+    assert_eq!(window.until_ms, NOW, "the read brings the newest events");
+    assert_eq!(
+        window.since_ms,
+        NOW - HOUR - REFETCH_OVERLAP_MS,
+        "and overlaps the last covered hour, because an amount settles after it is first read"
+    );
+
+    // A period that starts before the store's window cannot be answered from it.
+    let behind = read(NOW - 2 * DAY, NOW, NOW);
+    assert!(next_window(behind, NOW - 5 * DAY, NOW, DAY).is_some());
+}
+
+/// A fresh window that ends before the period starts holds nothing the period can be answered
+/// with, so the newest window is read instead of the store answering with nothing.
+#[test]
+fn a_fresh_read_that_ends_before_the_period_does_not_answer_it() {
+    let period_start = NOW - HOUR;
+    let covered = read(NOW - 10 * DAY, NOW - 6 * HOUR, NOW);
+    assert_eq!(
+        next_window(covered, period_start, NOW, DAY),
+        Some(Window {
+            since_ms: period_start,
+            until_ms: NOW,
+        }),
+        "the store holds nothing in the period, so the newest window is read"
+    );
+}
+
+/// History older than the store's window is read backwards, one span at a time, and never past
+/// the period's start.
+#[test]
+fn older_history_is_read_backwards_one_span_at_a_time() {
+    let covered = read(NOW - 2 * DAY, NOW, NOW);
+    assert_eq!(
+        next_window(covered, 0, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - 3 * DAY,
+            until_ms: NOW - 2 * DAY,
+        })
+    );
+    assert_eq!(
+        next_window(read(NOW - 2 * DAY, NOW, NOW), NOW - 5 * DAY, NOW, u64::MAX),
+        Some(Window {
+            since_ms: NOW - 5 * DAY,
+            until_ms: NOW - 2 * DAY,
+        }),
+        "the period's start is the oldest end, not before it"
+    );
+}
+
+/// A window whose end is behind the clock is topped up forwards, at most one span at a time.
+#[test]
+fn a_window_behind_the_clock_is_topped_up_forwards() {
+    let behind = read(NOW - 10 * DAY, NOW - 30 * HOUR, NOW - 30 * HOUR);
+    let window = next_window(behind, NOW - 10 * DAY, NOW, DAY).expect("the newest events are read");
+    assert_eq!(
+        window.since_ms,
+        NOW - 30 * HOUR - REFETCH_OVERLAP_MS.min(DAY / 2),
+        "a narrower read overlaps less so that it still moves forward"
+    );
+    assert_eq!(
+        window.until_ms,
+        window.since_ms + DAY,
+        "one span of the read, not the whole gap to the clock"
+    );
+}
+
+/// The last hour already read is asked for again even when the window reaches the clock, because
+/// that is where Cursor finalizes the amounts it first reported unsettled.
+#[test]
+fn a_settled_amount_is_seen_by_asking_for_the_last_covered_hour_again() {
+    let window = next_window(
+        read(NOW - 10 * DAY, NOW, NOW - FRESH_FOR_MS),
+        NOW - 5 * DAY,
+        NOW,
+        DAY,
+    )
+    .expect("the settled amounts are read");
+    assert_eq!(
+        window,
+        Window {
+            since_ms: NOW - REFETCH_OVERLAP_MS,
+            until_ms: NOW,
+        }
+    );
+}
+
+/// The store's own record of what was read, so these walks are checked against the write rule the
+/// store keeps rather than a second copy of it.
+struct Reads {
+    _dir: TempDir,
+    store: Store,
+}
+
+impl Reads {
+    fn new() -> Self {
+        let dir = TempDir::new();
+        let store = Store::open(&dir.path().join("orbyn.db"), "epoch-a").unwrap();
+        Self { _dir: dir, store }
+    }
+
+    /// Records one read of `window`, as the reader hands it to the store: no events, because a
+    /// window that found no spend was still read.
+    fn record(&self, window: Window, fetched_at_ms: u64) -> Option<AccountRead> {
+        self.store
+            .record_account_report(
+                "cursor",
+                window.since_ms,
+                window.until_ms,
+                &[],
+                fetched_at_ms,
+            )
+            .expect("the window is recorded");
+        self.read()
+    }
+
+    fn read(&self) -> Option<AccountRead> {
+        self.store
+            .account_read("cursor")
+            .expect("the store answers")
+    }
+}
+
+/// A stored window whose end is after the clock was written before the clock moved back, or is stale: a future
+/// fetch time also reads as fresh, because the subtraction saturates. Its bounds cannot name a window this read may
+/// ask for, so the newest window a span allows is read instead.
+#[test]
+fn a_stored_window_that_ends_after_the_clock_reads_the_newest_window() {
+    let period_start = NOW - 10 * DAY;
+    // The record the finding names: a minute-span period, fetched after the clock moved back.
+    let ahead = read(NOW + 2 * MINUTE, NOW + 3 * MINUTE, NOW + 3 * MINUTE);
+    assert_eq!(
+        next_window(ahead, period_start, NOW, MINUTE),
+        Some(Window {
+            since_ms: NOW - MINUTE,
+            until_ms: NOW,
+        }),
+        "the newest window, not the future one the read's own bounds name"
+    );
+    assert_eq!(
+        next_window(ahead, period_start, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - DAY,
+            until_ms: NOW,
+        }),
+        "one span still bounds the read that resets the walk"
+    );
+    assert_eq!(
+        next_window(
+            read(NOW + HOUR, NOW + 2 * HOUR, NOW),
+            period_start,
+            NOW,
+            DAY
+        ),
+        Some(Window {
+            since_ms: NOW - DAY,
+            until_ms: NOW,
+        }),
+        "a read whose whole window is ahead of the clock is reset the same way"
+    );
+    // Coverage that ends at or before the clock keeps today's path.
+    assert_eq!(
+        next_window(read(NOW - 2 * DAY, NOW, NOW), 0, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - 3 * DAY,
+            until_ms: NOW - 2 * DAY,
+        }),
+        "a window that ends at the clock is still walked back one span"
+    );
+}
+
+/// A record whose own read time is after the clock was written before the clock moved back: the
+/// subtraction saturates, so an arbitrarily old read would read as fresh and answer a period its
+/// window does not reach. Its ends still say what was read, so the window behind the clock is topped
+/// up forwards; only its freshness is refused.
+#[test]
+fn a_read_fetched_after_the_clock_does_not_answer_the_period() {
+    let period_start = NOW - 2 * DAY;
+    // The window reaches the period's own start but ends an hour behind the clock, and names a read
+    // time an hour after it.
+    let ahead = read(NOW - 2 * DAY, NOW - HOUR, NOW + HOUR);
+    assert_eq!(
+        next_window(ahead, period_start, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - HOUR - REFETCH_OVERLAP_MS,
+            until_ms: NOW,
+        }),
+        "the missing hour is read, and the hour already read is asked for again"
+    );
+    // A read time at the clock is a read that just happened, so it still answers the period.
+    assert_eq!(
+        next_window(read(0, NOW, NOW), 0, NOW, DAY),
+        None,
+        "a fetch time at the clock is still less than a minute ago"
+    );
+    // Coverage that reaches the clock is walked back as before, rather than reset to the newest
+    // window: a future fetch time takes the freshness away, not the history.
+    assert_eq!(
+        next_window(read(NOW - 2 * DAY, NOW, NOW + HOUR), 0, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - 3 * DAY,
+            until_ms: NOW - 2 * DAY,
+        }),
+        "older history is still read backwards from what was read"
+    );
+}
+
+/// The newest window a read takes when the store ends after the clock is recorded, so its end
+/// replaces that end. Until it did, the record's future end survived the write: every later call
+/// selected the same reset window again and the walk back never moved, so the period's start was
+/// never read.
+#[test]
+fn recording_the_reset_window_clears_the_stored_end_after_the_clock() {
+    let reads = Reads::new();
+    let ahead = NOW + DAY;
+    reads.record(
+        Window {
+            since_ms: NOW - DAY,
+            until_ms: ahead,
+        },
+        ahead,
+    );
+
+    let reset = next_window(reads.read(), 0, NOW, DAY).expect("the newest window is read");
+    assert_eq!(
+        reset,
+        Window {
+            since_ms: NOW - DAY,
+            until_ms: NOW,
+        }
+    );
+    let covered = reads.record(reset, NOW).expect("the read is recorded");
+    assert_eq!(
+        covered.until_ms, NOW,
+        "the stored end after the clock is replaced by the window that was read"
+    );
+    assert_eq!(
+        next_window(Some(covered), 0, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - 2 * DAY,
+            until_ms: NOW - DAY,
+        }),
+        "the next read walks history back instead of asking for the reset window again"
+    );
+}
+
+/// A period shorter than the one-hour overlap is walked back one span at a time, rather than the
+/// newest window being selected again on every call.
+#[test]
+fn a_period_shorter_than_the_overlap_is_walked_back_to_its_start() {
+    let period_start = NOW - 30 * MINUTE;
+    let reads = Reads::new();
+    let mut covered = None;
+    let mut steps = 0;
+    while let Some(window) = next_window(covered, period_start, NOW, MINUTE) {
+        covered = reads.record(window, NOW);
+        steps += 1;
+        assert!(
+            steps <= 40,
+            "each read walks one minute further back: {covered:?}"
+        );
+    }
+    assert_eq!(
+        covered.expect("the period is read").since_ms,
+        period_start,
+        "the stored start reaches the period's start, not only the newest minute"
+    );
+}
+
+/// A clock that moves between two reads does not hold the walk back at the newest window: it still
+/// reaches the period's start.
+#[test]
+fn a_clock_that_moves_between_reads_still_walks_back_to_the_period_start() {
+    let period_start = NOW - 10 * DAY;
+    let reads = Reads::new();
+    let mut covered = None;
+    let mut steps = 0;
+    for call in 0..20 {
+        // Each call is a later instant, and the last one is far enough behind to be re-read.
+        let now = NOW + call as u64 * 30_000;
+        let Some(window) = next_window(covered, period_start, now, DAY) else {
+            break;
+        };
+        covered = reads.record(window, now);
+        steps += 1;
+    }
+    let covered = covered.expect("the period is read");
+    assert_eq!(
+        covered.since_ms, period_start,
+        "the walk reaches the period's start in {steps} reads, not only the newest window"
+    );
 }

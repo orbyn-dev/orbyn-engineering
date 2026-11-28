@@ -161,7 +161,6 @@ export function FolderHeader({
   return (
     <li
       className="folder-head"
-      data-count={needs > 0 || (collapsed && count > 0) ? "" : undefined}
       data-file-over={drop.over || undefined}
       {...drop.handlers}
     >

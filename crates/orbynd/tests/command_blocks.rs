@@ -25,15 +25,24 @@ fn desktop() -> Options {
     }
 }
 
-/// A command that runs the fake engine in one block mode. The shell expands the
-/// variable, so a path with spaces still works.
-fn emitter(mode: &str) -> String {
-    #[cfg(windows)]
-    {
-        format!("\"%ORBYN_FAKE_BLOCKS%\" {mode}")
-    }
-    #[cfg(not(windows))]
-    {
+/// A command that runs the fake engine in one block mode.
+///
+/// A POSIX shell takes the quoted path as it stands, so the command names the engine.
+/// Windows runs a project script through `cmd /C` with the whole command line as one
+/// argument, and a quote inside that argument cannot reach `cmd` intact, so the fixture
+/// writes a one-line batch file beside `orbyn.json` and runs it by its bare name: `cmd`
+/// reads the quotes of the batch text itself, and the folder holding the engine may
+/// contain spaces.
+async fn emitter(service: &Service, thread: &str, mode: &str) -> String {
+    if cfg!(windows) {
+        let name = format!("emit-{mode}.cmd");
+        std::fs::write(
+            thread_cwd(service, thread).await.join(&name),
+            format!("@echo off\r\n\"%ORBYN_FAKE_BLOCKS%\" {mode}\r\n"),
+        )
+        .unwrap();
+        name
+    } else {
         format!("\"$ORBYN_FAKE_BLOCKS\" {mode}")
     }
 }
@@ -192,13 +201,12 @@ async fn blocks_answer_not_found_or_an_empty_list() {
 async fn a_clear_needs_the_person_and_drops_only_that_terminals_finished_blocks() {
     let dir = TempDir::new();
     let (service, thread) = setup(&dir, desktop(), "codex").await;
+    let finished = emitter(&service, &thread, "blocks").await;
+    let other_script = emitter(&service, &thread, "blocks").await;
     write_scripts(
         &service,
         &thread,
-        &[
-            ("finished", &emitter("blocks")),
-            ("other", &emitter("blocks")),
-        ],
+        &[("finished", &finished), ("other", &other_script)],
     )
     .await;
     let terminal = run_script(&service, &thread, "finished").await;
@@ -253,12 +261,8 @@ async fn a_clear_needs_the_person_and_drops_only_that_terminals_finished_blocks(
 async fn a_running_block_survives_a_clear_and_its_output_goes_on() {
     let dir = TempDir::new();
     let (service, thread) = setup(&dir, desktop(), "codex").await;
-    write_scripts(
-        &service,
-        &thread,
-        &[("running", &emitter("blocks-running"))],
-    )
-    .await;
+    let running = emitter(&service, &thread, "blocks-running").await;
+    write_scripts(&service, &thread, &[("running", &running)]).await;
     let terminal = run_script(&service, &thread, "running").await;
     wait_running(&service, &thread, &terminal).await;
 

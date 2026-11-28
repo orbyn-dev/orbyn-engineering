@@ -284,9 +284,12 @@ pub(crate) async fn primary_checkout(cwd: &Path) -> Result<PathBuf> {
 pub(crate) const PURPOSE_RULE: &str =
     "Use lowercase letters, digits and hyphens for the worktree name.";
 
+/// The longest purpose, in characters: the length git keeps a worktree folder and branch name at.
+pub(crate) const MAX_PURPOSE_CHARS: usize = 64;
+
 pub(crate) fn valid_purpose(purpose: &str) -> bool {
     !purpose.is_empty()
-        && purpose.len() <= 64
+        && purpose.len() <= MAX_PURPOSE_CHARS
         && purpose
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
@@ -426,9 +429,49 @@ impl Default for WorktreeOptions {
     }
 }
 
+/// Clears the registration git keeps for a checkout whose folder is gone. A folder a person deleted
+/// by hand leaves its registration behind, and git then refuses every `worktree add` at that path
+/// ("missing but already registered worktree"), so each retry fails the same way. Only that one
+/// registration is cleared, and only once git calls it prunable: a folder that still exists is never
+/// touched, and neither is a locked registration, which its person owns. Best effort — the add that
+/// follows reports whatever is still in the way.
+pub(crate) async fn clear_missing_worktree(repo: &Path, path: &Path) {
+    let Ok(records) = worktree_records(repo).await else {
+        return;
+    };
+    if !records
+        .iter()
+        .any(|record| record.prunable && same_checkout_path(&record.path, path))
+    {
+        return;
+    }
+    let path_text = path.to_string_lossy().into_owned();
+    if let Err(error) = git(repo, &["worktree", "remove", "--force", &path_text]).await {
+        tracing::warn!(%error, "could not clear a deleted worktree's registration");
+    }
+}
+
+/// Whether two spellings name the same checkout folder. `path` may be gone, so the folders that hold
+/// them are what the filesystem resolves: git's Windows spelling differs from ours.
+fn same_checkout_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    let (Some(left_holder), Some(right_holder)) = (
+        left.parent()
+            .and_then(|parent| crate::util::canonicalize(parent).ok()),
+        right
+            .parent()
+            .and_then(|parent| crate::util::canonicalize(parent).ok()),
+    ) else {
+        return false;
+    };
+    left.file_name() == right.file_name() && left_holder == right_holder
+}
+
 /// Finds or creates the purpose's worktree at `<repo>-wt/<purpose>`. A registered
-/// worktree already at that path is reused; its base is where it left the
-/// primary clone's HEAD.
+/// worktree already at that path is reused; its base is the base this call admits,
+/// and where its branch forked from this clone's HEAD when it admits none.
 pub(crate) async fn create_worktree(
     repo: &Path,
     purpose: &str,
@@ -445,7 +488,19 @@ pub(crate) async fn create_worktree(
         if registered.path.exists()
             && registered.path.file_name() == Some(std::ffi::OsStr::new(purpose))
         {
-            let base = text(&git(repo, &["merge-base", "HEAD", &registered.revision]).await?);
+            // The base this call admits, exactly as a new worktree records it: the run's repository
+            // checks are read at that commit, so the verifier must read that same one. Only a base
+            // the call named counts: an origin preference decides where a new checkout starts, and
+            // changes nothing here, because this checkout stays where it is and never picks that
+            // commit up. With none named, the reused branch's fork point is where its work began.
+            let admitted = match &options.base {
+                Some(_) => worktree_start(repo, options).await,
+                None => None,
+            };
+            let base = match admitted {
+                Some(start) => start,
+                None => text(&git(repo, &["merge-base", "HEAD", &registered.revision]).await?),
+            };
             // Git's spelling of a path differs on Windows, so keep ours when it is the same place.
             let same = crate::util::canonicalize(&registered.path).ok().as_ref()
                 == crate::util::canonicalize(&path).ok().as_ref();
@@ -488,28 +543,38 @@ pub(crate) async fn create_worktree(
         return Err(CoreError::Invalid("That branch name is not valid.".into()));
     }
     let start = worktree_start(repo, options).await.unwrap_or(head);
+    // A folder deleted by hand still holds this path in git's records, and the add below would be
+    // refused for it: that registration goes first.
+    clear_missing_worktree(repo, &path).await;
     git(
         repo,
         &["worktree", "add", "-b", &branch, &path_text, &start],
     )
     .await?;
-    let submodules: &[&str] = match options.submodules.as_str() {
-        "none" | "skip" => &[],
-        "top-level" | "top_level" => &["submodule", "update", "--init"],
-        _ => &["submodule", "update", "--init", "--recursive"],
-    };
-    // A submodule that cannot be fetched leaves the worktree usable.
-    if !submodules.is_empty()
-        && path.join(".gitmodules").exists()
-        && let Err(error) = git(&path, submodules).await
-    {
-        tracing::warn!(%error, "could not populate submodules");
-    }
+    populate_submodules(&path, &options.submodules).await;
     Ok(Worktree {
         path: path_text,
         branch,
         base: start,
     })
+}
+
+/// Populates a worktree's submodules the way the `submodules` mode asks (`recursive`, `top-level`, or
+/// none). Every path that makes a worktree calls it, so a checkout recovered from a branch an earlier
+/// attempt left out has the same contents as a new one. A submodule that cannot be fetched leaves the
+/// worktree usable.
+pub(crate) async fn populate_submodules(path: &Path, mode: &str) {
+    let submodules: &[&str] = match mode {
+        "none" | "skip" => &[],
+        "top-level" | "top_level" => &["submodule", "update", "--init"],
+        _ => &["submodule", "update", "--init", "--recursive"],
+    };
+    if submodules.is_empty() || !path.join(".gitmodules").exists() {
+        return;
+    }
+    if let Err(error) = git(path, submodules).await {
+        tracing::warn!(%error, "could not populate submodules");
+    }
 }
 
 /// The project's local branches, capped. Semantic naming avoids them; a listing past the
@@ -531,7 +596,7 @@ async fn local_branch_names(repo: &Path) -> Result<Vec<String>> {
 }
 
 /// A chosen base, or the remote's head when asked for. `None` means this clone's HEAD.
-async fn worktree_start(repo: &Path, options: &WorktreeOptions) -> Option<String> {
+pub(crate) async fn worktree_start(repo: &Path, options: &WorktreeOptions) -> Option<String> {
     if let Some(base) = &options.base {
         if base.starts_with('-') {
             return None;
@@ -2067,6 +2132,65 @@ mod tests {
                 ("renamed".to_owned(), "new.txt".to_owned()),
                 ("added".to_owned(), "c.txt".to_owned()),
             ]
+        );
+    }
+
+    /// A reused checkout records the base this call admits, and nothing else: the origin preference
+    /// decides where a *new* checkout starts, so a reused one keeps the commit it forked at instead of
+    /// a head it never picked up.
+    #[tokio::test]
+    async fn a_reused_worktree_keeps_its_fork_point_when_no_base_was_named() {
+        let origin = TempDir::new();
+        crate::testing::run_git(origin.path(), &["init", "-q", "-b", "main"]);
+        std::fs::write(origin.path().join("base.txt"), "base\n").unwrap();
+        let commit = |dir: &Path, message: &str| {
+            crate::testing::run_git(dir, &["add", "."]);
+            crate::testing::run_git(
+                dir,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.test",
+                    "commit",
+                    "-q",
+                    "-m",
+                    message,
+                ],
+            );
+        };
+        commit(origin.path(), "base");
+        let holder = TempDir::new();
+        let clone = holder.path().join("project");
+        crate::testing::run_git(
+            holder.path(),
+            &[
+                "clone",
+                "-q",
+                origin.path().to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
+        let options = WorktreeOptions {
+            from_origin: true,
+            ..WorktreeOptions::default()
+        };
+        let made = create_worktree(&clone, "first", &options).await.unwrap();
+        let forked = text(&git(&clone, &["rev-parse", "HEAD"]).await.unwrap());
+        assert_eq!(
+            made.base, forked,
+            "a new checkout starts where the origin's default branch is"
+        );
+        // The origin moves on, and the checkout stays where it was.
+        std::fs::write(origin.path().join("next.txt"), "next\n").unwrap();
+        commit(origin.path(), "next");
+        let advanced = text(&git(origin.path(), &["rev-parse", "main"]).await.unwrap());
+        assert_ne!(advanced, forked, "the origin really moved");
+        let reused = create_worktree(&clone, "first", &options).await.unwrap();
+        assert_eq!(reused.path, made.path, "the registered checkout is reused");
+        assert_eq!(
+            reused.base, forked,
+            "the reused checkout keeps its fork point, not the origin head {advanced}"
         );
     }
 }

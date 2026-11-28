@@ -85,6 +85,7 @@ fn enqueue_in(
 #[derive(Clone, Debug)]
 pub struct WatchRow {
     pub thread_id: String,
+    pub repo_id: String,
     pub number: u64,
     pub snapshot: Option<String>,
     pub comment_wakes: i64,
@@ -541,40 +542,50 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    pub fn watch_pull(&self, thread_id: &str, number: u64) -> Result<PullWatch> {
+    /// Starts watching one repository's pull request. A pull request watched before keeps what it last reported.
+    pub fn watch_pull(&self, thread_id: &str, repo_id: &str, number: u64) -> Result<PullWatch> {
         let created_at = now();
         self.commit(|tx, _| {
             tx.execute(
-                "INSERT INTO pull_watches (thread_id, number, created_at) VALUES (?1, ?2, ?3)
-                 ON CONFLICT (thread_id, number) DO NOTHING",
-                params![thread_id, number as i64, created_at],
+                "INSERT INTO pull_watches (thread_id, repo_id, number, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (thread_id, repo_id, number) DO NOTHING",
+                params![thread_id, repo_id, number as i64, created_at],
             )?;
             Ok(())
         })?;
         Ok(PullWatch {
             thread_id: thread_id.to_owned(),
+            repo_id: repo_id.to_owned(),
             number,
             created_at,
         })
     }
 
-    pub fn unwatch_pull(&self, thread_id: &str, number: u64) -> Result<()> {
+    pub fn unwatch_pull(&self, thread_id: &str, repo_id: &str, number: u64) -> Result<()> {
         self.commit(|tx, _| {
             tx.execute(
-                "DELETE FROM pull_watches WHERE thread_id = ?1 AND number = ?2",
-                params![thread_id, number as i64],
+                "DELETE FROM pull_watches WHERE thread_id = ?1 AND repo_id = ?2 AND number = ?3",
+                params![thread_id, repo_id, number as i64],
             )?;
             Ok(())
         })
     }
 
-    pub fn update_watch(&self, thread_id: &str, number: u64, update: WatchUpdate) -> Result<()> {
+    pub fn update_watch(
+        &self,
+        thread_id: &str,
+        repo_id: &str,
+        number: u64,
+        update: WatchUpdate,
+    ) -> Result<()> {
         self.commit(|tx, _| {
             tx.execute(
-                "UPDATE pull_watches SET snapshot = COALESCE(?3, snapshot), comment_wakes = ?4,
-                    failures = ?5 WHERE thread_id = ?1 AND number = ?2",
+                "UPDATE pull_watches SET snapshot = COALESCE(?4, snapshot), comment_wakes = ?5,
+                    failures = ?6 WHERE thread_id = ?1 AND repo_id = ?2 AND number = ?3",
                 params![
                     thread_id,
+                    repo_id,
                     number as i64,
                     update.snapshot,
                     update.comment_wakes,
@@ -594,6 +605,7 @@ impl Store {
         let rows = statement.query_map([thread_id], |row| {
             Ok(WatchRow {
                 thread_id: row.get("thread_id")?,
+                repo_id: row.get("repo_id")?,
                 number: row.get::<_, i64>("number")? as u64,
                 snapshot: row.get("snapshot")?,
                 comment_wakes: row.get("comment_wakes")?,
@@ -682,13 +694,12 @@ impl Store {
             .optional()?)
     }
 
-    /// Drops a link. A watch is of the primary repository only, so it goes with a primary link and no other.
+    /// Drops a link and the watch on the same repository's pull request, if there is one.
     pub fn unlink_pull(&self, thread_id: &str, repo_id: &str, number: u64) -> Result<()> {
         self.commit(|tx, _| {
             tx.execute(
-                "DELETE FROM pull_watches WHERE thread_id = ?1 AND number = ?2
-                   AND ?3 = (SELECT project_id FROM threads WHERE id = ?1)",
-                params![thread_id, number as i64, repo_id],
+                "DELETE FROM pull_watches WHERE thread_id = ?1 AND repo_id = ?2 AND number = ?3",
+                params![thread_id, repo_id, number as i64],
             )?;
             let changed = tx.execute(
                 "DELETE FROM thread_pull_requests WHERE thread_id = ?1 AND repo_id = ?2 AND number = ?3",

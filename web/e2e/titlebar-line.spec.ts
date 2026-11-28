@@ -132,6 +132,54 @@ test("the hovered plus on a project row does not overlap the project name", asyn
 });
 
 /**
+ * A project row's waiting count is never covered by the plus that floats over the row's right end: the row reserves the
+ * plus's footprint, so one digit and three stop at the same place, and the count stays part of the toggle it sits in.
+ */
+for (const [name, prefs] of [["default sidebar", {}], ["narrow sidebar", { sidebarWidth: 180 }]] as const) {
+  test(`the hovered plus on a project row clears the waiting count (${name})`, async ({ page }) => {
+    await page.addInitScript((saved) => localStorage.setItem("orbyn.prefs.v1", JSON.stringify(saved)), prefs);
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await page.goto("/__mock/scenario/default");
+    await page.goto("/#/threads/t-done");
+    const head = page.locator(".folder-head").filter({ has: page.locator(".folder-needs") }).first();
+    await expect(head).toBeVisible();
+    const toggle = head.locator(".folder-toggle");
+    await head.hover();
+    // Hovered, the plus is painted: this is the state the count was found covered in.
+    await expect(head.locator(".folder-new")).toHaveCSS("opacity", "1");
+    // The count grows leftwards from the row's right end, so the plus keeps its gap whatever the count's width.
+    for (const countText of ["1", "128"]) {
+      const measured = await head.evaluate((row, text) => {
+        const count = row.querySelector(".folder-needs") as HTMLElement;
+        (count.querySelector("span[aria-hidden]") as HTMLElement).textContent = text;
+        const plus = row.querySelector(".folder-new")!.getBoundingClientRect();
+        const box = count.getBoundingClientRect();
+        const line = row.getBoundingClientRect();
+        return { count: { left: box.left, right: box.right, width: box.width }, plus: { left: plus.left, right: plus.right }, row: { left: line.left, right: line.right } };
+      }, countText);
+      expect(measured.count.width, `a ${countText} count is drawn`).toBeGreaterThan(0);
+      expect(measured.count.right, `the ${countText} count stops short of the plus`).toBeLessThanOrEqual(measured.plus.left);
+      expect(measured.count.left, "the count stays inside the row").toBeGreaterThanOrEqual(measured.row.left - 0.5);
+      expect(measured.plus.right, "the plus stays inside the row").toBeLessThanOrEqual(measured.row.right + 0.5);
+    }
+    // The count belongs to the toggle: clicking it folds the project rather than starting a thread in it.
+    const count = await head.locator(".folder-needs").boundingBox();
+    const expanded = await toggle.getAttribute("aria-expanded");
+    expect(count).not.toBeNull();
+    await page.mouse.click((count?.x ?? 0) + (count?.width ?? 0) / 2, (count?.y ?? 0) + (count?.height ?? 0) / 2);
+    await expect(toggle).toHaveAttribute("aria-expanded", expanded === "true" ? "false" : "true");
+    await expect(page).toHaveURL(/#\/threads\/t-done$/);
+    // Folded, the row shows its total in the same place: it stops short of the plus too.
+    const totals = await head.evaluate((row) => {
+      const plus = row.querySelector(".folder-new")!.getBoundingClientRect();
+      const total = row.querySelector(".group-count")!.getBoundingClientRect();
+      return { plusLeft: plus.left, totalRight: total.right };
+    });
+    expect(totals.totalRight).toBeLessThanOrEqual(totals.plusLeft);
+  });
+}
+
+/**
  * Row actions show only on pointer hover or keyboard focus, the open row included, and always for multi-selected rows.
  * Hidden, they are out of the Tab order and cover nothing: the open row's status text stays visible.
  */

@@ -58,13 +58,17 @@ describe("the shell poll", () => {
     vi.useRealTimers();
   });
 
-  it("reads the three lists every tick and one thread list for the whole app", async () => {
+  it("reads the two lists every tick, approvals while a run can wait, and one thread list for the whole app", async () => {
     await pollFor(IDLE_MS);
-    // Projects, the one thread list, and approvals: the idle app's own traffic.
-    expect(total()).toBe(TICKS * 3);
+    // Two reads every tick on the idle app: the project list and the one global thread list.
     expect(count("/api/projects")).toBe(TICKS);
     expect(count("/api/threads")).toBe(TICKS);
-    expect(count("/api/approvals?state=pending")).toBe(TICKS);
+    // Approvals are not a third list: a pending approval can only exist while a run waits on one
+    // (`approvalsToWatch`), so the idle app reads them once — this first tick, the list never read
+    // yet — finds nothing pending and no run, and skips them from then on. Idle traffic is
+    // 2 reads a tick, not the 3 a tick before #1678 added that condition.
+    expect(count("/api/approvals?state=pending")).toBe(1);
+    expect(total()).toBe(TICKS * 2 + 1);
     // The filtered list is a slice of the unfiltered one, so a poll never asks for it.
     expect(sent.filter((call) => call.includes("project_id="))).toEqual([]);
   });
@@ -91,6 +95,9 @@ describe("the shell poll", () => {
     setHidden(true);
     await pollFor(IDLE_MS);
     expect(count("/api/projects")).toBe(TICKS);
+    // A run this window knows is running keeps the approvals read on every tick, so an approval
+    // that run waits on is still seen within a tick: skipping them is for the idle app only.
+    expect(count("/api/approvals?state=pending")).toBe(TICKS);
   });
 
   it("does not look for work another client started while hidden, and finds it on the read when shown", async () => {

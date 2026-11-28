@@ -23,6 +23,7 @@ import type {
   WorkspaceStatus,
   LimitsOverview,
 } from "../src/api/types.ts";
+import { multiRepoThreadId } from "./multiRepo.ts";
 
 /** Fixed under test. In the dev server, "now" at startup, so ages read realistically. */
 export const T0 = process.env.VITEST ? Date.UTC(2026, 9, 31, 9, 0, 0) : Date.now();
@@ -356,6 +357,12 @@ export function threads(): Thread[] {
       last_run_state: "awaiting_approval",
     }),
     baseThread("t-empty", "p-site", "New thread", "claude", -9000),
+    // A multi-repository thread (docs/multi-repo.md): the one the Repos chip and its dialog draw in the dev mock.
+    baseThread(multiRepoThreadId, "p-app", "Apply the login redirect fix in two repositories", "claude", -2000, {
+      model: "claude-opus-5-5",
+      cwd: "/Users/dev/Library/Application Support/Orbyn/threads/t-multi-repo",
+      last_run_state: "completed",
+    }),
   ];
   manyTitles.forEach((title, at) => {
     list.push(

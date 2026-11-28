@@ -113,6 +113,11 @@ pub struct CoreConfig {
     /// Whether a crew worker's process starts under the restriction (and is refused where
     /// none exists). Ships `true`; only tests of crew logic with fake engines turn it off.
     pub crew_confine_workers: bool,
+    /// Whether a writing crew worker runs in its own worktree instead of the lead's checkout
+    /// (issue #436). Ships `false`: the worktree and its recorded checkout are built, but the
+    /// protected-file and index-flag baselines a start records are still read from the lead's
+    /// checkout, so turning it on for everyone is the rest of #436.
+    pub crew_writer_worktrees: bool,
 }
 
 impl CoreConfig {
@@ -143,6 +148,7 @@ impl CoreConfig {
             crew_merge_watch_interval: None,
             crew_background_watch_interval: None,
             crew_confine_workers: true,
+            crew_writer_worktrees: false,
         }
     }
 }
@@ -192,6 +198,9 @@ pub struct Core {
     pub(crate) project_scope_reads: crate::util::swr::Swr<orbyn_contracts::ProjectScopeCatalog>,
     /// The explorer's worktree lists and Git statuses, served from the last known value.
     pub explorer: Arc<crate::project::explorer::ExplorerReads>,
+    /// What the scope catalog last observed of each project folder's Git identity, kept
+    /// while the files that decided it hold (`project_scopes::git_facts`).
+    pub(crate) scope_git: Arc<crate::project::project_scopes::git_facts::ScopeGitFacts>,
     pub(crate) tool_reads: crate::util::swr::Swr<Option<orbyn_contracts::EngineTools>>,
     pub(crate) tool_lists: Mutex<crate::agents::engine_tools::ToolsCache>,
     /// What each engine id's tools check keeps between calls: one per id, because an engine
@@ -204,6 +213,10 @@ pub struct Core {
     pub(crate) workspace_restores: tokio::sync::Mutex<()>,
     /// Crew Preview: one `crew_start` at a time, so two briefs cannot both be granted a path.
     pub(crate) crew_starts: tokio::sync::Mutex<()>,
+    /// Crew Preview: one lease step at a time, so the live-lease read and the grant or terminal
+    /// objects it allows are one step, whether a member's request, a start, a correction or a
+    /// release writes it.
+    pub(crate) crew_lease_grants: tokio::sync::Mutex<()>,
     /// Crew Preview: the bus's guards, its wake-up for a waiting `crew_ask` and who is waited on.
     pub(crate) crew_bus: crate::crew::Bus,
     /// Code Mode: the live and finished script runs (`tools::mcp::code`).
@@ -366,6 +379,9 @@ impl Core {
             pull_details: Mutex::new(Default::default()),
             scm_reads,
             explorer,
+            scope_git: Arc::new(
+                crate::project::project_scopes::git_facts::ScopeGitFacts::default(),
+            ),
             health_reads: crate::util::swr::Swr::<orbyn_contracts::DependencyHealth>::new(
                 crate::operations::health::HEALTH_FRESH,
                 crate::operations::health::HEALTH_MAX_AGE,
@@ -400,6 +416,7 @@ impl Core {
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
             workspace_restores: tokio::sync::Mutex::new(()),
             crew_starts: tokio::sync::Mutex::new(()),
+            crew_lease_grants: tokio::sync::Mutex::new(()),
             crew_bus: crate::crew::Bus::default(),
             code_runs: crate::tools::mcp::code::CodeRuns::new(),
             issues: crate::issues::IssueDesk::new(Self::system_credentials()),
@@ -660,6 +677,23 @@ impl Core {
         project_id: &str,
         request: &orbyn_contracts::CreateThread,
     ) -> Result<git::WorktreeOptions> {
+        self.worktree_options_for(
+            project_id,
+            request.base_branch.as_deref(),
+            real_title(request.branch_name_seed.as_deref())
+                .or_else(|| real_title(request.title.as_deref())),
+        )
+    }
+
+    /// [`Self::worktree_options`] from the commit to start at and the title naming may read,
+    /// shared by a thread's worktree and a crew writer's (issue #436): one resolver, no second
+    /// copy of the preference reads.
+    pub(crate) fn worktree_options_for(
+        &self,
+        project_id: &str,
+        base: Option<&str>,
+        seed: Option<String>,
+    ) -> Result<git::WorktreeOptions> {
         let text = |key: &str| -> Result<String> {
             Ok(self
                 .preference(key, Some(project_id))?
@@ -673,12 +707,11 @@ impl Core {
                 prefix: text("branch_name_prefix")?,
                 custom: None,
             },
-            base: request.base_branch.clone(),
+            base: base.map(str::to_owned),
             from_origin: self.preference("new_worktrees_start_from_origin", Some(project_id))?
                 == serde_json::json!(true),
             submodules: text("worktree_submodules")?,
-            seed: real_title(request.branch_name_seed.as_deref())
-                .or_else(|| real_title(request.title.as_deref())),
+            seed,
         })
     }
 

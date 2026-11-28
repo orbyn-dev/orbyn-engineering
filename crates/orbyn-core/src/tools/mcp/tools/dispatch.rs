@@ -842,7 +842,7 @@ impl Core {
             }
             "orbyn_pull_watch" => json!(self.watch_pull(&own.id, number(args, "number")?)?),
             "orbyn_pull_unwatch" => {
-                self.store.unwatch_pull(&own.id, number(args, "number")?)?;
+                self.unwatch_pull(&own.id, number(args, "number")?)?;
                 json!({ "unwatched": true })
             }
             "orbyn_pull_guide_read" => {

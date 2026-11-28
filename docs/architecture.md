@@ -538,15 +538,35 @@ after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
 replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core keeps
 the account's billed events in `billed_events`, one row per event, keyed by a digest of the
-conversation, timestamp, model and counters because Cursor sends no event id. The usage reader (`agents/cursor_usage.rs`) is built against a fake server, takes the account's
-access token as an argument and has no caller yet, so the table stays empty and no `cursor` row
-appears in `/api/usage` — the row is drawn only when the store holds events, never as an
-always-empty engine; the credential read, its caller and a real account run remain owner-approved
-work.
-Three states stay apart: no store and no rows are no row at all, and a period that holds none of
-the stored events is a scanned engine of nothing. When the host read lands it must hand over one
+conversation, timestamp, model and counters because Cursor sends no event id, and the window of
+that history it has read, with the time it read it, in `billed_reads`. The window is a fact of its
+own because a read that found no spend writes no event: the events alone cannot say whether a day
+was looked at and came back empty. A window read less than a minute ago that still reaches back to
+the period's own start and into the period answers the read. A window whose own read time is after
+the clock is not fresh either — the clock moved back after that read, so no elapsed time can be
+taken from it — and it is read again under the same rules as a window that is no longer fresh, while
+what it already covered still counts as read. Otherwise the next read starts at the newest end, because
+that is where the spend a person opens the screen to see is; then it covers the last covered hour
+again, because Cursor finalizes an amount after it first reported it; then it walks older history
+backwards, one span at a time and never past the period's start, and a read still fresh walks older
+history before the newest end is read again, so a period shorter than that overlap, and a clock that
+moved since the read, still reach the period's start. A window whose end is after the clock — a read
+kept across a backward clock adjustment — answers nothing and starts the read at the newest end
+again, because no bound taken from it names a window inside the period; the read it starts there
+replaces that window instead of merging with it, so the end after the clock is not kept and later
+reads walk back again. A span bounds one read, not
+the history. Two windows that meet or overlap are one window, because nothing between them was left
+unread; a window with a gap between it and the stored one claims only itself, since the gap was
+never read. A day the read covers whole is what that day held, and the read replaces it, including
+with nothing; a day it covers in part keeps its other rows, because a part says nothing about the
+rest of that day. The usage reader (`agents/cursor_usage.rs`) is built against a fake server, takes the account's
+access token as an argument and has no caller yet, so both tables stay empty and no `cursor` row
+appears in `/api/usage` — the row is drawn for an engine whose window the core has read or whose
+store holds events, never as an always-empty engine; the credential read, its caller and a real
+account run remain owner-approved work.
+Three states stay apart: no store, and a store whose account was never read and which holds no event, are no row at all; a store whose account was read is a scanned engine even with no spend on it; and a period that holds none of the stored events is a scanned engine of nothing. When the host read lands it must hand over one
 complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
-the days it names, so reading a window twice writes the same rows and a window of two events is
+the days it covers whole, so reading a window twice writes the same rows and a window of two events is
 stored as two, while an amount that settles later updates its row instead of adding one. A record
 that cannot be read as a billed event — no usage block, no timestamp or model that names a day,
 a negative counter — is dropped rather than counted as zero. The account's counters are separate,
@@ -812,8 +832,11 @@ removed. The removal is refused, with no paths in the error, when `git status --
 ignored files. Commits and branches are never touched.
 
 Linked pull requests are polled every two minutes, and a refresh links the open pull
-request of the checkout's branch. The link is kept per thread and number, so a pull
-request's own linked threads are the project's threads that linked it.
+request of the checkout's branch. A link and its watch are kept per thread, repository
+and number, so two repositories can both have a #12, and a pull request's own linked
+threads are the project's threads that linked it. A watch route names the repository with
+`?repo_id=`, absent meaning the thread's primary repository, and a watch pass reads each
+watch in its own repository's worktree.
 `GET .../pulls/:number/breakdown` counts its changed files by change kind from the
 same rows `/files` serves, so it adds no forge read. A merge settles the thread when
 `on_merge` is set and the thread has not opted out. A watch wakes its thread, through the queue, when a
@@ -2588,7 +2611,11 @@ is dirty, unpushed, ignored or in a worktree.
 
 Worktrees sit beside the primary clone at `<repo>-wt/<purpose>/`, wherever that repo
 lives, on a neutral `feat/<purpose>` branch, and a registered worktree for a purpose
-is reused. A custom worktree location is not offered or accepted by either settings
+is reused. A writing crew worker's own checkout is one of these too, purpose
+`crew-<member>` on branch `crew-<member>`, built and off by default (docs/crew.md,
+"Isolation"); its checkout is reused only through that branch, never by the folder's
+name alone, and a folder Orbyn did not record making is left alone rather than cleared.
+A custom worktree location is not offered or accepted by either settings
 API. Earlier stored location preferences are left intact but ignored; they cannot
 redirect new worktrees. Existing Git-registered worktrees remain at their current
 paths, including earlier layouts, with no file migration or removal.
@@ -4064,7 +4091,8 @@ every method, path and which routes need a credential.
 | `GET /api/clones`, `POST /api/clones` | `CloneJob[]`; start a background clone (`202`), with an optional `path` |
 | `POST /api/clones/:id/cancel`, `/retry` | Stop a running clone; run a failed or cancelled one again |
 | `GET, POST /api/threads/:id/pulls`, `POST .../pulls/refresh` | Linked pull requests; refresh also links the branch's own |
-| `GET /api/threads/:id/watches`, `POST, DELETE /api/threads/:id/pulls/:number/watch` | `PullWatch`; `400` on a settled, archived or subagent thread |
+| `GET /api/threads/:id/watches?repo_id=`, `POST /api/threads/:id/pulls/:number/watch?repo_id=` | The read answers `PullWatch[]`; the start answers `201` and the stored `PullWatch` (`400` on a settled, archived or subagent thread); `repo_id` names one repository of a multi-repository thread, absent is its primary |
+| `DELETE /api/threads/:id/pulls/:number/watch?repo_id=` | `204` with no body; a watch that is not there is no error; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `POST /api/watches/check` | One watch pass now (`204`) |
 | `GET, DELETE /api/threads/:id/pulls/:number` | `PullRequestDetail`; unlink |
 | `POST /api/threads/:id/pulls/:number/review`, `/merge` | Review and merge through the forge CLI |

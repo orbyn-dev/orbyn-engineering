@@ -624,12 +624,11 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   (`IssueDetail.reactions`).
 - `templates` (**built, PR2**): the tracker's own issue templates for the scope, read-only:
   `{ id, name, description?, body, labels[] }`, at most 50, bodies cut at 16 KiB. A tracker with none answers `[]`,
-  never `404`: GitHub, Forgejo and Azure DevOps answer none. GitHub and Forgejo have no issue-template endpoint,
-  only repository files (`.github/ISSUE_TEMPLATE` on GitHub, `.gitea`/`.forgejo` `ISSUE_TEMPLATE` on Forgejo) that a
-  later row reads through the contents API (a `.yml` form needs a YAML reader; a `.md` template does not):
-  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has no issue template source at
-  all (its work item types are not templates).
-  GitLab and Linear answer their own.
+  never `404`. GitLab, Linear and GitHub answer their own; Forgejo and Azure DevOps answer none. GitHub and Forgejo
+  have no issue-template endpoint: their templates are repository files (`.github/ISSUE_TEMPLATE` on GitHub,
+  `.gitea`/`.forgejo` `ISSUE_TEMPLATE` on Forgejo) that the contents API lists (a `.yml` form needs a YAML reader; a
+  `.md` template does not). GitHub's markdown templates are read (#1548); Forgejo's files are not yet. Azure DevOps
+  has no issue template source at all (its work item types are not templates).
   Template text is the tracker's text and as untrusted as any other (see "Issue text is untrusted"); it only ever
   fills the person's own create form.
 - `bindProject` (**built, PR3**): stores which connected tracker and scope this project's issues come from, so the
@@ -764,17 +763,45 @@ create form; nothing feeds it to an engine.
   form shows. At most 50 and 16 KiB of body. A failed label read is swallowed: the templates answer with empty labels
   rather than failing the read. [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) tracks making that
   visible.
-- **GitHub, Forgejo, Azure DevOps**: answer `[]`. GitHub and Forgejo have **no issue-template endpoint**: their
-  templates are repository files under `.github/ISSUE_TEMPLATE` and `.gitea`/`.forgejo` `ISSUE_TEMPLATE`, which their
-  contents APIs can list cheaply (GitHub through the person's own `gh`); a later row reads them, with a YAML reader
-  for GitHub's `.yml` forms: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has
-  no issue template source at all (work item types are not templates). None of the three invents a template.
+- **GitHub**: the repository's markdown issue templates, read through the person's own `gh` (below). **Forgejo** has
+  **no issue-template endpoint** either: its templates are repository files under `.gitea`/`.forgejo`
+  `ISSUE_TEMPLATE`, which its contents API can list cheaply, and a later row reads them with a YAML reader for a
+  `.yml` form: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). **Azure DevOps** has no issue
+  template source at all (work item types are not templates). Neither invents a template.
 - **The web client reads this with the create dialog**: its Template row is drawn only when the read answers one, so
-  GitHub, Forgejo and Azure DevOps (all `[]`) draw no row. [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548)
-  tracks GitHub's and Forgejo's template files, and a later pass makes that picker visible for them.
-- **Not verified.** No real GitLab or Linear template list was read; both are tested against their local fake server,
-  and the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
-  `hasFormFields`) are from the APIs as understood. No real `orbynd` service run exercises the route.
+  Forgejo and Azure DevOps (both `[]`) draw no row while GitLab, Linear and GitHub draw theirs. Forgejo's template
+  files stay [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548).
+- **Not verified.** No real GitLab, Linear or GitHub template list was read; each is tested against its own fake, and
+  the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
+  `hasFormFields`, GitHub's contents listing and base64 body) are from the APIs as understood. No real `orbynd`
+  service run exercises the route.
+
+### As built (#1548, GitHub repository templates)
+
+GitHub has no issue-template endpoint, so `templates` for GitHub is the contents API read through the person's own
+`gh`: one `GET repos/{scope}/contents/.github/ISSUE_TEMPLATE` lists the folder and one
+`GET repos/{scope}/contents/{path}` per markdown file answers its body. A repository without that folder answers
+none (GitHub's 404 for a path it does not have is "no templates", never an error); any other refusal is the usual
+`tracker_not_connected`, `rate_limited`, `forbidden` or `tracker_unavailable`, and one template's own body read
+that answers 404 is `not_found`; the read answers nothing. At most 50 templates, each body cut to 16 KiB; one read
+is one listing plus one body per markdown template, and a templated create re-runs it.
+
+- **A markdown template is split at its front matter.** The block is the file's first lines, opened and closed by a
+  line that is exactly `---`; a file whose block never closes is all body. Only three keys are read, one
+  `key: value` line each: `name` (the template's name), `about` (its `description`) and `labels` (its label names,
+  split on commas). A value in matching quotes is unquoted. This is not a YAML reader: an indented continuation, a
+  list, an escape, a block-scalar header (`|`, `>` and their modifiers such as `|-`, `>+` or `|2`, with or without an
+  inline comment, whose text is on the following lines) and every other key are dropped rather than guessed, and a
+  `name` the file does not give falls back to the file's own name.
+- **A form is skipped.** `.yml` and `.yaml` issue forms are not read at all, because their shape needs a YAML
+  interpreter Orbyn does not carry and a form is not a body: a repository whose only templates are forms answers
+  none (`[]`), which is honest but is not what GitHub's site offers. `config.yml`, a folder and anything else in the
+  listing are skipped too.
+- **The id is the file's name** (`bug_report.md`): it is what `POST /api/issues/item/create` names as `template`, and
+  the same file answers the same id on every read.
+- **A body GitHub did not send as base64** (a file over 1 MB, `encoding: "none"`, or content that does not decode)
+  is skipped, so the list keeps the templates it can read; a `gh` failure is not skipped and answers the read.
+- Not verified: no real repository's templates were read, and no real `orbynd` service run exercises the route.
 
 ### As built (R15 PR3)
 

@@ -313,8 +313,16 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec 3152baf7;
   `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677 + spec f2b539677, 26 Nov 2026; and
   `web/e2e/real/multi-repo-scan.spec.ts`, 2 passed @ app 97068179d + spec 97068179d, 26 Nov 2026. The Changes grouping ran
-  in `web/e2e/real/multi-repo-changes.spec.ts` (2 passed in #1592's evidence, which records no app or spec run id); still not run
-  against a live service: per-repository Git actions and pull requests, and opening another repository's file tab from the Changes list.
+  in `web/e2e/real/multi-repo-changes.spec.ts` (2 passed in #1592's evidence, which records no app or spec run id). The
+  repository choice in the header Git menu, the branch dialog and the commit picker also ran
+  (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed, recorded 26 Nov 2026 in the commit that added the spec, 4d147ab08;
+  that record names no app or spec revision): the reads of the chosen repository carry its `repo_id` in the query and the
+  primary's carry none, the dialog's write names it in the body, a branch created there is in that repository's worktree
+  alone and the Git menu's commit lands only there. The primary-worktree assertions the commit case gained afterwards
+  (a1fa807ea, 27 Nov 2026: a pending file written into the primary worktree before the commit, whose `HEAD` and
+  `git status --porcelain` must be unchanged after it) were not covered by that run. Run again on the current head,
+  28 Nov 2026: 4 passed (48.2s) @ app ccf98d924 + spec ccf98d924, those assertions included. Still not run against a
+  live service: per-repository push and pull requests, and opening another repository's file tab from the Changes list.
 
 ### As built: web UI (repo threads)
 
@@ -367,7 +375,9 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
 - **Verified against a live service.** The new-thread dialog, its `POST .../repo-threads`, the task folder read and the Repos popover
   ran against a real `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec
   3152baf7 (a repository added later joins the thread); `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677
-  + spec f2b539677, 26 Nov 2026 (the Repos chip's 390 px phone sheet).
+  + spec f2b539677, 26 Nov 2026 (the Repos chip's 390 px phone sheet). The repository choice in the header Git menu, the branch
+  dialog and the commit picker also ran (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed); the rest of the routes above are
+  checked with the mock (which applies the rules they state) and request-level tests of the client.
 
 ## As built: repo_id on Git and file calls
 
@@ -428,7 +438,7 @@ nothing below changes for it. The rows are written by thread creation in the nex
 
 ## As built: repository threads and the task folder
 
-Behind the same flag; migration 92 adds `checkpoint_repositories`, one row per repository a run was snapshotted
+Behind the same flag; migration 93 adds `checkpoint_repositories`, one row per repository a run was snapshotted
 in, so a turn or thread diff can read in the repository it names (the run's own `checkpoints` row keeps the
 first repository's ends). Built: `POST /api/projects/{id}/repo-threads`,
 `GET /api/threads/{id}/task-folder`, `POST /api/threads/{id}/repos`, and `repo_id` on the file tree and metadata reads and on
@@ -464,10 +474,12 @@ navigation coordinates.
   primary and the repository row id for the others, as everywhere else. `GET /api/projects/{id}/pulls/{number}/linked-threads` matches
   the project's own repository only, so another repository's #12 never lists a thread.
 - **`repo_id` on the thread pull request routes.** `?repo_id=` on `GET` and `POST /api/threads/{id}/pulls`, `POST .../pulls/refresh`,
-  `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`. Absent means the primary repository, so every
-  older client is unchanged. Unknown, untrusted or flag-off repositories are refused as for the Git routes. Watches
-  (`.../pulls/{number}/watch`) stay on the primary repository for now; unlinking a primary link drops its watch, any other link does not.
-  The watch pass refreshes the open links of each repository of a thread.
+  `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`, and on the watches (`GET .../watches`,
+  `POST`/`DELETE .../pulls/{number}/watch`). Absent means the primary repository, so every older client is unchanged. Unknown, untrusted or
+  flag-off repositories are refused as for the Git routes. A watch is kept by (thread, repository, number) (migration 92), so two
+  repositories can both watch a #12; every watch made before it moved to the thread's own project, which is its primary repository.
+  Unlinking a link drops that repository's watch. The watch pass refreshes the open links of each repository of a thread and reads each
+  watch in its own repository's worktree.
 - **`ThreadRepo.pull_request`.** The repository's open pull request with the highest number, else the latest one it has; absent when none.
 - **`FileDiff.repo_id`.** Set on a thread diff of a multi-repository thread: the repository asked for, else the primary. Absent for an
   ordinary thread.
@@ -486,7 +498,9 @@ Web side of pull requests and removal (mock-tested, not run against a live `orby
 - **Remove from thread.** A button on each non-primary row of the Repos popover, behind a confirm dialog; the service's `400` message is shown as written.
 - **Diff.** The service answers one repository per read, so the Changes panel still reads once per trusted repository; `FileDiff.repo_id` is not needed to group.
 - **Merge dialog.** The "Remove agent credits" switch is the person's choice for that merge and is sent as `remove_agent_credits` (the account setting when untouched).
-- **Not done.** A pull request screen per repository (the pulls page is keyed by project, not repository) and watches for a non-primary repository.
+- **Not done.** A pull request screen per repository (the pulls page is keyed by project, not repository), and a Watch control for
+  another repository's pull request: the service keeps that watch (`repo_id` on the watch routes), but the header PR chip and its Watch
+  switch read the primary repository only (the `multirepo-pr-*` frames cover the other repository's state word, Review and Merge).
 
 ## Not in the beta
 
