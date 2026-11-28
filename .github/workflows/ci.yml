@@ -6,7 +6,9 @@ name: CI
 # all in parallel. Measured before this change: 10.8 minute median over 30 pull request runs,
 # with changes, Cheap checks and Rust in series (about 9.1 minutes on the critical path).
 # Expect about 8.3 minutes now (estimate). A run over the budget is a defect to fix at its
-# slowest step, not drift to accept.
+# slowest step, not drift to accept. Each Rust shard also installs the E2E headless shell for
+# the browser tests (#1575), about a minute more per shard (estimate): `npm ci` in web is
+# cached and the shell download is the E2E one.
 #
 # On a pull request: Cheap checks, Web and Rust on Linux (clippy and tests as two parallel jobs), each scoped by
 # the changes job to what the diff can affect. Nothing else builds: no browser suite, no
@@ -180,10 +182,41 @@ jobs:
         with:
           shared-key: rust-linux
           save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 }}
-      # The scripted-engine regressions launch the browser suite's Node fixtures.
+      # The scripted-engine regressions launch the browser suite's Node fixtures, and the
+      # browser tests need the headless shell `npm run test:e2e:install` puts in
+      # web/node_modules, so this job installs the web dependencies for that command.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run test:e2e:install
+        working-directory: web
+      # The nine browser tests in crates/orbynd (preview, service, web_links) need a browser.
+      # This is the only Rust job that gets one: it runs on every Rust change, and its Linux
+      # flags are the ones the browser suite already uses. ubuntu-24.04 restricts unprivileged
+      # user namespaces, which the shell's sandbox needs, so ORBYN_BROWSER names a wrapper that
+      # drops the sandbox and keeps the GPU in-process, like `previewBrowser` in
+      # web/e2e/real/service.ts (which drops it the way Playwright does). ORBYN_REQUIRE_BROWSER=1
+      # fails a shard whose browser is missing or unusable, so a broken install cannot pass
+      # behind the skip. Both shards install it because nextest splits the nine across them.
+      - name: Give the browser tests a browser
+        shell: bash
+        run: |
+          shell=$(find web/node_modules/playwright-core/.local-browsers \
+            -type f -name chrome-headless-shell | sort | tail -n 1)
+          if [ -z "$shell" ]; then echo "npm run test:e2e:install installed no headless shell"; exit 1; fi
+          wrapper="$RUNNER_TEMP/orbyn-browser"
+          printf '#!/bin/sh\nexec "%s" --no-sandbox --in-process-gpu "$@"\n' "$(realpath "$shell")" > "$wrapper"
+          chmod +x "$wrapper"
+          cat "$wrapper"
+          {
+            echo "ORBYN_BROWSER=$wrapper"
+            echo "ORBYN_BROWSER_HEADLESS=1"
+            echo "ORBYN_REQUIRE_BROWSER=1"
+          } >> "$GITHUB_ENV"
       - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-nextest
