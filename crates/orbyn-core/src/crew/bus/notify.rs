@@ -20,7 +20,7 @@ const MAX_NOTICES: usize = 10;
 
 impl Core {
     /// Tells the lead of `error`, which refused `who`. A refusal of the lead itself is not told.
-    pub(super) fn tell_lead_of(self: &Arc<Self>, who: &Sender, error: &CrewError) {
+    pub(in crate::crew) fn tell_lead_of(self: &Arc<Self>, who: &Sender, error: &CrewError) {
         let Some(task_id) = who.task.as_deref() else {
             return;
         };
