@@ -18,13 +18,14 @@ const HOST = resolve(process.env.ORBYN_ENGINE_HOST ?? join(REPO, "engine-host/di
 const BUILD = `Build the engine host first: cd engine-host && npm ci && node scripts/build-sea.mjs, or set ORBYN_ENGINE_HOST (looked for ${HOST})`;
 
 /**
- * A missing host build is a skip with an annotation naming the CI job that will build it (#1588), so the run says it did not run.
- * With ORBYN_REQUIRE_SEA_HOST=1 (set where the build is expected) it is a failure instead, so the spec can never read green unrun.
+ * A missing host build is a skip with an annotation, so a run that did not build one says it did not run.
+ * The e2e workflow's "E2E service build" job builds the host and every shard downloads it, with
+ * ORBYN_REQUIRE_SEA_HOST=1 set there: on CI a missing host fails instead, so this spec can never read green unrun (#1588).
  */
 const needHost = () => {
   if (existsSync(HOST)) return;
   if (process.env.ORBYN_REQUIRE_SEA_HOST === "1") throw new Error(`ORBYN_REQUIRE_SEA_HOST=1 but there is no engine host. ${BUILD}`);
-  test.info().annotations.push({ type: "needs-sea-host", description: "Skipped: no engine host build; CI does not build it yet (#1588)" });
+  test.info().annotations.push({ type: "needs-sea-host", description: "Skipped: no engine host build for this run; CI builds one in E2E service build (#1588)" });
   test.skip(true, BUILD);
 };
 
