@@ -198,6 +198,9 @@ pub struct Core {
     pub(crate) project_scope_reads: crate::util::swr::Swr<orbyn_contracts::ProjectScopeCatalog>,
     /// The explorer's worktree lists and Git statuses, served from the last known value.
     pub explorer: Arc<crate::project::explorer::ExplorerReads>,
+    /// What the scope catalog last observed of each project folder's Git identity, kept
+    /// while the files that decided it hold (`project_scopes::git_facts`).
+    pub(crate) scope_git: Arc<crate::project::project_scopes::git_facts::ScopeGitFacts>,
     pub(crate) tool_reads: crate::util::swr::Swr<Option<orbyn_contracts::EngineTools>>,
     pub(crate) tool_lists: Mutex<crate::agents::engine_tools::ToolsCache>,
     /// What each engine id's tools check keeps between calls: one per id, because an engine
@@ -373,6 +376,9 @@ impl Core {
             pull_details: Mutex::new(Default::default()),
             scm_reads,
             explorer,
+            scope_git: Arc::new(
+                crate::project::project_scopes::git_facts::ScopeGitFacts::default(),
+            ),
             health_reads: crate::util::swr::Swr::<orbyn_contracts::DependencyHealth>::new(
                 crate::operations::health::HEALTH_FRESH,
                 crate::operations::health::HEALTH_MAX_AGE,
