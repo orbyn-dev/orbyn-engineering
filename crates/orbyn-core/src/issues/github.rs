@@ -2,19 +2,21 @@
 //! `gh` prints is the tracker's text and is read defensively: a field that is missing or the wrong type
 //! becomes empty, never an error that hides the other issues.
 
+use super::frame::cut;
 use super::query::{AssigneeFilter, IssueQuery, IssueSort, StateFilter};
 use super::{
-    DependencyFeed, DependencyUpdate, IssueEdit, IssueSource, LabelEvent, LabelFeed, NewIssue,
-    ScopeList,
+    DependencyFeed, DependencyUpdate, IssueEdit, IssueSource, LabelEvent, LabelFeed,
+    MAX_TEMPLATE_BODY_BYTES, MAX_TEMPLATES, NewIssue, ScopeList,
 };
 use crate::error::{CoreError, Result};
 use crate::source_control::forge::{Forge, call, call_input, github_checks};
 use async_trait::async_trait;
+use base64::Engine as _;
 use orbyn_contracts::{
     IssueActivity, IssueActivityKind, IssueActor, IssueAssigneeCandidate, IssueCandidateLabel,
     IssueCandidates, IssueCloseReason, IssueComment, IssueCounts, IssueDetail, IssueLabel,
     IssueLinkedPull, IssueReaction, IssueReactionCount, IssueState, IssueStateCategory,
-    IssueSummary, LinkedPullState, PullChecks, TrackerKind,
+    IssueSummary, IssueTemplate, LinkedPullState, PullChecks, TrackerKind,
 };
 use serde_json::Value;
 use std::path::PathBuf;
@@ -813,6 +815,191 @@ async fn node_id(cwd: &std::path::Path, scope: &str, key: &str) -> Result<String
         .ok_or_else(|| CoreError::NotFound("issue".into()))
 }
 
+/// The folder a GitHub repository keeps its issue templates in, one file each (docs/issues.md, "As built"): the
+/// contents API lists it and answers one file's body per markdown template.
+const TEMPLATE_DIR: &str = ".github/ISSUE_TEMPLATE";
+
+/// The contents endpoint for one file of that listing, with every `/`-separated segment percent-encoded.
+///
+/// A template's file name is whatever the repository called it, and one may hold a `%`, a `#`, a `?`, a space or a
+/// character outside ASCII. `gh api` joins the endpoint into the request URL as it is given, so `#` would start a
+/// fragment, `?` a query and a lone `%` an escape the URL parser refuses: the read would go to another path or fail
+/// before it is sent, and one such file would fail the whole template read. A segment keeps its `/` separators and
+/// every unreserved character, so `bug_report.md` is unchanged.
+fn contents_endpoint(scope: &str, path: &str) -> String {
+    let mut endpoint = format!("repos/{scope}/contents");
+    for segment in path.split('/') {
+        endpoint.push('/');
+        for byte in segment.bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                    endpoint.push(char::from(byte));
+                }
+                _ => endpoint.push_str(&format!("%{byte:02X}")),
+            }
+        }
+    }
+    endpoint
+}
+
+/// The most characters of a template's name and of its description that are kept, the most label names it carries,
+/// and the most characters of each. All of it is the tracker's text and is cut, never trusted to be short.
+const MAX_TEMPLATE_NAME_CHARS: usize = 256;
+const MAX_TEMPLATE_LABELS: usize = 50;
+const MAX_TEMPLATE_LABEL_CHARS: usize = 200;
+
+/// The parts of a markdown issue template's front matter this reader carries: its name, its one-line description
+/// and its label names. Nothing else in the block is read.
+#[derive(Default)]
+struct TemplateHeader {
+    name: Option<String>,
+    about: Option<String>,
+    labels: Vec<String>,
+}
+
+impl TemplateHeader {
+    /// One line of the front matter block, as one `key: value` pair. A key this reader does not carry, an indented
+    /// continuation and a line without a colon are all dropped rather than guessed, and so is a value that is an
+    /// unquoted block-scalar header: that names a block on the following lines, not a scalar.
+    fn read(&mut self, line: &str) {
+        if line.starts_with([' ', '\t']) {
+            return;
+        }
+        let Some((key, value)) = line.split_once(':') else {
+            return;
+        };
+        let Some(value) = scalar(value) else {
+            return;
+        };
+        match key.trim() {
+            "name" => self.name = one_line(value, MAX_TEMPLATE_NAME_CHARS),
+            "about" => self.about = one_line(value, MAX_TEMPLATE_NAME_CHARS),
+            "labels" => self.labels = label_names(value),
+            _ => {}
+        }
+    }
+}
+
+/// One front matter value as the file means it: trimmed, and without a matching pair of `'` or `"` around the whole
+/// value, which GitHub's own templates write around every one.
+///
+/// A quoted value carrying the escape syntax of its own quoting answers `None` instead: a `\` inside a `"` pair
+/// (YAML's double-quoted escapes, as in `"help\u0020wanted"`) and a doubled `''` inside a `'` pair (as in
+/// `'Can''t start'`) each stand for a character this reader does not decode, and stripping only the outer quotes
+/// would put the backslash or the doubled apostrophe into a name or a label name. This is not a YAML reader, so an
+/// escape is dropped rather than guessed (docs/issues.md, "As built (#1548)"); an unquoted value and a quoted value
+/// without an escape are carried as they are.
+fn unquoted(value: &str) -> Option<&str> {
+    let value = value.trim();
+    let bytes = value.as_bytes();
+    let paired =
+        bytes.len() >= 2 && matches!(bytes[0], b'\'' | b'"') && bytes[bytes.len() - 1] == bytes[0];
+    if !paired {
+        return Some(value);
+    }
+    let inner = &value[1..value.len() - 1];
+    let escaped = if bytes[0] == b'"' {
+        inner.contains('\\')
+    } else {
+        inner.contains("''")
+    };
+    (!escaped).then_some(inner)
+}
+
+/// True for a YAML block-scalar header: `|` or `>` with at most one chomping modifier (`+`/`-`) and at most one
+/// indentation digit (`1`-`9`), in either order, as in `|-`, `>+`, `|2` or `>-2`, and with an optional inline comment
+/// after it, as in `> # what this is`, which a space or a tab separates. That header opens a block whose text is on
+/// the following, indented lines. This reader keeps one `key: value` line each and reads no block (an indented
+/// continuation is already dropped), so the header is not a value: kept as one it would put a `|` or `>-` into a
+/// template's name or description, or the raw `> # ...` line, and hide the file name a rejected `name` falls back to.
+fn block_scalar_header(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix(['|', '>']) else {
+        return false;
+    };
+    // The modifiers end at the first space or tab; what follows is nothing or an inline comment.
+    let (modifiers, after) = match rest.find([' ', '\t']) {
+        Some(at) => rest.split_at(at),
+        None => (rest, ""),
+    };
+    if !after.trim().is_empty() && !after.trim_start().starts_with('#') {
+        return false;
+    }
+    let (mut chomp, mut indent) = (false, false);
+    for modifier in modifiers.chars() {
+        match modifier {
+            '+' | '-' if !chomp => chomp = true,
+            '1'..='9' if !indent => indent = true,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// One front matter value, or `None` when it is an unquoted block-scalar header, which names a block on the following
+/// lines rather than a value (docs/issues.md, "As built (#1548)"). The whole value is checked before its quotes come
+/// off and before a `labels` value is split on its commas, so its quoting decides: a quoted `"|"` is one scalar,
+/// `labels: '|'` names the label `|`, and `name: |` names no name at all.
+fn scalar(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if !value.starts_with(['\'', '"']) && block_scalar_header(value) {
+        return None;
+    }
+    Some(value)
+}
+
+/// One front matter value as a line of at most `chars` characters, or `None` when it is empty or carries an escape
+/// this reader does not decode.
+fn one_line(value: &str, chars: usize) -> Option<String> {
+    let value: String = unquoted(value)?.trim().chars().take(chars).collect();
+    (!value.is_empty()).then_some(value)
+}
+
+/// The label names one `labels: bug, ui` line lists. The whole value is one scalar, so its quotes go before the
+/// commas are split: GitHub's own templates write `labels: 'bug, ui'`, and splitting first would keep the quotes. A
+/// quoted value with an escape in it is not carried at all rather than read as a list of its raw text.
+fn label_names(value: &str) -> Vec<String> {
+    let Some(value) = unquoted(value) else {
+        return Vec::new();
+    };
+    value
+        .split(',')
+        .filter_map(|label| one_line(label, MAX_TEMPLATE_LABEL_CHARS))
+        .take(MAX_TEMPLATE_LABELS)
+        .collect()
+}
+
+/// One markdown issue template split into its front matter and its body. The block is the file's first lines,
+/// opened and closed by a line that is exactly `---`; a file without a closed block is all body, because an
+/// unterminated block is not front matter. This is not a YAML reader (docs/issues.md): three keys are read, one
+/// `key: value` line each, and a `.yml` issue form is skipped rather than half-read.
+fn markdown_template(file: &str) -> (TemplateHeader, &str) {
+    let Some(rest) = file
+        .strip_prefix("---\r\n")
+        .or_else(|| file.strip_prefix("---\n"))
+    else {
+        return (TemplateHeader::default(), file);
+    };
+    let mut header = TemplateHeader::default();
+    let mut at = file.len() - rest.len();
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            return (header, &file[at + line.len()..]);
+        }
+        header.read(line.trim_end_matches(['\r', '\n']));
+        at += line.len();
+    }
+    (TemplateHeader::default(), file)
+}
+
+/// A contents answer's base64 body as bytes. GitHub wraps it in newlines, so the wrapping goes first; a body that
+/// is not base64 text is `None` and that one file is skipped.
+fn decoded(content: &str) -> Option<Vec<u8>> {
+    let packed: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+    base64::engine::general_purpose::STANDARD
+        .decode(packed)
+        .ok()
+}
+
 #[async_trait]
 impl IssueSource for GitHub {
     async fn list(&self, scope: &str, query: &IssueQuery) -> Result<ScopeList> {
@@ -1152,6 +1339,69 @@ impl IssueSource for GitHub {
         // the issue it just changed, with no counts rather than a failure.
         detail.reactions = optional_reactions(&self.cwd, scope, key).await;
         Ok(detail)
+    }
+
+    /// The repository's own issue templates (docs/issues.md, "As built"): GitHub has no template endpoint, so the
+    /// read is the contents API's listing of `.github/ISSUE_TEMPLATE` and one body per markdown file. A `.yml` issue
+    /// form is skipped, because its shape needs a YAML reader Orbyn does not carry and a form is not a body; a
+    /// repository whose only templates are forms therefore answers none. A repository with no such folder answers
+    /// none too: GitHub's 404 for a path it does not have is "no templates", never an error (#1548).
+    async fn templates(&self, scope: &str) -> Result<Vec<IssueTemplate>> {
+        scope_ok(scope)?;
+        let args = vec![
+            "api".to_owned(),
+            format!("repos/{scope}/contents/{TEMPLATE_DIR}"),
+        ];
+        let listing = match run(&self.cwd, &args).await {
+            Ok(value) => value,
+            Err(CoreError::NotFound(_)) => return Ok(Vec::new()),
+            Err(error) => return Err(error),
+        };
+        // Anything but a list of files at that path is a repository without a templates folder, not a broken answer.
+        let Some(entries) = listing.as_array() else {
+            return Ok(Vec::new());
+        };
+        // Only a `.md` file is a template this reader can carry: a folder, a submodule, `config.yml` and an issue form
+        // (`.yml`/`.yaml`) are not read at all. The 50 places are for templates, so a form, the config or a folder
+        // above a markdown file may not take one of them; one read per markdown file keeps the read count bounded.
+        let readable = entries.iter().filter_map(|entry| {
+            let name = entry.get("name").and_then(Value::as_str)?;
+            let path = entry.get("path").and_then(Value::as_str)?;
+            let file = entry.get("type").and_then(Value::as_str) == Some("file");
+            (file && name.to_ascii_lowercase().ends_with(".md") && !path.is_empty())
+                .then_some((name, path))
+        });
+        let mut templates = Vec::new();
+        for (name, path) in readable.take(MAX_TEMPLATES) {
+            let args = vec!["api".to_owned(), contents_endpoint(scope, path)];
+            let file = run(&self.cwd, &args).await?;
+            // A body GitHub did not send as base64 (a file over 1 MB, `encoding: "none"`) is skipped: the list keeps
+            // the templates it can read rather than failing on the one it cannot.
+            if file.get("encoding").and_then(Value::as_str) != Some("base64") {
+                continue;
+            }
+            let Some(bytes) = file
+                .get("content")
+                .and_then(Value::as_str)
+                .and_then(decoded)
+            else {
+                continue;
+            };
+            let text = String::from_utf8_lossy(&bytes);
+            let (header, body) = markdown_template(&text);
+            templates.push(IssueTemplate {
+                // The template's id is its file name: it is what a create names, and the same file answers the same
+                // id on every read.
+                id: name.to_owned(),
+                name: header
+                    .name
+                    .unwrap_or_else(|| name.chars().take(MAX_TEMPLATE_NAME_CHARS).collect()),
+                description: header.about,
+                body: cut(body, MAX_TEMPLATE_BODY_BYTES).to_owned(),
+                labels: header.labels,
+            });
+        }
+        Ok(templates)
     }
 
     async fn get(&self, scope: &str, key: &str) -> Result<IssueDetail> {
@@ -1550,6 +1800,152 @@ mod tests {
                 },
             ],
             "only a labeled event of the stored label on an open issue (not a pull request), with an id and a number, is kept"
+        );
+    }
+
+    #[test]
+    fn a_markdown_template_front_matter_gives_its_name_about_and_labels() {
+        let (header, body) = markdown_template(
+            "---\r\nname: \"Bug report\"\r\nabout: ''\r\nlabels: bug, , ui\nassignees: ann\n  indented: x\nTitle: never read\n---\r\n\r\nThe body\n",
+        );
+        assert_eq!(header.name, Some("Bug report".to_owned()));
+        assert_eq!(header.about, None, "an empty value is not a description");
+        assert_eq!(header.labels, vec!["bug".to_owned(), "ui".to_owned()]);
+        assert_eq!(
+            body, "\r\nThe body\n",
+            "the block is not part of the body and the rest of the file is"
+        );
+    }
+
+    #[test]
+    fn a_quoted_front_matter_value_with_an_escape_is_dropped_rather_than_guessed() {
+        // docs/issues.md, "As built (#1548)": an escape is dropped rather than guessed. A `"` pair's `\` escape and a
+        // `'` pair's doubled apostrophe are both undecoded here, so the value is not carried at all: keeping its raw
+        // text would put a backslash or a doubled apostrophe into a template name or a label name.
+        let (header, _) = markdown_template(
+            "---\nname: 'Can''t start'\nabout: \"help\\u0020wanted\"\nlabels: \"help\\u0020wanted\"\n---\nBody\n",
+        );
+        assert_eq!(
+            header.name, None,
+            "a doubled apostrophe is an escape this reader cannot decode, so the name falls back to the file's name"
+        );
+        assert_eq!(
+            header.about, None,
+            "a decoded escape is never produced, so an escaped description is dropped"
+        );
+        assert!(
+            header.labels.is_empty(),
+            "an escaped label value is dropped, not carried as its raw text: {:?}",
+            header.labels
+        );
+    }
+
+    #[test]
+    fn quoted_front_matter_values_without_an_escape_are_still_carried() {
+        let (header, _) = markdown_template(
+            "---\r\nname: \"Bug report\"\r\nabout: 'Something is wrong'\r\nlabels: 'bug, ui'\r\n---\r\n",
+        );
+        assert_eq!(header.name, Some("Bug report".to_owned()));
+        assert_eq!(header.about, Some("Something is wrong".to_owned()));
+        assert_eq!(
+            header.labels,
+            vec!["bug".to_owned(), "ui".to_owned()],
+            "`'bug, ui'` is one quoted scalar whose two names are split on the comma inside the quotes"
+        );
+    }
+
+    #[test]
+    fn a_block_scalar_header_is_not_a_front_matter_value() {
+        // docs/issues.md, "As built (#1548)": this is not a YAML reader, so the `|`/`>` header that opens a block of
+        // following, indented lines is dropped rather than stored as the value. Keeping it would put a `|` or `>-` in
+        // a template's name or description, and would hide the file name the rejected name falls back to.
+        for header in [
+            "|",
+            ">",
+            "|-",
+            ">+",
+            "|2",
+            ">-2",
+            ">2+",
+            "|9-",
+            "> # what this is",
+            "| # a comment",
+            "|2- # a comment",
+            ">\t# a tabbed comment",
+            "|2\t# a tabbed comment",
+        ] {
+            let file =
+                format!("---\nname: {header}\nabout: {header}\nlabels: {header}\n---\nBody\n");
+            let (parsed, body) = markdown_template(&file);
+            assert_eq!(
+                parsed.name, None,
+                "{header:?}: a block header is not a name, so the name falls back to the file's own name"
+            );
+            assert_eq!(
+                parsed.about, None,
+                "{header:?}: a block header is not a description"
+            );
+            assert!(
+                parsed.labels.is_empty(),
+                "{header:?}: a block header is not a label name: {:?}",
+                parsed.labels
+            );
+            assert_eq!(body, "Body\n", "{header:?}: the block is not the body");
+        }
+    }
+
+    #[test]
+    fn a_quoted_scalar_that_looks_like_a_block_header_is_still_carried() {
+        // A quoted value is one scalar whatever its text, so a `"|"` written in quotes is the single character `|`
+        // and not the header of a block, and a quoted line that looks like a header with a comment stays that text.
+        // The quoting decides for `labels` too, because the whole value is checked before its commas are split.
+        let (header, _) = markdown_template("---\nname: \"|\"\nabout: '>'\n---\nBody\n");
+        assert_eq!(header.name, Some("|".to_owned()));
+        assert_eq!(header.about, Some(">".to_owned()));
+        let (header, _) = markdown_template("---\nname: \"> # not a header\"\n---\nBody\n");
+        assert_eq!(header.name, Some("> # not a header".to_owned()));
+        let (header, _) = markdown_template("---\nlabels: '|'\n---\nBody\n");
+        assert_eq!(
+            header.labels,
+            vec!["|".to_owned()],
+            "a quoted `|` names the label `|`, while an unquoted `labels: |` names none"
+        );
+        let (header, _) = markdown_template("---\nlabels: |\n---\nBody\n");
+        assert!(
+            header.labels.is_empty(),
+            "an unquoted `labels: |` is a block header, not a label name: {:?}",
+            header.labels
+        );
+    }
+
+    #[test]
+    fn a_template_without_a_closed_front_matter_block_is_all_body() {
+        for file in ["Just a body.\n", "---\nname: Bug\n\nstill the block\n"] {
+            let (header, body) = markdown_template(file);
+            assert_eq!(
+                header.name, None,
+                "an unterminated block is not front matter"
+            );
+            assert_eq!(body, file, "the whole file is the template's body");
+        }
+    }
+
+    #[test]
+    fn a_contents_endpoint_escapes_one_segments_url_syntax_and_keeps_its_separators() {
+        assert_eq!(
+            contents_endpoint("acme/app", ".github/ISSUE_TEMPLATE/bug_report.md"),
+            "repos/acme/app/contents/.github/ISSUE_TEMPLATE/bug_report.md",
+            "an ordinary path is unchanged"
+        );
+        assert_eq!(
+            contents_endpoint("acme/app", "a b/100% #?.md"),
+            "repos/acme/app/contents/a%20b/100%25%20%23%3F.md",
+            "a space, a `%`, a `#` and a `?` are escaped and the `/` separators are not"
+        );
+        assert_eq!(
+            contents_endpoint("acme/app", "é/x"),
+            "repos/acme/app/contents/%C3%A9/x",
+            "a character outside ASCII is escaped by its bytes"
         );
     }
 }
