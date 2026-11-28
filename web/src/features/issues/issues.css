@@ -184,6 +184,11 @@
 .iss-pr-line b { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
 .iss-pr-sub { display: flex; flex-wrap: wrap; gap: 6px; color: var(--color-muted); overflow-wrap: anywhere; }
 .iss-pr-state { color: var(--color-muted); }
+/* A linked pull request's checks, in the Pull requests list's words; a tone only colours a known state, never alone. */
+.iss-pr-checks { color: var(--color-muted); }
+.iss-pr-checks[data-tone="fail"] { color: var(--color-danger); }
+.iss-pr-checks[data-tone="running"] { color: var(--color-blue); }
+.iss-pr-checks[data-tone="neutral"] { color: var(--color-textSoft); }
 
 /* Inline editors: the description (issue-write-description), and the label and assignee pickers (issue-write-labels, -assignees). */
 .iss-edit { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }

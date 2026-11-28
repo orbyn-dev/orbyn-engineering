@@ -12,7 +12,7 @@ import { Button } from "../../ui/controls";
 import { ApiFailure } from "../../api/client";
 import { Markdown } from "../content";
 import { issuesApi, useApiVersion, useEditOffered } from "./api";
-import { capText, closedWords, isIssueKey, isTracker, pullWord, stateWord, trackerName } from "./model";
+import { capText, closedWords, isIssueKey, isTracker, linkedChecksWord, pullWord, stateWord, trackerName } from "./model";
 import type { IssueDetail as Detail, LinkedPullRequest } from "./contract";
 import { CommentBox } from "./IssueComment";
 import { PickerEditor, useDescriptionEditor, type EditProps, type IssueWriter } from "./IssueEdit";
@@ -56,10 +56,15 @@ function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
 
 const PULL_ICON = { merged: GitMerge, closed: GitPullRequestClosed, draft: GitPullRequestDraft, open: GitPullRequest } as const;
 
-/** One pull request the tracker reports against the issue. Its words are the tracker's text, capped; only a plain https address is opened. */
+/**
+ * One pull request the tracker reports against the issue. Its words are the tracker's text, capped; only a plain https address is
+ * opened. Its checks are the same counts the pull request list carries, in that list's words; absent checks are unknown and draw
+ * nothing, never "No checks".
+ */
 function PullRow({ pull }: { pull: LinkedPullRequest }) {
   const href = safeHref(pull.url);
   const word = pullWord(pull);
+  const checks = linkedChecksWord(pull.checks);
   const Icon = PULL_ICON[pull.state === "open" && pull.is_draft ? "draft" : pull.state];
   const body = (
     <>
@@ -72,13 +77,19 @@ function PullRow({ pull }: { pull: LinkedPullRequest }) {
         <span>#{pull.number}</span>
         <span>{capText(pull.repository, 80)}</span>
         {pull.closes_issue ? <span>Closes this issue</span> : null}
+        {checks ? (
+          <span className="iss-pr-checks" data-tone={checks.tone}>
+            <span className="sr-only">Checks </span>
+            {checks.label}
+          </span>
+        ) : null}
       </span>
     </>
   );
   return <li>{href ? <a href={href} target="_blank" rel="noopener noreferrer">{body}</a> : <span className="iss-pr-plain">{body}</span>}</li>;
 }
 
-/** What the tracker reports of its own accord, in its order. No CI or checks status: the contract carries none. */
+/** What the tracker reports of its own accord, in its order. A link's checks are drawn when the tracker reported them; unknown draws nothing. */
 function LinkedPullRequests({ pulls }: { pulls: LinkedPullRequest[] }) {
   // Shown only when the tracker reports a pull request: an empty card on every issue says nothing.
   if (pulls.length === 0) return null;
