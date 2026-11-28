@@ -542,8 +542,10 @@ conversation, timestamp, model and counters because Cursor sends no event id, an
 that history it has read, with the time it read it, in `billed_reads`. The window is a fact of its
 own because a read that found no spend writes no event: the events alone cannot say whether a day
 was looked at and came back empty. A window read less than a minute ago that still reaches back to
-the period's own start and into the period answers the read. Otherwise the next read starts at the
-newest end, because
+the period's own start and into the period answers the read. A window whose own read time is after
+the clock is not fresh either — the clock moved back after that read, so no elapsed time can be
+taken from it — and it is read again under the same rules as a window that is no longer fresh, while
+what it already covered still counts as read. Otherwise the next read starts at the newest end, because
 that is where the spend a person opens the screen to see is; then it covers the last covered hour
 again, because Cursor finalizes an amount after it first reported it; then it walks older history
 backwards, one span at a time and never past the period's start, and a read still fresh walks older

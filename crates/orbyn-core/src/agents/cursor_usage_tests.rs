@@ -537,6 +537,42 @@ fn a_stored_window_that_ends_after_the_clock_reads_the_newest_window() {
     );
 }
 
+/// A record whose own read time is after the clock was written before the clock moved back: the
+/// subtraction saturates, so an arbitrarily old read would read as fresh and answer a period its
+/// window does not reach. Its ends still say what was read, so the window behind the clock is topped
+/// up forwards; only its freshness is refused.
+#[test]
+fn a_read_fetched_after_the_clock_does_not_answer_the_period() {
+    let period_start = NOW - 2 * DAY;
+    // The window reaches the period's own start but ends an hour behind the clock, and names a read
+    // time an hour after it.
+    let ahead = read(NOW - 2 * DAY, NOW - HOUR, NOW + HOUR);
+    assert_eq!(
+        next_window(ahead, period_start, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - HOUR - REFETCH_OVERLAP_MS,
+            until_ms: NOW,
+        }),
+        "the missing hour is read, and the hour already read is asked for again"
+    );
+    // A read time at the clock is a read that just happened, so it still answers the period.
+    assert_eq!(
+        next_window(read(0, NOW, NOW), 0, NOW, DAY),
+        None,
+        "a fetch time at the clock is still less than a minute ago"
+    );
+    // Coverage that reaches the clock is walked back as before, rather than reset to the newest
+    // window: a future fetch time takes the freshness away, not the history.
+    assert_eq!(
+        next_window(read(NOW - 2 * DAY, NOW, NOW + HOUR), 0, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - 3 * DAY,
+            until_ms: NOW - 2 * DAY,
+        }),
+        "older history is still read backwards from what was read"
+    );
+}
+
 /// The newest window a read takes when the store ends after the clock is recorded, so its end
 /// replaces that end. Until it did, the record's future end survived the write: every later call
 /// selected the same reset window again and the walk back never moved, so the period's start was

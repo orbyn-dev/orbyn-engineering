@@ -89,8 +89,10 @@ pub(crate) const REFETCH_OVERLAP_MS: u64 = 3_600_000;
 /// newest end is read again, so a period shorter than the one-hour overlap, and a clock that moved
 /// since the read, still reach the period's start. A stored window that ends after the clock answers
 /// nothing and starts the walk at the newest end again, because no bound derived from it names a
-/// window inside the period. A span bounds one read, not the history: a caller with no limit passes
-/// `u64::MAX`.
+/// window inside the period. A window whose own read time is after the clock is not fresh, because a
+/// read that has not happened yet cannot be less than a minute old; its ends still bound a window, so
+/// it is read again like any stale window instead of answering the period. A span bounds one read,
+/// not the history: a caller with no limit passes `u64::MAX`.
 ///
 /// The order, the one-hour overlap and the one-minute freshness are T3's `cursorFetchRange` and
 /// `CURSOR_ACCOUNT_TTL_MS` (`accountCache.ts`, MIT, commit 9168ca73d).
@@ -107,19 +109,19 @@ pub(crate) fn next_window(
         until_ms: now_ms,
     };
     // A stored window ending after the clock was written before the clock moved back, or is stale, and its future
-    // fetch time reads as fresh too because the subtraction saturates. Neither of its bounds may bound a window this
-    // read asks for: a walk derived from them is a walk after `now_ms`, where no event is, and it never reads the
-    // newest end again. It answers nothing, so it is handled before the store answers the read and before any walk
-    // below; a window ending at or before the clock keeps its own path. The read this asks for replaces that stored
-    // window instead of merging with it (`Store::record_account_report`), so its future end is not kept and later
-    // reads walk back again.
+    // fetch time is not fresh either (`is_fresh`). Neither of its bounds may bound a window this read asks for: a
+    // walk derived from them is a walk after `now_ms`, where no event is, and it never reads the newest end again. It
+    // answers nothing, so it is handled before the store answers the read and before any walk below; a window ending
+    // at or before the clock keeps its own path. The read this asks for replaces that stored window instead of
+    // merging with it (`Store::record_account_report`), so its future end is not kept and later reads walk back
+    // again.
     if read.is_some_and(|read| read.until_ms > now_ms) {
         return Some(newest);
     }
     if let Some(read) = read
         && read.since_ms <= retention_start_ms
         && read.until_ms >= retention_start_ms
-        && now_ms.saturating_sub(read.fetched_at_ms) < FRESH_FOR_MS
+        && is_fresh(read, now_ms)
     {
         return None;
     }
@@ -131,10 +133,7 @@ pub(crate) fn next_window(
         // either of those would select the newest window on every call and never reach older
         // history. The check above already answered a fresh read that reaches the period's start,
         // so this one begins after it.
-        Some(read)
-            if now_ms.saturating_sub(read.fetched_at_ms) < FRESH_FOR_MS
-                && read.until_ms >= retention_start_ms =>
-        {
+        Some(read) if is_fresh(read, now_ms) && read.until_ms >= retention_start_ms => {
             Some(older_than(read, retention_start_ms, max_span_ms))
         }
         Some(read) if read.until_ms.saturating_sub(REFETCH_OVERLAP_MS) < retention_start_ms => {
@@ -154,6 +153,18 @@ pub(crate) fn next_window(
         // Older history, at the end the store does not hold yet.
         Some(read) => Some(older_than(read, retention_start_ms, max_span_ms)),
     }
+}
+
+/// Whether the store's window was read less than [`FRESH_FOR_MS`] ago, and may therefore answer the
+/// period without another read.
+///
+/// A read time after the clock is not one: it says the clock moved back after the read, and then no
+/// subtraction can say how long ago the read was made. Saturating it would call a window read days
+/// before the adjustment as fresh as one read a second ago, and the period it does not reach would
+/// never be read. The window's own ends still say what was read, so it is only the freshness that is
+/// refused here, not its coverage.
+fn is_fresh(read: AccountRead, now_ms: u64) -> bool {
+    read.fetched_at_ms <= now_ms && now_ms - read.fetched_at_ms < FRESH_FOR_MS
 }
 
 /// The window that holds the history just before `read`, one span at a time and never past the
