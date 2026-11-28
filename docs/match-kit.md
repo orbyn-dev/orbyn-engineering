@@ -102,7 +102,7 @@ It offers Sign in and Dismiss and grants no action.
 
 ## Add a screen
 
-Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`. The Flow task zoom's artifacts view (Crew Designs, frame `flow-artifacts`), from `GET /api/crew/flow/tasks/{id}/artifacts` on the mock's `crew` scenario, opened from the zoom's Artifacts button: the checks each row names, the artifacts they named and the diff pinned to its base commit. `flow-artifacts`.
+Live Flow review consent and badges: `flow-offline`, `lane-same-engine`, `lane-same-engine-full`. The Flow task zoom's artifacts view (Crew Designs, frame `flow-artifacts`), from `GET /api/crew/flow/tasks/{id}/artifacts` on the mock's `crew` scenario, opened from the zoom's Artifacts button: the checks each row names, the artifacts they named and the diff pinned to its base commit. `flow-artifacts`. The Flow task zoom's gates view (Crew Designs, frame `flow-gates`), from the per-task detail read on the mock's `crew` scenario, opened from the zoom's Gates button: one card per gate with who decided it, its reviewer lane, its reason once the task is over and its time. `flow-gates`.
 The wide Map tree and the swim lanes, built from the map and message reads: `crew-map`, `lanes-main`.
 Approved review controls: `lane-remove-reason`, `settings-acp-tier-editor`. Crew, Settings › Worker provider (Crew Designs v75): `settings-crew-worker-provider`, `settings-crew-worker-provider-any`, `settings-crew-worker-provider-narrow`. Crew, Settings › Crew's Daily digest row (frame `settings-crew`, designs at git:f6c061bb5da71b7616e9cfc1e197b390a4fab448): `settings-crew`.
 These retain the beta stage list; the planned graph and PR cards are not drawn.

@@ -121,6 +121,22 @@ export function decidedBy(gate: FlowGate): string {
 /** A service word such as `needs_person` or `looks_good` as plain text. */
 export const plain = (word: string): string => word.replaceAll("_", " ");
 
+/** A gate's stage as the first word of its card's title: the wire word, spaced and capital ("finding_check" → "Finding check"). */
+export function gateStageWord(stage: string): string {
+  const word = plain(stage);
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+/** A gate's decision in the design's words: a pass and a fail read in the past tense, a finding check keeps its own word. */
+export const gateDecisionWord = (decision: string): string =>
+  decision === "pass" ? "passed" : decision === "fail" ? "failed" : plain(decision);
+
+/** The design's red card: a failed check or a confirmed finding is a gate that blocks the task. */
+export const gateBlocks = (decision: string): boolean => decision === "fail" || decision === "confirmed";
+
+/** A task that is over: only then does the service serve a gate's reason, and only then may it be shown. */
+export const taskFinal = (state: string): boolean => state === "passed" || state === "stopped" || state === "cancelled";
+
 /** A check's row word: its kind, when the task's key names one, and its id. Never the key's own text for the check. */
 export const checkName = (check: { id: string; kind?: string | null }): string =>
   check.kind ? `${plain(check.kind)} · ${check.id}` : check.id;
