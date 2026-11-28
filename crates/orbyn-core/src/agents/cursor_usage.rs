@@ -87,8 +87,10 @@ pub(crate) const REFETCH_OVERLAP_MS: u64 = 3_600_000;
 /// finalizes an amount after it first reported it; then it walks older history backwards, one span
 /// at a time, and never past the period's start. A read still fresh walks older history before the
 /// newest end is read again, so a period shorter than the one-hour overlap, and a clock that moved
-/// since the read, still reach the period's start. A span bounds one read, not the history: a
-/// caller with no limit passes `u64::MAX`.
+/// since the read, still reach the period's start. A stored window that ends after the clock answers
+/// nothing and starts the walk at the newest end again, because no bound derived from it names a
+/// window inside the period. A span bounds one read, not the history: a caller with no limit passes
+/// `u64::MAX`.
 ///
 /// The order, the one-hour overlap and the one-minute freshness are T3's `cursorFetchRange` and
 /// `CURSOR_ACCOUNT_TTL_MS` (`accountCache.ts`, MIT, commit 9168ca73d).
@@ -99,6 +101,19 @@ pub(crate) fn next_window(
     now_ms: u64,
     max_span_ms: u64,
 ) -> Option<Window> {
+    // The newest window a span allows, from as far back as the period reaches.
+    let newest = Window {
+        since_ms: retention_start_ms.max(now_ms.saturating_sub(max_span_ms)),
+        until_ms: now_ms,
+    };
+    // A stored window ending after the clock was written before the clock moved back, or is stale, and its future
+    // fetch time reads as fresh too because the subtraction saturates. Neither of its bounds may bound a window this
+    // read asks for: a walk derived from them is a walk after `now_ms`, where no event is, and it never reads the
+    // newest end again. It answers nothing, so it is handled before the store answers the read and before any walk
+    // below; a window ending at or before the clock keeps its own path.
+    if read.is_some_and(|read| read.until_ms > now_ms) {
+        return Some(newest);
+    }
     if let Some(read) = read
         && read.since_ms <= retention_start_ms
         && read.until_ms >= retention_start_ms
@@ -106,11 +121,6 @@ pub(crate) fn next_window(
     {
         return None;
     }
-    // The newest window a span allows, from as far back as the period reaches.
-    let newest = Window {
-        since_ms: retention_start_ms.max(now_ms.saturating_sub(max_span_ms)),
-        until_ms: now_ms,
-    };
     match read {
         // Nothing read, or nothing reaching back as far as the period begins.
         None => Some(newest),

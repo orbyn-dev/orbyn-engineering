@@ -479,6 +479,54 @@ fn stored(
     })
 }
 
+/// A stored window whose end is after the clock was written before the clock moved back, or is stale: a future
+/// fetch time also reads as fresh, because the subtraction saturates. Its bounds cannot name a window this read may
+/// ask for, so the newest window a span allows is read instead.
+#[test]
+fn a_stored_window_that_ends_after_the_clock_reads_the_newest_window() {
+    let period_start = NOW - 10 * DAY;
+    // The record the finding names: a minute-span period, fetched after the clock moved back.
+    let ahead = read(NOW + 2 * MINUTE, NOW + 3 * MINUTE, NOW + 3 * MINUTE);
+    assert_eq!(
+        next_window(ahead, period_start, NOW, MINUTE),
+        Some(Window {
+            since_ms: NOW - MINUTE,
+            until_ms: NOW,
+        }),
+        "the newest window, not the future one the read's own bounds name"
+    );
+    assert_eq!(
+        next_window(ahead, period_start, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - DAY,
+            until_ms: NOW,
+        }),
+        "one span still bounds the read that resets the walk"
+    );
+    assert_eq!(
+        next_window(
+            read(NOW + HOUR, NOW + 2 * HOUR, NOW),
+            period_start,
+            NOW,
+            DAY
+        ),
+        Some(Window {
+            since_ms: NOW - DAY,
+            until_ms: NOW,
+        }),
+        "a read whose whole window is ahead of the clock is reset the same way"
+    );
+    // Coverage that ends at or before the clock keeps today's path.
+    assert_eq!(
+        next_window(read(NOW - 2 * DAY, NOW, NOW), 0, NOW, DAY),
+        Some(Window {
+            since_ms: NOW - 3 * DAY,
+            until_ms: NOW - 2 * DAY,
+        }),
+        "a window that ends at the clock is still walked back one span"
+    );
+}
+
 /// A period shorter than the one-hour overlap is walked back one span at a time, rather than the
 /// newest window being selected again on every call.
 #[test]
