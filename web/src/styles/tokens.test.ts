@@ -162,7 +162,7 @@ describe("design tokens", () => {
 });
 
 describe("control radii (Orbyn Components)", () => {
-  const block = (text: string, selector: string) => new RegExp(`(?:^|\\n)${selector.replace(/[.[\]]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(text)?.[1] ?? "";
+  const block = (text: string, selector: string) => new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(text)?.[1] ?? "";
 
   it("gives buttons 9px, every segmented control 10px with 7px segments, menus 12px and fields 10px", () => {
     expect(block(css["base.css"]!, ".btn")).toContain("border-radius: var(--radius-9)");
@@ -174,6 +174,13 @@ describe("control radii (Orbyn Components)", () => {
     expect(block(css["model-picker.css"]!, ".access-segment button")).toContain("border-radius: var(--radius-7)");
     expect(block(css["shell.css"]!, ".route-tabs button")).toContain("border-radius: var(--radius-md)");
     expect(block(css["base.css"]!, ".menu")).toContain("border-radius: var(--radius-lg)");
+  });
+
+  it("escapes a selector's backslash and plus before matching its block", () => {
+    // The #849 case: a class that leaves a backslash unescaped reads "\b" as a word boundary, and one
+    // that leaves "+" alone reads it as a quantifier, so neither block below is found.
+    expect(block("\n.a\\b {\n  color: red;\n}\n", ".a\\b")).toContain("color: red");
+    expect(block("\n.a+b {\n  gap: 1px;\n}\n", ".a+b")).toContain("gap: 1px");
   });
 
   it("has no settings-only radius override for them", () => {

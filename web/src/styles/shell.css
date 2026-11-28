@@ -755,21 +755,15 @@ li[data-highlight] .thread-row {
   color: var(--color-muted);
   opacity: 0;
 }
-.folder-head[data-count] > .folder-new {
-  right: 30px;
-}
 .folder-head:hover > .folder-new,
 .folder-head:has(:focus-visible) > .folder-new {
   opacity: 1;
 }
-/* The plus floats over the row's right end, so the name and the waiting count stop short of it (the name used to run
-   under it). */
-/* Reserved always, so the name does not shift when the plus appears. */
-.folder-head .folder-name {
-  padding-right: 26px;
-}
-.folder-head .folder-needs {
-  margin-right: 24px;
+/* The plus floats over the row's right end, so the row keeps its footprint free: the toggle ends short of it and
+   carries the reservation for whatever sits last, the name, the waiting count or the collapsed total, whatever the
+   count's width. Reserved always, so nothing shifts when the plus appears. */
+.folder-head .folder-toggle {
+  padding-right: 34px;
 }
 .folder-head > .folder-new:focus-visible {
   outline: 2px solid var(--color-text);

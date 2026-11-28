@@ -36,12 +36,29 @@ function setup(options: { width?: number; files?: FileDiff[] } = {}) {
   return { diff, read, save };
 }
 
+/**
+ * The scope button is in the header and is there before the diff has been read; every test below looks at the patch with a plain
+ * `getBy`, so this is the file's one readiness wait and each test has to pass through it. Without it a loaded machine reads the
+ * screen between the two: a read held at 1.5 s had every test here fail on the patch it never saw, one of them in 29 ms because it
+ * read the panel without waiting at all.
+ *
+ * The wait is longer than Testing Library's 1 s default because the panel is legitimately allowed to be slow: it draws a skeleton
+ * once a read passes 400 ms (`MOTION.wait`), so 1 s leaves a loaded machine under twice the app's own threshold for "slow". The same
+ * read that failed every test at the 1020 ms default lands inside this budget.
+ */
+const READY = { timeout: 3000 } as const;
+
+/** The patch a scope or thread change reads again, on the same budget as the first one. */
+const awaitPatch = () => screen.findByRole("group", { name: "Patch" }, READY);
+
+const ready = async () => {
+  await screen.findByRole("button", { name: "Scope: Working tree" });
+  await awaitPatch();
+};
+
 const open = async () => {
   render(<DiffPanel threadId="t" />);
-  await screen.findByRole("button", { name: "Scope: Working tree" });
-  // The scope button is in the header and is there before the diff has been read; every test below looks at the patch with a plain
-  // `getBy`, so wait for the patch here. Without this a loaded machine reads the screen between the two.
-  await screen.findByRole("group", { name: "Patch" });
+  await ready();
 };
 
 beforeEach(() => {
@@ -71,7 +88,7 @@ it("offers neither outside the Working tree scope", async () => {
   await open();
   await user.click(screen.getByRole("button", { name: "Scope: Working tree" }));
   await user.click(await screen.findByRole("menuitem", { name: "Thread" }));
-  await screen.findByRole("group", { name: "Patch" });
+  await awaitPatch();
   expect(screen.queryByRole("button", { name: "Revert hunk" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Edit this line" })).toBeNull();
 });
@@ -280,14 +297,15 @@ it("undo never writes into another thread: switching threads drops the message",
     u: { id: "u", cwd: "/other", active_run: null, worktree: { path: "/other", branch: "fix/login", base: "main" } } as never,
   } });
   const view = render(<DiffPanel threadId="t" />);
-  await screen.findByRole("button", { name: "Scope: Working tree" });
+  await ready();
   await user.click(screen.getByRole("button", { name: "Revert hunk" }));
   await user.click(within(await screen.findByRole("dialog", { hidden: true })).getByRole("button", { name: "Revert hunk" }));
-  await screen.findByRole("status");
+  // The message is read by the Undo it offers, not by `role="status"`: the panel's own "Loading changes" state carries that role too,
+  // and switching to a thread reads its diff, so a status query answers with the panel loading and this test failed on a slow read.
+  await screen.findByRole("button", { name: /^Undo/ });
   expect(save).toHaveBeenCalledTimes(1);
   view.rerender(<DiffPanel threadId="u" />);
-  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
-  expect(screen.queryByRole("button", { name: /^Undo/ })).toBeNull();
+  await waitFor(() => expect(screen.queryByRole("button", { name: /^Undo/ })).toBeNull());
   expect(save).toHaveBeenCalledTimes(1);
 });
 
@@ -321,7 +339,6 @@ it("Enter on the selection bar's Comment button opens the comment, and sends not
 it("a new file has no earlier version to go back to, so it offers no Revert hunk", async () => {
   setup({ files: [{ path: "new.ts", status: "added", additions: 1, deletions: 0, patch: "@@ -0,0 +1 @@\n+hello\n" }] });
   await open();
-  await screen.findByRole("group", { name: "Patch" });
   expect(screen.queryByRole("button", { name: "Revert hunk" })).toBeNull();
 });
 

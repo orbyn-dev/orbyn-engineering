@@ -262,6 +262,250 @@ fn a_missing_store_reads_as_empty() {
     assert!(store.billed_totals("muse", None).unwrap().is_empty());
 }
 
+const HOUR: u64 = 3_600_000;
+const DAY: u64 = 86_400_000;
+/// The first millisecond of the day `STAMP` names, 2026-10-11.
+const DAY_ONE_START: u64 = STAMP - 4 * HOUR;
+
+/// The window the core has read is a fact the events cannot tell: a read that found no spend
+/// leaves no row, and a day with no spend has no row to prove it was looked at.
+#[test]
+fn a_read_window_is_kept_even_when_the_account_reported_nothing() {
+    let (_dir, store) = open();
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        None,
+        "nothing read yet"
+    );
+
+    let recorded = store
+        .record_account_report("cursor", STAMP, STAMP + HOUR, &[], STAMP + HOUR)
+        .unwrap();
+    assert_eq!(recorded.new, 0);
+    assert_eq!(recorded.settled, 0);
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: STAMP,
+            until_ms: STAMP + HOUR,
+            fetched_at_ms: STAMP + HOUR,
+        }),
+        "a window that reported no spend is still a window the account was read over"
+    );
+    assert_eq!(store.billed_event_count("cursor").unwrap(), 0);
+    assert_eq!(
+        store.account_read("muse").unwrap(),
+        None,
+        "each engine keeps its own"
+    );
+}
+
+#[test]
+fn a_covering_read_extends_the_window_and_a_disjoint_one_replaces_it() {
+    let (_dir, store) = open();
+    store
+        .record_account_report("cursor", STAMP, STAMP + HOUR, &[], STAMP + HOUR)
+        .unwrap();
+
+    // A read that meets the covered window makes one window of the two.
+    store
+        .record_account_report(
+            "cursor",
+            STAMP + HOUR,
+            STAMP + 2 * HOUR,
+            &[],
+            STAMP + 2 * HOUR,
+        )
+        .unwrap();
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: STAMP,
+            until_ms: STAMP + 2 * HOUR,
+            fetched_at_ms: STAMP + 2 * HOUR,
+        })
+    );
+
+    // A read with a gap between it and the covered one claims only itself: the gap was never read.
+    let far = STAMP + 10 * DAY;
+    store
+        .record_account_report("cursor", far, far + HOUR, &[], far + HOUR)
+        .unwrap();
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: far,
+            until_ms: far + HOUR,
+            fetched_at_ms: far + HOUR,
+        })
+    );
+
+    // Reading inside the covered window leaves the window where it was and only says when.
+    store
+        .record_account_report("cursor", far + HOUR / 2, far + HOUR, &[], far + 2 * HOUR)
+        .unwrap();
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: far,
+            until_ms: far + HOUR,
+            fetched_at_ms: far + 2 * HOUR,
+        })
+    );
+}
+
+/// A stored window that ends after the moment a report was read cannot be coverage that report
+/// keeps: no read names an instant after it was made. Merging it would keep that end, and a reader
+/// that finds an end after its clock answers with the newest window again, so older history would
+/// never be walked. The report replaces the stale window with the one it read.
+#[test]
+fn a_stored_window_that_ends_after_the_report_is_replaced_rather_than_merged() {
+    let (_dir, store) = open();
+    // A read made while the clock was ahead of where it is now, overlapping the reset window.
+    let ahead = STAMP + DAY;
+    store
+        .record_account_report("cursor", STAMP - 2 * HOUR, ahead, &[], ahead)
+        .unwrap();
+
+    // The clock is now behind that end, so the read covers the reset window and nothing later.
+    store
+        .record_account_report("cursor", STAMP - HOUR, STAMP, &[], STAMP)
+        .unwrap();
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: STAMP - HOUR,
+            until_ms: STAMP,
+            fetched_at_ms: STAMP,
+        }),
+        "the end after the clock is replaced by the window read, not merged into the record"
+    );
+}
+
+/// A read that extends coverage backwards is the walk the reader asks for, not a stale clock, so it
+/// merges with what was read and keeps the newer end.
+#[test]
+fn a_read_that_extends_coverage_backwards_merges_with_it() {
+    let (_dir, store) = open();
+    let newest_end = STAMP + DAY;
+    store
+        .record_account_report("cursor", newest_end - HOUR, newest_end, &[], newest_end)
+        .unwrap();
+
+    store
+        .record_account_report(
+            "cursor",
+            newest_end - HOUR - DAY,
+            newest_end - HOUR,
+            &[],
+            newest_end,
+        )
+        .unwrap();
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: newest_end - HOUR - DAY,
+            until_ms: newest_end,
+            fetched_at_ms: newest_end,
+        }),
+        "the older span joins the window and the newer end stays"
+    );
+}
+
+/// A day a read covers whole says what the day held, including nothing. A day only part of the
+/// read covers cannot say anything about the rest of that day, so its other rows stay.
+#[test]
+fn a_covered_day_that_reported_nothing_is_cleared_and_a_day_outside_keeps_its_history() {
+    let (_dir, store) = open();
+    let day_two_start = DAY_ONE_START + DAY;
+    store
+        .record_billed_events(&parse(vec![
+            event(STAMP, "claude-4.5", 10, 1, 1),
+            event(day_two_start + HOUR, "claude-4.5", 20, 2, 2),
+        ]))
+        .unwrap();
+    assert_eq!(store.billed_event_count("cursor").unwrap(), 2);
+
+    // The whole second day read again, with the account reporting no spend on it.
+    store
+        .record_account_report(
+            "cursor",
+            day_two_start,
+            day_two_start + DAY - 1,
+            &[],
+            day_two_start + DAY,
+        )
+        .unwrap();
+    let totals = store.billed_totals("cursor", None).unwrap();
+    assert_eq!(totals.len(), 1, "{totals:?}");
+    assert_eq!(
+        totals[0].day, "2026-10-11",
+        "the day outside the window keeps its history"
+    );
+    assert_eq!(totals[0].input, 10);
+
+    // A window that covers the start of the first day only leaves the rest of that day alone.
+    store
+        .record_account_report(
+            "cursor",
+            DAY_ONE_START,
+            DAY_ONE_START + HOUR,
+            &[],
+            DAY_ONE_START + HOUR,
+        )
+        .unwrap();
+    assert_eq!(
+        store.billed_event_count("cursor").unwrap(),
+        1,
+        "the rest of the day stays"
+    );
+}
+
+#[test]
+fn a_report_through_a_window_still_counts_what_is_new_and_what_settled() {
+    let (_dir, store) = open();
+    let day = DAY_ONE_START;
+    let window = (day, day + DAY - 1);
+    let first = parse(vec![event(STAMP, "claude-4.5", 100, 20, 12)]);
+    assert_eq!(
+        store
+            .record_account_report("cursor", window.0, window.1, &first, STAMP)
+            .unwrap()
+            .new,
+        1
+    );
+    let settled = parse(vec![event(STAMP, "claude-4.5", 100, 20, 15)]);
+    let recorded = store
+        .record_account_report("cursor", window.0, window.1, &settled, STAMP + HOUR)
+        .unwrap();
+    assert_eq!(recorded.new, 0);
+    assert_eq!(recorded.settled, 1);
+    assert_eq!(
+        store.billed_totals("cursor", None).unwrap()[0].reported_cents,
+        Some(15)
+    );
+    assert_eq!(
+        store.account_read("cursor").unwrap(),
+        Some(AccountRead {
+            since_ms: window.0,
+            until_ms: window.1,
+            fetched_at_ms: STAMP + HOUR,
+        }),
+        "one read, one window, and the amount it settled"
+    );
+}
+
+#[test]
+fn an_inverted_window_is_refused() {
+    let (_dir, store) = open();
+    assert!(
+        store
+            .record_account_report("cursor", STAMP + HOUR, STAMP, &[], STAMP)
+            .is_err()
+    );
+    assert_eq!(store.account_read("cursor").unwrap(), None);
+}
+
 #[test]
 fn a_period_keeps_only_its_days_and_its_engine() {
     let (_dir, store) = open();

@@ -380,13 +380,19 @@ mod tests {
 
     #[cfg(windows)]
     async fn slow_browser(path: &Path) -> ManagedChild {
+        // The file's path cannot ride in the `cmd /C` argument quoted: Rust escapes the quotes
+        // as `\"`, which breaks the redirection and the file is never written. The browser runs
+        // in the file's own folder and names it bare, and both lines are written by one echo
+        // group because `echo 1234>file` leaves a trailing space the reader does not expect.
+        let name = path.file_name().expect("the port file has a name");
         let mut command = Command::new("cmd");
         command
+            .current_dir(path.parent().expect("the port file has a folder"))
             .args([
                 "/C",
                 &format!(
-                    "ping -n 3 127.0.0.1 >NUL & echo 1234>\"{0}\" & echo /devtools/browser/fixture>>\"{0}\" & ping -n 30 127.0.0.1 >NUL",
-                    path.display()
+                    "ping -n 3 127.0.0.1 >NUL & (echo 1234&echo /devtools/browser/fixture)>{name} & ping -n 30 127.0.0.1 >NUL",
+                    name = name.to_string_lossy()
                 ),
             ])
             .stdin(Stdio::null())

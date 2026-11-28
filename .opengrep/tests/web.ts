@@ -31,7 +31,59 @@ export function escape(selector: string) {
   const b = selector.replace(/[.[\\\]]/g, "\\$&");
   // ok: orbyn-js-regex-escape-skips-backslash
   const c = selector.replace(/[.[\]]/g, "_");
-  return [a, b, c];
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const d = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const e = selector.replace(/[.[\]]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const f = selector.replace(/[.[\\\]]/g, '\\$&');
+  // A negated class matches a backslash, so prefixing one escapes it: no finding here.
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const g = selector.replace(/[^a-zA-Z0-9_]/g, "\\$&");
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const h = selector.replace(/[^a-zA-Z0-9_]/g, '\\$&');
+  // The \W and \D shorthands match a backslash too, so they escape it as well.
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const i = selector.replace(/[\W]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const j = selector.replace(/[\D]/g, "\\$&");
+  // \w does not match a backslash, so this class still loses one: a finding.
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const k = selector.replace(/[\w.]/g, "\\$&");
+  // A code-point escape for a backslash escapes it the same way, alone or beside an escaped "]".
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const l = selector.replace(/[\x5c]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const m = selector.replace(/[\u005c]/g, "\\$&");
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const n = selector.replace(/[\134]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const o = selector.replace(/[.*+?^${}()|[\]\x5c]/g, '\\$&');
+  // A range whose endpoints bracket a backslash matches one, so prefixing a backslash escapes it.
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const p = selector.replace(/[[-^]/g, '\\$&');
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const q = selector.replace(/[A-z]/g, "\\$&");
+  // A range this rule cannot classify is skipped rather than guessed.
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const r = selector.replace(/[\x5b-\x5e]/g, '\\$&');
+  // An ordinary range does not reach a backslash, so this class still loses one: a finding.
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const s = selector.replace(/[a-z.]/g, '\\$&');
+  // A hyphen after a backslash is escaped, so it is a literal and not a range separator.
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const t = selector.replace(/[a\-z]/g, '\\$&');
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const u = selector.replace(/[.[\-\]]/g, '\\$&');
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const v = selector.replace(/[\-\x41]/g, '\\$&');
+  // A leading hyphen is a literal too, so it separates no range.
+  // ruleid: orbyn-js-regex-escape-skips-backslash
+  const w = selector.replace(/[-\]]/g, '\\$&');
+  // A genuine range crossing the backslash to an escaped "]" still matches one.
+  // ok: orbyn-js-regex-escape-skips-backslash
+  const x = selector.replace(/[A-\]]/g, '\\$&');
+  return [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x];
 }
 
 export function names(name: string, text: string) {

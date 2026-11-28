@@ -2,7 +2,7 @@
 //! without transport or helpers. Remote URLs never leave this module or enter storage.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -22,6 +22,10 @@ use crate::project::workspace::Workspace;
 use crate::store::Store;
 use crate::util::{canonicalize, sha256_hex, swr};
 
+pub(crate) mod git_facts;
+
+use git_facts::{GitFacts, ScopeGitFacts, Watch};
+
 const MAX_PROJECTS: usize = 512;
 pub(crate) const MAX_PROJECT_METADATA_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PATH_BYTES: usize = 8 * 1024;
@@ -40,6 +44,7 @@ fn opaque(namespace: &str, pieces: &[&str]) -> String {
     format!("{namespace}_{}", sha256_hex(&bytes))
 }
 
+#[derive(Clone)]
 struct Repository {
     canonical: String,
     label: String,
@@ -150,6 +155,66 @@ fn repository_from_config(bytes: &[u8]) -> std::result::Result<Option<Repository
         .find_map(|raw| remote_repository(raw)))
 }
 
+/// Counts the Git processes `metadata` starts, so a test shows how many a catalog read
+/// spawns instead of trusting a number. Recording the folder each one ran in keeps a
+/// parallel test's processes out of another test's count.
+#[cfg(test)]
+pub(super) mod git_spawns {
+    use std::path::Path;
+    use std::sync::{Mutex, PoisonError};
+
+    static SPAWNED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+    pub(super) fn record(folder: &Path) {
+        let mut spawned = SPAWNED.lock().unwrap_or_else(PoisonError::into_inner);
+        spawned.push(folder.to_string_lossy().into_owned());
+    }
+
+    /// The Git processes started in `folder` so far.
+    pub(super) fn count(folder: &Path) -> usize {
+        let folder = folder.to_string_lossy();
+        let spawned = SPAWNED.lock().unwrap_or_else(PoisonError::into_inner);
+        spawned
+            .iter()
+            .filter(|spawned| spawned.as_str() == folder)
+            .count()
+    }
+}
+
+/// Changes a folder after the discovery that named its work tree and Git directory, and before
+/// the watch that has to describe that answer, which is otherwise only a timing window. Keyed by
+/// the folder, so a test running beside another one arms only its own observation.
+#[cfg(test)]
+pub(super) mod discovery_window {
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, PoisonError};
+
+    type Change = Box<dyn FnOnce(&Path) + Send>;
+
+    static ARMED: Mutex<Option<(PathBuf, Change)>> = Mutex::new(None);
+
+    /// Runs `change` after `folder` is next discovered, once.
+    pub(super) fn arm(folder: &Path, change: impl FnOnce(&Path) + Send + 'static) {
+        let folder = crate::util::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+        let mut armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
+        *armed = Some((folder, Box::new(change)));
+    }
+
+    /// Changes `folder` if a test armed it for this observation.
+    pub(super) fn run(folder: &Path) {
+        let change = {
+            let mut armed = ARMED.lock().unwrap_or_else(PoisonError::into_inner);
+            let mine = matches!(armed.as_ref(), Some((key, _)) if key == folder);
+            if mine { armed.take() } else { None }
+        };
+        // Run outside the lock: the change reads and writes the filesystem, and a held lock would
+        // turn a panicking change into a poisoned one.
+        if let Some((_, change)) = change {
+            change(folder);
+        }
+    }
+}
+
 async fn metadata(path: &Path, args: &[&str], deadline: Instant) -> Option<(i32, Vec<u8>)> {
     let budget = deadline
         .saturating_duration_since(Instant::now())
@@ -206,6 +271,8 @@ async fn metadata(path: &Path, args: &[&str], deadline: Instant) -> Option<(i32,
     command.process_group(0);
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
+    #[cfg(test)]
+    git_spawns::record(path);
     let mut child = ManagedChild::spawn(command).ok()?;
     let mut stdout = child.child_mut().stdout.take()?.take(MAX_CAPTURE + 1);
     let result = tokio::time::timeout(budget, async {
@@ -230,7 +297,115 @@ async fn metadata(path: &Path, args: &[&str], deadline: Instant) -> Option<(i32,
     result
 }
 
+/// The configuration an observation reads: the remote a repository is named by, and nothing a link
+/// in it could point at. Global and system configuration stay off in [`metadata`].
+const CONFIGURATION: [&str; 5] = [
+    "config",
+    "--no-includes",
+    "--null",
+    "--get-regexp",
+    r"^(remote\..*\.url|include\..*|includeif\..*|url\..*\.(insteadof|pushinsteadof))$",
+];
+
+/// The command that names a folder's work tree root and the Git directory it read that from.
+const DISCOVERY: [&str; 3] = ["rev-parse", "--show-toplevel", "--absolute-git-dir"];
+
+/// One answer to [`DISCOVERY`]: the work tree root Git named, and the Git directory it named
+/// beside it. A folder Git names no work tree for is not one of these.
+struct Answer {
+    root: PathBuf,
+    git_dir: Option<PathBuf>,
+}
+
+impl Answer {
+    fn read(output: &[u8]) -> Option<Self> {
+        let text = std::str::from_utf8(output).ok()?;
+        let mut lines = text.lines();
+        // `lines` already drops Git's line terminator, and every byte it leaves belongs to the
+        // path: Git names a folder whose name ends in a space, and trimming it names another one.
+        let top = lines.next()?;
+        if top.len() > MAX_PATH_BYTES {
+            return None;
+        }
+        let root = canonicalize(Path::new(top)).ok()?;
+        // Git names its directory after the root; it read the answer from there.
+        let git_dir = lines
+            .next()
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from);
+        Some(Self { root, git_dir })
+    }
+
+    /// Whether `self` names the same repository as `other`: the same work tree root, and the same
+    /// Git directory the answer was read from. A watch is built from the paths the first answer
+    /// named, so a second answer naming another repository is one it does not describe.
+    fn names(&self, other: &Self) -> bool {
+        self.root == other.root
+            && match (self.git_dir.as_deref(), other.git_dir.as_deref()) {
+                (None, None) => true,
+                (Some(mine), Some(theirs)) => matches!(
+                    (canonicalize(mine), canonicalize(theirs)),
+                    (Ok(mine), Ok(theirs)) if mine == theirs
+                ),
+                _ => false,
+            }
+    }
+}
+
+/// Observes one folder's Git identity: the two commands that read it, and what their
+/// answer rests on. `None` leaves the checkout unobserved, as a failed or partial read
+/// always did, and nothing is kept for it.
+async fn observe(path: &Path, real: &Path, is_git: bool, deadline: Instant) -> Option<GitFacts> {
+    let output = match metadata(path, &DISCOVERY, deadline).await {
+        Some((0, output)) => output,
+        Some((128, _)) if !is_git && !path.join(".git").exists() => {
+            // Git also exits 128 when the configuration above the folder cannot be read, and a
+            // folder inside a repository Orbyn cannot read is not a folder without one: it is
+            // answered as complete only when the configuration read says there is none.
+            return matches!(
+                metadata(path, &CONFIGURATION, deadline).await,
+                Some((0 | 1, _))
+            )
+            .then(|| GitFacts::no_work_tree(real));
+        }
+        _ => return None,
+    };
+    let first = Answer::read(&output)?;
+    // What the answer will rest on is watched before the configuration is read, so no byte the
+    // answer comes from is newer than the watch that vouches for it.
+    #[cfg(test)]
+    discovery_window::run(real);
+    let watch = first
+        .git_dir
+        .as_deref()
+        .and_then(|git_dir| Watch::work_tree(real, &first.root, git_dir));
+    // The watch is taken after the answer was read, so a repository that changed in between -- one
+    // that turned bare, one whose `.git` names another directory, one that became its own
+    // repository or lost the one above it -- is one the watch does not describe, however unchanged
+    // the files it does cover. Ask Git again, now that the watch vouches for the state that answers,
+    // and keep the observation only when both answers name the same repository.
+    let Some((0, output)) = metadata(path, &DISCOVERY, deadline).await else {
+        return None;
+    };
+    if !Answer::read(&output).is_some_and(|again| again.names(&first)) {
+        return None;
+    }
+    // Inspect configuration without includes: the identity comes from the files the answer rests
+    // on, never from what a link in them points at. Global/system configuration and
+    // caller-provided config are disabled in metadata.
+    let repository = match metadata(path, &CONFIGURATION, deadline).await {
+        Some((0, bytes)) => repository_from_config(&bytes).ok()?,
+        Some((1, _)) => None,
+        _ => return None,
+    };
+    // A file that changed while the configuration was read vouches for nothing: the answer is
+    // returned once and not kept, as any observation that cannot be watched is.
+    let watch = watch.filter(Watch::holds);
+    Some(GitFacts::work_tree(real, first.root, watch, repository))
+}
+
 async fn checkout(
+    cache: &ScopeGitFacts,
     project: Project,
     mode: ProjectGroupingMode,
     deadline: Instant,
@@ -268,43 +443,25 @@ async fn checkout(
         member.unavailable = Some(ProjectScopeUnavailableReason::CheckoutChanged);
         return member;
     }
-    // Inspect configuration without includes before a command that could load them.
-    // Global/system configuration and caller-provided config are disabled in metadata.
-    let repository = match metadata(
-        path,
-        &[
-            "config",
-            "--no-includes",
-            "--null",
-            "--get-regexp",
-            r"^(remote\..*\.url|include\..*|includeif\..*|url\..*\.(insteadof|pushinsteadof))$",
-        ],
-        deadline,
-    )
-    .await
+    // A read that already observed this folder reuses what it found while every file
+    // Git read is unchanged; anything else observes the folder again. An observation
+    // needs no process, so it also fits a budget another reader has spent.
+    let facts = match cache
+        .kept(&project.path, &real)
+        .filter(|facts| facts.root().is_some() || !project.is_git)
     {
-        Some((0, bytes)) => match repository_from_config(&bytes) {
-            Ok(repository) => repository,
-            Err(()) => return member,
-        },
-        Some((1, _)) => None,
-        _ => return member,
-    };
-    let top = match metadata(path, &["rev-parse", "--show-toplevel"], deadline).await {
-        Some((0, top)) => top,
-        Some((128, _)) if !project.is_git && !path.join(".git").exists() => {
-            member.metadata_complete = true;
-            return member;
+        Some(facts) => facts,
+        None => {
+            let Some(facts) = observe(path, &real, project.is_git, deadline).await else {
+                return member;
+            };
+            cache.keep(&project.path, facts.clone());
+            facts
         }
-        _ => return member,
     };
-    let Ok(top) = std::str::from_utf8(&top) else {
-        return member;
-    };
-    if top.len() > MAX_PATH_BYTES {
-        return member;
-    }
-    let Ok(root) = canonicalize(Path::new(top.trim())) else {
+    let Some(root) = facts.root() else {
+        // Git found no work tree here, and the folder is not registered as one.
+        member.metadata_complete = true;
         return member;
     };
     let Ok(relative) = real.strip_prefix(root) else {
@@ -312,9 +469,9 @@ async fn checkout(
     };
     member.repository_relative_path = Some(relative.to_string_lossy().replace('\\', "/"));
     member.metadata_complete = true;
-    if let Some(repository) = repository {
+    if let Some(repository) = facts.repository() {
         member.repository_key = Some(opaque("repository", &[&repository.canonical]));
-        member.repository_label = Some(repository.label);
+        member.repository_label = Some(repository.label.clone());
     }
     member
 }
@@ -505,6 +662,7 @@ fn catalog_read_key(query: &ProjectScopesQuery) -> String {
 async fn observe_catalog(
     store: Arc<Store>,
     workspace: Arc<Workspace>,
+    scope_git: Arc<ScopeGitFacts>,
     query: ProjectScopesQuery,
 ) -> Result<ProjectScopeCatalog> {
     // Match the existing project sidebar: the harness library is not a
@@ -551,7 +709,7 @@ async fn observe_catalog(
                 .get(&project.id)
                 .copied()
                 .unwrap_or(query.recipe.mode);
-            checkout(project, mode, deadline)
+            checkout(&scope_git, project, mode, deadline)
         })
         .buffer_unordered(4)
         .collect::<Vec<_>>()
@@ -781,13 +939,14 @@ impl Core {
     ) -> Result<ProjectScopeCatalog> {
         let key = catalog_read_key(query);
         let (store, workspace, query) = (self.store.clone(), self.workspace.clone(), query.clone());
+        let scope_git = self.scope_git.clone();
         #[cfg(test)]
         let observation_key = key.clone();
         self.project_scope_reads
             .get(&key, "project-scopes", false, move || async move {
                 #[cfg(test)]
                 observation_hooks::observe(&observation_key).await;
-                observe_catalog(store, workspace, query).await
+                observe_catalog(store, workspace, scope_git, query).await
             })
             .await
     }
@@ -817,10 +976,16 @@ impl Core {
             } else {
                 Duration::ZERO
             };
+        let scope_git = &self.scope_git;
         let records = stream::iter(projects)
             .map(|project| async move {
-                let checkout =
-                    checkout(project.clone(), ProjectGroupingMode::Repository, deadline).await;
+                let checkout = checkout(
+                    scope_git,
+                    project.clone(),
+                    ProjectGroupingMode::Repository,
+                    deadline,
+                )
+                .await;
                 (project, checkout)
             })
             .buffer_unordered(4)

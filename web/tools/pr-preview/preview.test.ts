@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 // @ts-expect-error plain modules shared with the render script
 import { FRAMES } from "./catalog.mjs";
 // @ts-expect-error plain modules shared with the render script
@@ -197,9 +198,25 @@ describe("dev only", () => {
   const walk = (dir: string): string[] =>
     readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(join(dir, entry.name)) : [join(dir, entry.name)]));
 
+  // Reading every source file in `src` (2,614 .ts/.tsx files, 10.4 MB) is disk throughput, not an assertion: cold on a
+  // loaded machine it took 21.1 s and warm 0.2 s. It is fixture setup, so it runs once in a hook with 16 reads in
+  // flight under a budget measured against that cold read, and the assertion keeps the 5 s per-test deadline.
+  const SCAN_BUDGET = 120_000;
+  const IN_FLIGHT = 16;
+  let importers: string[] = [];
+
+  beforeAll(async () => {
+    const queue = walk(join(web, "src")).filter((file) => /\.(ts|tsx)$/.test(file));
+    importers = [];
+    await Promise.all(Array.from({ length: IN_FLIGHT }, async () => {
+      for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
+        if (/tools\/pr-preview/.test(await readFile(file, "utf8"))) importers.push(file);
+      }
+    }));
+    importers.sort();
+  }, SCAN_BUDGET);
+
   it("nothing in the app imports the preview tools", () => {
-    for (const file of walk(join(web, "src")).filter((f) => /\.(ts|tsx)$/.test(f))) {
-      expect(readFileSync(file, "utf8"), file).not.toMatch(/tools\/pr-preview/);
-    }
+    expect(importers).toEqual([]);
   });
 });
