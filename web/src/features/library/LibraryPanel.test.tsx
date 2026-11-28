@@ -585,3 +585,34 @@ it("says the export failed for another reason, with the service's words, and sav
   expect(await screen.findByText("Couldn’t export the library. The library could not be read.")).toBeVisible();
   expect(saved.files).toEqual([]);
 });
+
+it("imports a library export from the toolbar: the dry run writes nothing, and Import reloads the library", async () => {
+  const mock = createLibraryMock();
+  const importLibrary = vi.spyOn(mock, "importLibrary");
+  const workflows = vi.spyOn(mock, "workflows");
+  const { user } = await mount(mock);
+  const picker = document.querySelector<HTMLInputElement>("input[data-library-import]")!;
+  expect(picker).toHaveAttribute("accept", ".json,application/json");
+  expect(picker).toHaveAttribute("hidden");
+  await user.click(screen.getByRole("button", { name: "Import" }));
+  const document_ = { format: "orbyn-library", version: 1, exported_at: "2026-11-22T00:00:00Z", profiles: [], workflows: [{ name: "Imported one", description: "", command: "echo 1", params: [], env_set_names: [] }], prompts: [], env_sets: [] };
+  fireEvent.change(picker, { target: { files: [new File([JSON.stringify(document_)], "orbyn-library-2026-11-22.json", { type: "application/json" })] } });
+  const dialog = await screen.findByRole("dialog", { name: "Import library" });
+  expect(await within(dialog).findByText("Checked by the service. Nothing is written until you choose Import.")).toBeVisible();
+  const table = within(dialog).getByRole("table", { name: "Import by kind" });
+  expect(within(table).getByRole("row", { name: /^Workflows/ })).toHaveTextContent("1");
+  expect(importLibrary).toHaveBeenCalledWith(document_, true);
+  expect(mock.writes).toEqual([]);
+  const before = workflows.mock.calls.length;
+  await user.click(within(dialog).getByRole("button", { name: "Import 1 item" }));
+  await waitFor(() => expect(mock.writes).toEqual(["import:1+0"]));
+  expect(await within(dialog).findByText("Imported 1 item to Personal.")).toBeVisible();
+  await waitFor(() => expect(workflows.mock.calls.length).toBeGreaterThan(before));
+  await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  expect(await screen.findByText("Imported 1 item to Personal.")).toBeVisible();
+  // The mock stores the imported entry, so the reloaded Personal list shows it.
+  await user.click(screen.getByRole("tab", { name: /^Personal/ }));
+  expect(await screen.findByRole("button", { name: /^Imported one/ })).toBeVisible();
+  // The reload the apply started reads again; flush its timers inside act so no state lands after the test.
+  await act(async () => { await new Promise<void>((resolve) => { setTimeout(resolve, 20); }); });
+});
