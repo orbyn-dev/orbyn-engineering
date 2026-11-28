@@ -309,10 +309,14 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   `web/e2e/real/multi-repo-scan.spec.ts`, 2 passed @ app 97068179d + spec 97068179d, 26 Nov 2026. The Changes grouping ran
   in `web/e2e/real/multi-repo-changes.spec.ts` (2 passed in #1592's evidence, which records no app or spec run id). The
   repository choice in the header Git menu, the branch dialog and the commit picker also ran
-  (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed): the reads of the chosen repository carry its `repo_id` in the query and
-  the primary's carry none, the dialog's write names it in the body, a branch created there is in that repository's worktree
-  alone and the Git menu's commit lands only there. Still not run against a live service: per-repository push and pull
-  requests, and opening another repository's file tab from the Changes list.
+  (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed, recorded 26 Nov 2026 in the commit that added the spec, 4d147ab08;
+  that record names no app or spec revision): the reads of the chosen repository carry its `repo_id` in the query and the
+  primary's carry none, the dialog's write names it in the body, a branch created there is in that repository's worktree
+  alone and the Git menu's commit lands only there. The primary-worktree assertions the commit case gained afterwards
+  (a1fa807ea, 27 Nov 2026: a pending file written into the primary worktree before the commit, whose `HEAD` and
+  `git status --porcelain` must be unchanged after it) were not covered by that run. Run again on the current head,
+  28 Nov 2026: 4 passed (48.2s) @ app ccf98d924 + spec ccf98d924, those assertions included. Still not run against a
+  live service: per-repository push and pull requests, and opening another repository's file tab from the Changes list.
 
 ### As built: web UI (repo threads)
 
