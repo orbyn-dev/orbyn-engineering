@@ -814,6 +814,16 @@ fn a_separate_git_directory_ending_in_a_space_is_watched_where_git_names_it() {
     let answer =
         super::Answer::read(format!("{}\n{}\n", checkout.display(), git_dir.display()).as_bytes())
             .unwrap();
+    // The discovery asked again after the watch is taken answers with the same directory, which is
+    // what keeps the observation: a trimmed name names no folder, so `names` cannot canonicalize it
+    // and `observe` gives up, leaving a valid checkout incomplete on every catalog read.
+    let again =
+        super::Answer::read(format!("{}\n{}\n", checkout.display(), git_dir.display()).as_bytes())
+            .unwrap();
+    assert!(
+        again.names(&answer),
+        "the second discovery names the same checkout"
+    );
     assert_eq!(
         answer.git_dir.as_deref(),
         Some(git_dir.as_path()),
