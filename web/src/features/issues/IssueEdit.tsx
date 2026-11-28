@@ -18,7 +18,9 @@ import { PlannedControl } from "./Planned";
  *   description and a label write together, never run side by side. It answers the updated issue, which the page then shows.
  * - A failed write changes nothing on the page and loses nothing typed: the draft or the selection stays, and the form says why.
  * - A list over a limit is refused on this side (`updateProblem`) before anything is sent.
- * - A 404 or 405 that is not `not_found` means this service has no such route: the controls go back to Planned.
+ * - A 405, a 404 that is not `not_found`, or the SPA fallback's own 404 `not_found` (its message is `NO_SUCH_ROUTE`) means this
+ *   service has no such route: the controls go back to Planned. A route's own `not_found` is its answer about the issue, and
+ *   stays one.
  */
 
 /** The page's write guard: runs one write, answers the updated issue, and answers `null` without calling when one is already running. */
@@ -34,7 +36,7 @@ export interface EditProps {
 
 /** What a failed write says, and whether it also means the route is not there. */
 function failureWords(failure: unknown): string {
-  if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
+  if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code, failure.message)) {
     markNotOffered("edit");
     return "This service does not offer editing yet. Nothing changed.";
   }

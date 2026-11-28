@@ -72,12 +72,10 @@ pub(super) fn registered(router: &Router) -> BTreeSet<(String, String)> {
     found
 }
 
-/// The table as it is today: protected routes, and public ones with their status.
-async fn observed() -> Value {
-    let dir = std::env::temp_dir().join(format!("orbynd-routes-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+/// The real router, on one temporary data directory, with the Crew routes on and no UI directory.
+fn test_app(dir: &std::path::Path) -> Router {
     // The Crew routes hide behind the Preview flag; with it on they are protected routes like the rest.
-    let mut config = CoreConfig::new(dir.clone(), "http://127.0.0.1:1".into());
+    let mut config = CoreConfig::new(dir.to_owned(), "http://127.0.0.1:1".into());
     let absent = dir.join("absent-native");
     assert!(absent.is_absolute() && !absent.exists());
     config.engines.claude_program = absent.join("claude.exe").to_string_lossy().into_owned();
@@ -88,13 +86,20 @@ async fn observed() -> Value {
     config.crew_confine_workers = false;
     let core = Arc::new(Core::open(config).unwrap());
     let access = Arc::new(Access::new("token", vec![], None));
-    let app = router(AppState {
+    router(AppState {
         core,
         access,
         remote: false,
         ui_dir: None,
         images: Arc::new(orbyn_core::browser::remote_images::ImageProxy::default()),
-    });
+    })
+}
+
+/// The table as it is today: protected routes, and public ones with their status.
+async fn observed() -> Value {
+    let dir = std::env::temp_dir().join(format!("orbynd-routes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let app = test_app(&dir);
     let listed = registered(&app);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -206,6 +211,40 @@ async fn route_table_is_unchanged() {
         without_class(&pinned()),
         "the route table changed; if that is intended, regenerate tests/routes.json and classify each new route"
     );
+}
+
+/// A path under a service prefix that no route claimed is answered by the transport gate, not by the SPA file: `404`, code
+/// `not_found` and exactly `No such route.` The web app reads that sentence as "this service has no such route" and every other
+/// `not_found` as the route's own answer about the thing it asked for (`web/src/features/issues/edit.ts`, where `NO_SUCH_ROUTE`
+/// is the web's one copy of it). The two are different facts and only the sentence tells them apart, so a reworded sentence
+/// would quietly turn an absent route back into an offered one (#1530): change both sides in the same diff.
+#[tokio::test]
+async fn a_service_prefix_miss_answers_no_such_route() {
+    let dir = std::env::temp_dir().join(format!("orbynd-routes-gate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = test_app(&dir);
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    // `/api/issues/candidates` is the read the Issues page probes with, so a path below it is the shape it meets on a
+    // service that does not have the route; any unclaimed path under a service prefix answers the same.
+    for path in [
+        "/api/not-a-route",
+        "/api/issues/candidates/not-a-route",
+        "/ws/not-a-route",
+    ] {
+        let answer = reqwest::get(format!("http://127.0.0.1:{port}{path}"))
+            .await
+            .unwrap();
+        assert_eq!(answer.status().as_u16(), 404, "{path}");
+        let body: Value = answer.json().await.unwrap();
+        assert_eq!(
+            (body["code"].as_str(), body["message"].as_str()),
+            (Some("not_found"), Some("No such route.")),
+            "{path} must answer the sentence the web app reads as no such route"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// A route nobody classified (a new one is written `unclassified` by the regenerate) fails here, and the

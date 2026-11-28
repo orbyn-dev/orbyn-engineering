@@ -31,7 +31,8 @@ impl Core {
     /// fails counts toward the stop rule and never wakes anyone.
     pub(super) async fn check_watch(&self, watch: &crate::store::WatchRow) -> Result<()> {
         let number = watch.number;
-        let thread = self.scm_thread(&watch.thread_id)?;
+        let repo_id = watch.repo_id.clone();
+        let thread = self.scm_thread_in(&watch.thread_id, &repo_id).await?;
         let cwd = Path::new(&thread.cwd);
         let forge = forge_of(cwd).await?;
         let read = read_watch(forge, cwd, number).await;
@@ -40,10 +41,12 @@ impl Core {
             Err(error) => {
                 let failures = watch.failures + 1;
                 if failures >= MAX_WATCH_FAILURES {
-                    self.store.unwatch_pull(&watch.thread_id, number)?;
+                    self.store
+                        .unwatch_pull(&watch.thread_id, &repo_id, number)?;
                 } else {
                     self.store.update_watch(
                         &watch.thread_id,
+                        &repo_id,
                         number,
                         WatchUpdate::failed(failures),
                     )?;
@@ -52,7 +55,8 @@ impl Core {
             }
         };
         if state.finished {
-            self.store.unwatch_pull(&watch.thread_id, number)?;
+            self.store
+                .unwatch_pull(&watch.thread_id, &repo_id, number)?;
             self.scm_reads.pull_dropped(&thread.project_id, number);
             return Ok(());
         }
@@ -74,6 +78,7 @@ impl Core {
         };
         self.store.update_watch(
             &watch.thread_id,
+            &repo_id,
             number,
             WatchUpdate {
                 snapshot: Some(serde_json::to_string(&state)?),
@@ -82,19 +87,18 @@ impl Core {
             },
         )?;
         if !news.is_empty() {
-            let prompt = format!(
-                "Pull request #{number} changed while you were watching it:\n{}",
-                news.join("\n")
-            );
+            let prompt = wake_prompt(number, &repo_id, &thread.cwd, &news);
             self.runs.enqueue(&watch.thread_id, &prompt, &[])?;
         }
         if wakes >= MAX_COMMENT_WAKES {
-            self.store.unwatch_pull(&watch.thread_id, number)?;
+            self.store
+                .unwatch_pull(&watch.thread_id, &repo_id, number)?;
         }
         Ok(())
     }
 
-    /// Starts watching. A pull request watched before keeps what it last reported.
+    /// Starts watching. A pull request watched before keeps what it last reported. The watch is of the repository the
+    /// caller's scope names: the thread's primary repository when none does.
     pub fn watch_pull(&self, id: &str, number: u64) -> Result<PullWatch> {
         let thread = self.scm_thread(id)?;
         let lifecycle = thread.lifecycle.as_ref();
@@ -109,21 +113,45 @@ impl Core {
                 "The thread that delegated this work watches pull requests.".into(),
             ));
         }
-        self.store.watch_pull(id, number)
+        let repo = self.pull_repo(id)?;
+        self.store.watch_pull(id, &repo, number)
     }
 
+    /// Stops watching the pull request of the repository the caller's scope names; a watch that is not there is no error,
+    /// as before.
+    pub fn unwatch_pull(&self, id: &str, number: u64) -> Result<()> {
+        self.scoped_thread(id)?;
+        let repo = self.pull_repo(id)?;
+        self.store.unwatch_pull(id, &repo, number)
+    }
+
+    /// The watches of the repository the caller's scope names: the thread's primary repository when none does.
     pub fn thread_watches(&self, id: &str) -> Result<Vec<PullWatch>> {
+        self.scoped_thread(id)?;
+        let repo = self.pull_repo(id)?;
         Ok(self
             .store
             .pull_watches(Some(id))?
             .into_iter()
+            .filter(|row| row.repo_id == repo)
             .map(|row| PullWatch {
                 thread_id: row.thread_id,
+                repo_id: row.repo_id,
                 number: row.number,
                 created_at: row.created_at,
             })
             .collect())
     }
+}
+
+pub(super) fn wake_prompt(number: u64, repo_id: &str, cwd: &str, news: &[String]) -> String {
+    // A queued turn does not inherit the temporary repository scope. Keep its exact target here;
+    // JSON quotes arbitrary paths/IDs as data, including embedded newlines and quote characters.
+    let context = serde_json::json!({ "id": repo_id, "worktree": cwd });
+    format!(
+        "Pull request #{number} changed while you were watching it:\nRepository: {context}\n{}",
+        news.join("\n")
+    )
 }
 
 /// Watching ends after this many wakes in a row that bring only comments.

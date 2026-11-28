@@ -6,6 +6,7 @@ import { useWorkspace } from "../../../product/state/workspace";
 import { Menu } from "../../../ui/Menu";
 import { Presence } from "../../../ui/Presence";
 import { PullLinkPreview } from "./PullLinkPreview";
+import { MarkdownThreadContext } from "./MarkdownMedia";
 import { pullNumberOf } from "./pullLink";
 
 const HOVER_DELAY_MS = 350;
@@ -34,13 +35,21 @@ export function ThreadLink({ id, children }: { id: string; children: ReactNode }
   );
 }
 
+/** A link names a file of the repository whose Markdown draws it only when it is relative: an absolute path is not one
+ * repository's, and the app has no absolute root to strip it down to. */
+const inRepository = (path: string) =>
+  !(path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\"));
+
 export function FileLink({ path, line, children }: { path: string; line: number | null; children: ReactNode }) {
   const revealFile = useUi((state) => state.revealFile);
+  // Drawn inside another repository's file, the link names that repository's path: the same path in the thread's own
+  // checkout is a different file, so the tab it opens carries the repo_id the viewer was given.
+  const repoId = useContext(MarkdownThreadContext)?.repoId;
   return (
     <button type="button" className="md-file-link" title={line ? `${path}:${line}` : path} onClick={() => {
       const route = parseRoute(window.location.hash);
       const thread = route.name === "thread" ? useWorkspace.getState().threads[route.id] : null;
-      if (thread) revealFile(path, line, { threadId: thread.id, cwd: thread.cwd });
+      if (thread) revealFile(path, line, { threadId: thread.id, cwd: thread.cwd }, inRepository(path) ? repoId : undefined);
     }}>
       {children}
     </button>

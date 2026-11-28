@@ -198,12 +198,15 @@ function renderBlock(block: Block, key: number): ReactNode {
   }
 }
 
-export function Markdown({ text, projectId = null, remoteImages = "render" }: { text: string; projectId?: string | null; remoteImages?: "render" | "link" }) {
+export function Markdown({ text, projectId = null, remoteImages = "render", repoId }: { text: string; projectId?: string | null; remoteImages?: "render" | "link"; /** The repository whose file is drawn: its relative media and links are that repository's, never the thread's folder's. */ repoId?: string }) {
   const blocks = useMemo(() => parseBlocks(text.split(/\r\n|\n|\r/)), [text]);
   const route = useRoute();
   const threadId = route.name === "thread" ? route.id : null;
   const cwd = useWorkspace((state) => (threadId === null ? null : (state.threads[threadId]?.cwd ?? null)));
-  const thread = useMemo(() => (threadId === null ? null : { id: threadId, cwd }), [threadId, cwd]);
+  const thread = useMemo(
+    () => (threadId === null ? null : { id: threadId, cwd, ...(repoId === undefined ? {} : { repoId }) }),
+    [threadId, cwd, repoId],
+  );
   return (
     <MarkdownProjectContext.Provider value={projectId}>
       <MarkdownThreadContext.Provider value={thread}>

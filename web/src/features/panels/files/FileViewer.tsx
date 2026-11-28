@@ -80,7 +80,7 @@ function FileBody({
           Edit
         </button>
       </div>
-      {mode === "preview" && kind ? <FilePreview kind={kind} text={file.content} /> : null}
+      {mode === "preview" && kind ? <FilePreview kind={kind} text={file.content} {...(repoId === undefined ? {} : { repoId })} /> : null}
       {mode === "source" ? <FileComments key={`${threadId}:${cwd}:${path}:${file.revision}:${repoId ?? ""}`} threadId={threadId} cwd={cwd}
         path={path} revision={file.revision} repoId={repoId} repoName={repoName} text={file.content} revealedLine={line} /> : null}
       {mode === "edit" ? (

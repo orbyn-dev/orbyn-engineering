@@ -12,6 +12,8 @@ export interface MediaItem {
   /** Checkout-relative, so the raw route can serve the original bytes. */
   path?: string;
   threadId?: string;
+  /** Another repository of the thread whose worktree holds `path`, so the raw route reads that repository's file. */
+  repoId?: string;
   remoteUrl?: string;
 }
 
@@ -19,6 +21,8 @@ export interface MediaItem {
 export interface MediaThread {
   id: string;
   cwd: string | null;
+  /** Another repository of the thread whose file is being drawn: its worktree is the root, and it is not `cwd`. */
+  repoId?: string;
 }
 
 /** The one place media elements mark themselves for the expanded view to collect. */
@@ -90,10 +94,19 @@ export function resolveMediaSource(raw: string, alt: string, thread: MediaThread
     return { kind: "image", src: serviceUrl(`/api/media/image?${query}`), remoteUrl: remote, alt };
   }
   if (!thread) return null;
-  const path = workspacePath(raw, thread.cwd);
+  // A named repository's worktree is not the thread's folder, which holds every worktree: only a path relative to that
+  // repository is its own file, so an absolute path stays text instead of reading whichever same-named file is asked.
+  const path = workspacePath(raw, thread.repoId === undefined ? thread.cwd : null);
   const kind = path ? mediaKind(path) : null;
   if (!path || (kind !== "image" && kind !== "video")) return null;
-  return { kind, src: rawUrl(thread.id, path), alt, path, threadId: thread.id };
+  return {
+    kind,
+    src: rawUrl(thread.id, path, false, thread.repoId),
+    alt,
+    path,
+    threadId: thread.id,
+    ...(thread.repoId === undefined ? {} : { repoId: thread.repoId }),
+  };
 }
 
 export function mediaAttribute(item: MediaItem): string {
@@ -106,7 +119,7 @@ export function readMediaAttribute(node: Element): MediaItem | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Record<string, unknown>;
-    const { kind, src, alt, path, threadId, remoteUrl } = value;
+    const { kind, src, alt, path, threadId, repoId, remoteUrl } = value;
     if ((kind !== "image" && kind !== "video") || typeof src !== "string" || !src) return null;
     return {
       kind,
@@ -114,6 +127,7 @@ export function readMediaAttribute(node: Element): MediaItem | null {
       alt: typeof alt === "string" ? alt : "",
       ...(typeof path === "string" ? { path } : {}),
       ...(typeof threadId === "string" ? { threadId } : {}),
+      ...(typeof repoId === "string" ? { repoId } : {}),
       ...(typeof remoteUrl === "string" ? { remoteUrl } : {}),
     };
   } catch {
@@ -142,7 +156,7 @@ export function mediaGallery(target: Element, fallback: MediaItem): { items: Med
 /** Where Save sends the browser: the download route for checkout media, the URL itself for a blob. */
 export function mediaSaveUrl(item: MediaItem): string | null {
   if (item.remoteUrl) return `${item.src}&download=true`;
-  if (item.path && item.threadId) return rawUrl(item.threadId, item.path, true);
+  if (item.path && item.threadId) return rawUrl(item.threadId, item.path, true, item.repoId);
   return /^https?:/i.test(item.src) ? null : item.src;
 }
 

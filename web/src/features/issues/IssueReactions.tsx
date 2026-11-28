@@ -55,7 +55,7 @@ export function ReactionBar({ issue, write, writing }: { issue: IssueDetail; wri
     try {
       await write(() => issuesApi().react(issue, reaction, true));
     } catch (failure) {
-      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code)) {
+      if (failure instanceof ApiFailure && routeAbsent(failure.status, failure.code, failure.message)) {
         markNotOffered("react");
         return;
       }
