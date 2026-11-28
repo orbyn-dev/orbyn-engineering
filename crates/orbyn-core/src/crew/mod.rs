@@ -60,6 +60,7 @@ mod view;
 mod watch;
 mod workers;
 mod working;
+mod worktree;
 
 #[cfg(test)]
 mod tests;
