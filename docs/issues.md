@@ -529,6 +529,14 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   { login, name?, id }[], truncated }`. `id` is how the tracker addresses the person on a write, which is not
   always the login; at most 200 of each are read, `truncated: true` when there were more, so a missing
   name is not proof the person is ineligible. A scope outside the connection is refused as everywhere else.
+- **How the web decides a route is offered** (`web/src/features/issues/edit.ts`, `http.ts`): one
+  `GET /api/issues/candidates` with no query, a read that changes nothing, and the answer decides. A `400` or `409` is the route
+  answering, so the writes and the sort are offered, and so is a `404 not_found` that names the thing the route could not find.
+  "No such route" is a `405`, a `404` whose code is not `not_found`, or the SPA fallback's own `404 not_found` whose message is
+  `No such route.` (`crates/orbynd/src/routes/ui.rs` answers that for any `/api` path no route claimed;
+  `crates/orbynd/src/routes/tests.rs`'s `a_service_prefix_miss_answers_no_such_route` pins its status, code and message, and the
+  web's one copy of the sentence is `NO_SUCH_ROUTE` in `web/src/features/issues/edit.ts`): those keep each control as the disabled
+  Planned pill and send nothing, and a write that meets one returns to Planned (#1530).
 - A write the tracker refuses answers the usual error (`forbidden`, `not_found`, `rate_limited`,
   `tracker_unavailable`) and changes nothing here. Issue text going in is as untrusted as issue text coming
   out: it is sent as a field value, never in an argument position, and never rendered as markup by this side.
@@ -714,14 +722,15 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
 - **The web client calls `comment`, `create` and `react`.** The issue page's comment box under the comments is
   one `POST /api/issues/item/comment` through the page-wide one-write guard, and it shows the comment the service
   stored after the tracker's own, keeps a failed draft and says nothing changed, refuses a blank or over-64 KiB body
-  before sending anything, and goes back to Planned when a first answer is a 404 or 405 that is not `not_found`
+  before sending anything, and goes back to Planned when a first answer says the route is not there (the rule above, "How the
+  web decides a route is offered": a `405`, a `404` whose code is not `not_found`, or the fallback's own `404 not_found`)
   (`web/src/features/issues/IssueComment.tsx`, `http.ts`). The Issues page bar's New issue opens the create dialog
   (`IssueCreate.tsx`): one `POST /api/issues/item/create` through the dialog's own one-write guard; the tracker's own
   templates fill a missing description and are read while the dialog is open (`GET /api/issues/templates`); the label
   and assignee rows are drawn only where `candidates` is offered, so a tracker that cannot edit its issues shows the
   template form alone; a create whose outcome is unknown says the service's own "possibly created" sentence and offers
   Check the list, never a re-send, while another refusal keeps the draft and sends it once more on the next click; a
-  first answer that is a 404 or 405 that is not `not_found` puts the control back to Planned. The issue page's
+  first answer that says the route is not there puts the control back to Planned. The issue page's
   description card carries the reaction bar (`IssueReactions.tsx`): the counts the last write reported drawn as the
   tracker's words and counts, and one `POST /api/issues/item/react` per choice through the page-wide one-write guard;
   a first "no such route" hides the bar. Three contract gaps shape it: a plain detail read carries no reactions, so
