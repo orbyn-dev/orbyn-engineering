@@ -1,7 +1,8 @@
 //! File leases (SPEC.md H10 and H11): the core grants the paths a brief asks for to its worker,
 //! refuses a write on a protected path, outside the brief's write files, or for a reviewer, and
 //! reads an expiry when a lease is used, never from a timer. A lease that has lapsed is
-//! recorded as `expired` the first time anyone looks, and then blocks nobody.
+//! recorded as `expired` the first time anyone looks, and then blocks nobody. A member asks for a
+//! lease and releases one it holds through `crew_lease_request` and `crew_lease_release`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -9,13 +10,16 @@ use std::path::{Path, PathBuf};
 use orbyn_contracts::{
     ActionKind, Brief, BriefKind, CrewAuthor, CrewError, CrewId, CrewMember, CrewObject,
     CrewPathPattern, CrewRole, CrewShortText, CrewTimestamp, CrewToken, CrewUtcSeconds, ErrorCode,
-    Lease, LeaseMode, LeaseState,
+    Lease, LeaseMode, LeaseState, reject_floats,
 };
+use serde_json::{Map, Value, json};
 use time::OffsetDateTime;
 
+use super::guard::refuse_secret;
 use crate::app::Core;
 use crate::error::CoreError;
 use crate::governance::approvals::{ActionAsk, ActionLease, Review, RunScope, resolve_existing};
+use crate::tools::mcp::McpBinding;
 
 fn invalid(message: impl Into<String>) -> CrewError {
     CrewError::new(ErrorCode::InvalidObject, message)
@@ -141,6 +145,136 @@ pub fn is_reviewer(brief: &Brief) -> bool {
     brief.kind == BriefKind::Review
 }
 
+/// The member lease tools (SPEC.md section 5): a member asks for a lease and releases one it holds.
+pub const LEASE_REQUEST_TOOL: &str = "crew_lease_request";
+pub const LEASE_RELEASE_TOOL: &str = "crew_lease_release";
+pub const LEASE_TOOLS: [&str; 2] = [LEASE_REQUEST_TOOL, LEASE_RELEASE_TOOL];
+
+/// The fields a member's lease draft may not send: the envelope and the two the core fills in.
+const LEASE_STAMPED: [&str; 9] = [
+    "type",
+    "v",
+    "id",
+    "crew_id",
+    "author",
+    "created_at",
+    "run_id",
+    "holder",
+    "state",
+];
+
+/// The two tools as `tools/list` shows them.
+pub fn specs() -> Vec<Value> {
+    vec![
+        json!({
+            "name": LEASE_REQUEST_TOOL,
+            "description": "Preview, for a crew member: ask for a file lease. `paths` are repository paths, or a \
+                directory tree ending `/**`; `mode` is `read` or `write`; `expires_at` is a UTC time to the whole \
+                second, later than the request. The core grants it when it overlaps no lease another member holds; a \
+                write lease must lie inside the brief's write files, is never granted to a reviewer, and never reaches \
+                a protected path. Refused once the run has ended. Returns the lease id and state.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "paths": { "type": "array", "items": { "type": "string" } },
+                    "mode": { "type": "string" },
+                    "expires_at": { "type": "string" },
+                },
+                "required": ["paths", "mode", "expires_at"],
+            },
+        }),
+        json!({
+            "name": LEASE_RELEASE_TOOL,
+            "description": "Preview, for a crew member: release the lease you hold on exactly these `paths`. Each \
+                lease of yours naming exactly them is written `released`; a path you do not hold is refused. Refused \
+                once the run has ended.",
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "paths": { "type": "array", "items": { "type": "string" } },
+                },
+                "required": ["paths"],
+            },
+        }),
+    ]
+}
+
+/// A lease draft's paths, each a path or a tree pattern.
+fn draft_paths(fields: &Map<String, Value>) -> Result<Vec<CrewPathPattern>, CrewError> {
+    let Some(values) = fields.get("paths").and_then(Value::as_array) else {
+        return Err(invalid("paths: required, a list of path patterns"));
+    };
+    values
+        .iter()
+        .map(|value| {
+            let text = value
+                .as_str()
+                .ok_or_else(|| invalid("paths: each one is a path pattern"))?;
+            CrewPathPattern::new(text).map_err(|why| invalid(format!("paths: {why}")))
+        })
+        .collect()
+}
+
+/// The arguments of a lease draft, checked for the fields the core stamps and for any the tool does
+/// not take.
+fn lease_draft<'a>(
+    tool: &str,
+    args: &'a Value,
+    names: &[&str],
+) -> Result<&'a Map<String, Value>, CrewError> {
+    let Some(fields) = args.as_object() else {
+        return Err(invalid("arguments: an object"));
+    };
+    if let Some(key) = fields
+        .keys()
+        .find(|key| LEASE_STAMPED.contains(&key.as_str()))
+    {
+        return Err(invalid(format!(
+            "{key}: the core stamps this field; a draft does not carry it"
+        )));
+    }
+    if let Some(extra) = fields.keys().find(|key| !names.contains(&key.as_str())) {
+        return Err(invalid(format!("{extra}: not an argument of {tool}")));
+    }
+    reject_floats(args)?;
+    Ok(fields)
+}
+
+fn draft_mode(fields: &Map<String, Value>) -> Result<LeaseMode, CrewError> {
+    match fields.get("mode").and_then(Value::as_str) {
+        Some("read") => Ok(LeaseMode::Read),
+        Some("write") => Ok(LeaseMode::Write),
+        Some(_) => Err(invalid("mode: read or write")),
+        None => Err(invalid("mode: required, read or write")),
+    }
+}
+
+fn draft_expiry(fields: &Map<String, Value>) -> Result<CrewUtcSeconds, CrewError> {
+    let text = fields
+        .get("expires_at")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid("expires_at: required"))?;
+    CrewUtcSeconds::new(text).map_err(|why| invalid(format!("expires_at: {why}")))
+}
+
+/// Whether a granted pattern covers what a requested one can name: the same file, or a tree and
+/// anything inside it. A request wider than the grant (`src/**` against `src/lib.rs`) is not covered.
+fn covers(granted: &CrewPathPattern, wanted: &CrewPathPattern) -> bool {
+    let (granted_dir, granted_tree) = granted.parts();
+    let (wanted_dir, wanted_tree) = wanted.parts();
+    if granted_tree {
+        granted_dir == wanted_dir || inside(granted_dir, wanted_dir)
+    } else {
+        !wanted_tree && granted_dir == wanted_dir
+    }
+}
+
+fn inside(dir: &str, path: &str) -> bool {
+    path.len() > dir.len() && path.starts_with(dir) && path.as_bytes()[dir.len()] == b'/'
+}
+
 impl Core {
     /// The leases in `crew_id` that are held now. A granted lease past its `expires_at` is
     /// written as `expired` here, on use, and left out; so it blocks no other member.
@@ -150,13 +284,22 @@ impl Core {
         now: i64,
     ) -> Result<Vec<(String, Lease)>, CrewError> {
         let all = self.store.crew_leases_in_crew(crew_id).map_err(internal)?;
-        // The newest object of each lineage says where the lease stands.
-        let mut newest: HashMap<(String, String, bool), (String, Lease)> = HashMap::new();
+        // The newest object of each lineage says where the lease stands. A lineage is one path
+        // set in one mode, so the brief's own grant and a member's request for a narrower set
+        // are separate grants: a request or a release never hides the brief's files, and the
+        // check below still reads both.
+        type Lineage = (String, String, bool, Vec<String>);
+        let mut newest: HashMap<Lineage, (String, Lease)> = HashMap::new();
         for (task, lease) in all {
             let key = (
                 task.clone(),
                 lease.holder.as_str().to_owned(),
                 lease.mode == LeaseMode::Write,
+                lease
+                    .paths
+                    .iter()
+                    .map(|path| path.as_str().to_owned())
+                    .collect(),
             );
             newest.insert(key, (task, lease));
         }
@@ -184,11 +327,23 @@ impl Core {
                 now,
             };
             let ended = grant.ended(&lease, LeaseState::Expired, "The lease ran out.")?;
-            self.store
-                .add_crew_object(&task, &CrewObject::Lease(ended))
-                .map_err(internal)?;
+            if let Some(current) = self
+                .store
+                .end_crew_lease_snapshot(&task, &lease, &ended)
+                .map_err(internal)?
+                && current.state == LeaseState::Granted
+                && current.expires_at.as_str() > today.as_str()
+            {
+                live.push((task, current));
+            }
         }
-        live.sort_by(|a, b| a.1.created_at.cmp(&b.1.created_at));
+        live.sort_by_cached_key(|(_, lease)| {
+            OffsetDateTime::parse(
+                lease.created_at.as_str(),
+                &time::format_description::well_known::Rfc3339,
+            )
+            .ok()
+        });
         Ok(live)
     }
 
@@ -390,10 +545,198 @@ impl Core {
             };
             let ended = grant.ended(&lease, LeaseState::Released, "The run ended.")?;
             self.store
-                .add_crew_object(&owner, &CrewObject::Lease(ended))
+                .end_crew_lease_snapshot(&owner, &lease, &ended)
                 .map_err(internal)?;
         }
         Ok(())
+    }
+
+    /// Runs a member lease tool for the MCP service.
+    pub(super) async fn crew_lease_tool(
+        self: &std::sync::Arc<Self>,
+        binding: &McpBinding,
+        tool: &str,
+        args: &Value,
+    ) -> Result<Value, CrewError> {
+        if !self.crew_enabled() {
+            return Err(CrewError::new(ErrorCode::UnknownTool, tool));
+        }
+        if tool == LEASE_REQUEST_TOOL {
+            self.crew_lease_request_tool(binding, args).await
+        } else {
+            self.crew_lease_release_tool(binding, args).await
+        }
+    }
+
+    /// `crew_lease_request`: a member asks for a lease it is allowed (H10, H11). The member is the
+    /// caller, never the draft; a write lease must lie inside the brief, off the protected paths, and
+    /// a lease overlapping another member's is refused and the lead is told.
+    async fn crew_lease_request_tool(
+        self: &std::sync::Arc<Self>,
+        binding: &McpBinding,
+        args: &Value,
+    ) -> Result<Value, CrewError> {
+        let who = self.bus_sender(binding, LEASE_REQUEST_TOOL)?;
+        let Some(task_id) = who.task.clone() else {
+            return Err(CrewError::new(
+                ErrorCode::NotAuthorized,
+                "only a member working a task requests a lease",
+            ));
+        };
+        let fields = lease_draft(LEASE_REQUEST_TOOL, args, &["paths", "mode", "expires_at"])?;
+        let paths = draft_paths(fields)?;
+        let mode = draft_mode(fields)?;
+        let expires_at = draft_expiry(fields)?;
+        let now = crate::util::unix_now();
+        // H10: expires_at is later than the request itself. Whole seconds compare as text.
+        if expires_at.as_str() <= timestamp(now)?.as_str() {
+            return Err(CrewError::new(
+                ErrorCode::LeaseExpired,
+                "expires_at is not later than the request",
+            ));
+        }
+        let task = self
+            .store
+            .crew_task(&task_id)
+            .map_err(internal)?
+            .ok_or_else(|| invalid("no such task"))?;
+        let brief = self
+            .store
+            .crew_brief(&task_id)
+            .map_err(internal)?
+            .ok_or_else(|| invalid("no such brief"))?;
+        if mode == LeaseMode::Write {
+            // H10: a reviewer reads and reports, so it takes no write lease.
+            if is_reviewer(&brief) {
+                return Err(CrewError::new(
+                    ErrorCode::NotAuthorized,
+                    "a reviewer is never given a write lease",
+                ));
+            }
+            // H11: a write lease never reaches a path the checks use.
+            if let Some(key) = self.store.crew_answer_key(&task_id).map_err(internal)? {
+                let asked: Vec<&CrewPathPattern> = paths.iter().collect();
+                refuse_protected(&asked, &key.protected_paths)?;
+            }
+            // H10: a write lease lies inside the brief's write files, never wider.
+            let granted: Vec<&CrewPathPattern> = brief
+                .files
+                .iter()
+                .filter(|file| file.mode == LeaseMode::Write)
+                .map(|file| &file.path)
+                .collect();
+            if let Some(path) = paths
+                .iter()
+                .find(|wanted| !granted.iter().any(|held| covers(held, wanted)))
+            {
+                return Err(CrewError::new(
+                    ErrorCode::NotAuthorized,
+                    format!("{path} is outside the files the brief asked for"),
+                ));
+            }
+        }
+        let run_id = CrewId::new(task.run_id.clone()).map_err(invalid)?;
+        // H10: the live read, the conflict check and the insert are one step. A start and a
+        // correction take the same lock for their check and grants, so no two grants can both pass.
+        let _granting = self.crew_lease_grants.lock().await;
+        // H10: the request can wait here for a grant in flight, so the clock is read again: the
+        // grant is stamped and its expiry checked after the wait, never before it, and a request
+        // whose expiry passed meanwhile is refused rather than stored already lapsed.
+        let now = crate::util::unix_now();
+        if expires_at.as_str() <= timestamp(now)?.as_str() {
+            return Err(CrewError::new(
+                ErrorCode::LeaseExpired,
+                "expires_at is not later than the request",
+            ));
+        }
+        let grant = Grant {
+            brief: &brief,
+            run_id: &run_id,
+            holder: &who.member,
+            now,
+        };
+        let lease = grant.lease(paths, mode, LeaseState::Granted, expires_at, None)?;
+        // H2: nothing an object holds is a secret, a path included.
+        refuse_secret(&CrewObject::Lease(lease.clone()).to_value())?;
+        let live = self.live_crew_leases(who.crew_id.as_str(), now)?;
+        if let Some((_, held)) = live.iter().find(|(_, held)| lease.conflicts_with(held)) {
+            let error = CrewError::new(
+                ErrorCode::LeaseConflict,
+                format!(
+                    "the lease overlaps one held by {}; the lead decides who goes first",
+                    held.holder
+                ),
+            );
+            self.tell_lead_of(&who, &error);
+            return Err(error);
+        }
+        // H10: the run can end while the request waits, and the run-end cleanup reads the live
+        // leases after the task moved to its final state. The grant is stored only if that state
+        // still stands when its own transaction reads it, so a waiting request cannot store a
+        // grant the cleanup has already passed.
+        let lease =
+            self.store
+                .add_crew_lease_grant(&task.id, &lease)
+                .map_err(|error| match error {
+                    CoreError::RunClosed => {
+                        CrewError::new(ErrorCode::RunEnded, "this run has ended")
+                    }
+                    other => internal(other),
+                })?;
+        Ok(json!({ "id": lease.id, "state": lease.state }))
+    }
+
+    /// `crew_lease_release`: a member releases its own leases on exactly `paths`. A path it does not
+    /// hold is `lease_not_held`; a release writes a new object, so the object table stays append-only.
+    async fn crew_lease_release_tool(
+        &self,
+        binding: &McpBinding,
+        args: &Value,
+    ) -> Result<Value, CrewError> {
+        let who = self.bus_sender(binding, LEASE_RELEASE_TOOL)?;
+        let Some(task_id) = who.task.clone() else {
+            return Err(CrewError::new(
+                ErrorCode::NotAuthorized,
+                "only a member working a task releases a lease",
+            ));
+        };
+        let fields = lease_draft(LEASE_RELEASE_TOOL, args, &["paths"])?;
+        let paths = draft_paths(fields)?;
+        let now = crate::util::unix_now();
+        let brief = self
+            .store
+            .crew_brief(&task_id)
+            .map_err(internal)?
+            .ok_or_else(|| invalid("no such brief"))?;
+        // H10: the live read and the terminal objects it writes are one step with every grant, so a
+        // release cannot read past a grant that lands before its write and then hide that grant.
+        let _granting = self.crew_lease_grants.lock().await;
+        let live = self.live_crew_leases(who.crew_id.as_str(), now)?;
+        let mine: Vec<(String, Lease)> = live
+            .into_iter()
+            .filter(|(owner, lease)| {
+                owner == &task_id && lease.holder == who.member && lease.paths == paths
+            })
+            .collect();
+        if mine.is_empty() {
+            return Err(CrewError::new(
+                ErrorCode::LeaseNotHeld,
+                "no such lease is held",
+            ));
+        }
+        for (owner, lease) in mine {
+            let grant = Grant {
+                brief: &brief,
+                run_id: &lease.run_id,
+                holder: &lease.holder,
+                now,
+            };
+            let ended = grant.ended(&lease, LeaseState::Released, "The member released it.")?;
+            self.store
+                .end_crew_lease_snapshot(&owner, &lease, &ended)
+                .map_err(internal)?;
+        }
+        Ok(json!({ "ok": true }))
     }
 }
 

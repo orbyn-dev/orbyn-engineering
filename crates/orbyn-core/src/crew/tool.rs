@@ -26,6 +26,7 @@ pub const STOP_TOOL: &str = "crew_stop";
 /// Whether `name` is a Crew tool.
 pub fn is_tool(name: &str) -> bool {
     [ROUTE_TOOL, START_TOOL, REPORT_TOOL, RESUME_TOOL, STOP_TOOL].contains(&name)
+        || super::LEASE_TOOLS.contains(&name)
         || super::BUS_TOOLS.contains(&name)
         || super::REVIEW_TOOLS.contains(&name)
         || super::MERGE_TOOLS.contains(&name)
@@ -100,6 +101,7 @@ pub fn tool_specs() -> Vec<Value> {
             },
         }),
     ];
+    tools.extend(super::leases::specs());
     tools.extend(super::bus::specs());
     tools.extend(super::review::specs());
     tools.extend(super::autopilot::merge_tool_specs());
@@ -182,6 +184,9 @@ impl Core {
             STOP_TOOL => self.crew_stop_tool(binding, args).await,
             merge if super::MERGE_TOOLS.contains(&merge) => {
                 self.crew_merge_tool(binding, merge, args).await
+            }
+            lease if super::LEASE_TOOLS.contains(&lease) => {
+                self.crew_lease_tool(binding, lease, args).await
             }
             bus if super::BUS_TOOLS.contains(&bus) => self.crew_bus_tool(binding, bus, args).await,
             review if super::REVIEW_TOOLS.contains(&review) => {
