@@ -55,6 +55,9 @@ mod crew_flow;
 #[cfg(test)]
 mod crew_formats_tests;
 mod crew_guard;
+#[cfg(test)]
+mod crew_lease_tests;
+mod crew_leases;
 mod crew_lessons;
 #[cfg(test)]
 mod crew_lessons_tests;
@@ -101,6 +104,8 @@ pub(crate) mod project_issue_trackers;
 pub(crate) mod project_repos;
 mod thread_import;
 pub(crate) mod thread_repos;
+#[cfg(test)]
+mod thread_repos_tests;
 pub use issues::TrackerConnection;
 pub(crate) use issues::{tracker_of, tracker_text as tracker_name};
 mod migrations;

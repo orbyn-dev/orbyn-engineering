@@ -27,8 +27,8 @@ async fn three_lessons_make_one_proposal_from_generic_escape_lessons() {
     let proposal_id = seeded.proposal_id.expect("three lessons make a proposal");
 
     let views = w.core.crew_skill_proposals(&repo).unwrap();
-    assert_eq!(views.len(), 1);
-    let view = &views[0];
+    assert_eq!(views.len(), 1, "three lessons make one proposal");
+    let view = views.first().expect("the crew's one proposal");
     assert_eq!(view.proposal.id, proposal_id);
     assert_eq!(view.proposal.state, "open");
     assert_eq!(
@@ -41,12 +41,21 @@ async fn three_lessons_make_one_proposal_from_generic_escape_lessons() {
         assert!(view.proposal.lessons.contains(id), "{id}");
     }
 
+    // The seed answers its lesson ids oldest first, so the first lesson is found by its own evidence id rather
+    // than by the place the seed put it in.
     let lesson = w
         .core
         .store
-        .crew_lesson(&seeded.lessons[0])
+        .crew_lessons("repo", Some(&repo))
         .unwrap()
-        .unwrap();
+        .into_iter()
+        .find(|lesson| {
+            lesson
+                .evidence
+                .iter()
+                .any(|evidence| evidence.id == "dev-seed-1")
+        })
+        .expect("the first seeded lesson");
     assert_eq!(lesson.scope, "repo");
     assert_eq!(lesson.project_id.as_deref(), Some(repo.as_str()));
     assert_eq!(lesson.source, "escape");
@@ -93,8 +102,9 @@ async fn one_then_two_lessons_make_one_proposal_and_a_repeat_keeps_it() {
 
     let views = w.core.crew_skill_proposals(&repo).unwrap();
     assert_eq!(views.len(), 1, "a repeated 3 never makes a second proposal");
-    assert_eq!(views[0].proposal.id, proposal_id);
-    assert_eq!(views[0].proposal.lessons.len(), 3);
+    let view = views.first().expect("the crew's one proposal");
+    assert_eq!(view.proposal.id, proposal_id);
+    assert_eq!(view.proposal.lessons.len(), 3);
     let lessons = w.core.store.crew_lessons("repo", Some(&repo)).unwrap();
     assert_eq!(lessons.len(), 6, "every call adds its lessons to the group");
     assert!(lessons.iter().all(|lesson| {

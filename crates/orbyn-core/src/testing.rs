@@ -34,6 +34,48 @@ pub fn run_git(cwd: &Path, args: &[&str]) {
     assert!(status.success(), "git {args:?}");
 }
 
+/// A second name for a folder: a symlink on Unix, a junction on Windows, where a
+/// file symlink needs a privilege a test runner may not grant. Both paths come from
+/// the caller's disposable fixture.
+pub fn link_dir(target: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link).unwrap();
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        // Junction creation needs no symbolic-link privilege on supported Windows.
+        // cmd.exe parses its own command line: it reads a `/` inside a bare path as a switch, splits a bare path
+        // on `&`, and expands `%NAME%` even inside the quotes `mklink` needs. Name the paths through environment
+        // variables, which cmd substitutes in one pass without reading them again, and keep delayed expansion off
+        // so a `!` in a name stays text.
+        let native = |path: &Path| path.to_string_lossy().replace('/', r"\");
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/v:off", "/c", "mklink", "/J"])
+            .raw_arg(r#""%ORBYN_TEST_LINK_DIR%""#)
+            .raw_arg(r#""%ORBYN_TEST_TARGET_DIR%""#)
+            .env("ORBYN_TEST_LINK_DIR", native(link))
+            .env("ORBYN_TEST_TARGET_DIR", native(target))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "mklink /J {} {}: {}",
+            link.display(),
+            target.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// Removes the link itself, never the folder a [`link_dir`] link names.
+pub fn unlink_dir(link: &Path) {
+    #[cfg(unix)]
+    std::fs::remove_file(link).unwrap();
+    #[cfg(windows)]
+    std::fs::remove_dir(link).unwrap();
+}
+
 /// A minimal valid skills library with one skill and its host links.
 pub fn library(root: &Path) -> PathBuf {
     std::fs::create_dir_all(root.join("skills/how")).unwrap();
@@ -68,6 +110,49 @@ pub fn library(root: &Path) -> PathBuf {
     run_git(root, &["add", "."]);
     run_git(root, &["commit", "-q", "-m", "library"]);
     crate::util::canonicalize(root).unwrap()
+}
+
+/// A directory junction: a Windows reparse point that redirects a folder without the
+/// symbolic-link privilege a symlink needs. Both paths are the caller's disposable fixture.
+#[cfg(windows)]
+pub fn junction(link: &Path, target: &Path) {
+    use std::os::windows::process::CommandExt;
+
+    // cmd.exe parses its own command line, so a forward slash in a path would read as a switch.
+    let path_arg = |path: &Path| path.to_string_lossy().replace('/', "\\");
+    // Both paths travel in the environment: cmd.exe reads a metacharacter in a temporary
+    // folder (an "&", say) as syntax in its own command line, and mklink then never runs.
+    // The command is fixed and quotes each expansion; delayed expansion stays off, so a "!"
+    // in a path is literal too.
+    let status = std::process::Command::new("cmd.exe")
+        .args(["/d", "/v:off", "/c"])
+        .raw_arg(r#"mklink /J "%ORBYN_JUNCTION_LINK%" "%ORBYN_JUNCTION_TARGET%""#)
+        .env("ORBYN_JUNCTION_LINK", path_arg(link))
+        .env("ORBYN_JUNCTION_TARGET", path_arg(target))
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "could not make the junction {} -> {}",
+        link.display(),
+        target.display()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_survives_a_temp_path_with_shell_metacharacters() {
+    let dir = TempDir::new();
+    // A temporary folder can hold "&" or "!", neither of which is syntax outside cmd.exe's
+    // own command line.
+    let target = dir.path().join("target & !dir");
+    std::fs::create_dir(&target).unwrap();
+    let link = dir.path().join("link & !point");
+    junction(&link, &target);
+    std::fs::write(link.join("seen"), b"").unwrap();
+    assert!(target.join("seen").exists());
+    std::fs::remove_dir(&link).unwrap();
 }
 
 /// A shell command that starts, in the background, a child which leaves its process group with `setsid`, optionally ignores SIGTERM,
@@ -117,6 +202,20 @@ pub async fn sleeper_pid(pid_file: &Path) -> i32 {
     panic!("the escaped child never started");
 }
 
+/// The pid the sleeper wrote, polled (no fixed delay) for up to ten seconds.
+#[cfg(windows)]
+pub async fn sleeper_pid(pid_file: &Path) -> u32 {
+    for _ in 0..1000 {
+        if let Ok(text) = std::fs::read_to_string(pid_file)
+            && let Ok(pid) = text.trim().parse()
+        {
+            return pid;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("the escaped child never started");
+}
+
 /// Whether `pid` is a live process. A killed one stays a zombie until its parent reaps it, which `ps` shows as state `Z`.
 #[cfg(unix)]
 pub fn process_alive(pid: i32) -> bool {
@@ -141,5 +240,39 @@ pub async fn assert_process_reaped(pid: i32, how: &str) {
     unsafe {
         libc::kill(pid, libc::SIGKILL);
     }
+    panic!("a descendant survived {how}");
+}
+
+/// Whether `pid` is a live process, from the task list Windows keeps for all users.
+#[cfg(windows)]
+pub fn process_alive(pid: u32) -> bool {
+    let output = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .unwrap();
+    // A failed query is not evidence of a dead process: it must fail the caller, not read as
+    // "gone" and let the reaping assertion pass.
+    assert!(
+        output.status.success(),
+        "tasklist failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+}
+
+/// Polls for the process to be gone (up to ten seconds) and kills it before failing, so a failed test leaves nothing behind.
+#[cfg(windows)]
+pub async fn assert_process_reaped(pid: u32, how: &str) {
+    for _ in 0..500 {
+        if !process_alive(pid) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
     panic!("a descendant survived {how}");
 }

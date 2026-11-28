@@ -22,6 +22,14 @@ fn item_of(w: &World, kind: NeedsYouKind, id: &str) -> NeedsYouItem {
         .unwrap_or_else(|| panic!("no {kind:?} item for {id}"))
 }
 
+/// The one item a task has, by its id: a task is one item and the first rule wins, so a missing row or a second one for
+/// the same task fails here with the rows attached, rather than being read by place.
+fn one_item(w: &World, id: &str) -> NeedsYouItem {
+    let mut ours: Vec<_> = items(w).into_iter().filter(|item| item.id == id).collect();
+    assert_eq!(ours.len(), 1, "one item for {id}: {ours:?}");
+    ours.pop().expect("the task's one item")
+}
+
 /// A task whose worker is running and stays running.
 async fn started_hanging(w: &World, outcome: &str) -> String {
     let (answer, error) = w.start(brief(json!({ "outcome": outcome })), key()).await;
@@ -399,10 +407,9 @@ async fn a_failed_stop_outranks_the_same_task_waiting_on_a_person() {
         .move_crew_task(&id, "needs_person", None)
         .unwrap();
 
-    let ours: Vec<_> = items(&w).into_iter().filter(|item| item.id == id).collect();
-    assert_eq!(ours.len(), 1, "one item for the task");
-    assert_eq!(ours[0].kind, NeedsYouKind::CouldNotStop);
-    assert!(!ours[0].dismissible);
+    let item = one_item(&w, &id);
+    assert_eq!(item.kind, NeedsYouKind::CouldNotStop);
+    assert!(!item.dismissible);
 }
 
 #[tokio::test]
@@ -420,9 +427,12 @@ async fn a_task_is_one_item_and_the_first_rule_wins() {
     record.review_state = "waiting".to_owned();
     record.needs_person = Some("The break needs a person.".to_owned());
     w.core.store.add_crew_merge(&record).unwrap();
-    let matching: Vec<_> = items(&w).into_iter().filter(|item| item.id == id).collect();
-    assert_eq!(matching.len(), 1, "the task is one item");
-    assert_eq!(matching[0].kind, NeedsYouKind::CouldNotStart);
+    let item = one_item(&w, &id);
+    assert_eq!(
+        item.kind,
+        NeedsYouKind::CouldNotStart,
+        "the start rule outranks the merge wait"
+    );
 
     // A stopped task with both a trip wire and the worker-stopped-twice detail is still one item: the trip wire wins.
     let stopped = started_hanging(&w, "Both reasons.").await;
@@ -432,12 +442,12 @@ async fn a_task_is_one_item_and_the_first_rule_wins() {
         .store
         .add_crew_autopilot_event(&stopped, &crew_id, "tripwire", &json!({ "in_a_row": 3 }))
         .unwrap();
-    let matching: Vec<_> = items(&w)
-        .into_iter()
-        .filter(|item| item.id == stopped)
-        .collect();
-    assert_eq!(matching.len(), 1);
-    assert_eq!(matching[0].kind, NeedsYouKind::TripwireStop);
+    let item = one_item(&w, &stopped);
+    assert_eq!(
+        item.kind,
+        NeedsYouKind::TripwireStop,
+        "the trip wire outranks the stopped-twice detail"
+    );
 }
 
 #[tokio::test]
@@ -500,10 +510,11 @@ async fn a_dismissed_item_is_hidden_until_its_since_is_later_and_nothing_else_ch
             .filter(|row| row.action == "crew.needs_you.dismiss")
             .collect::<Vec<_>>()
     };
-    let rows = dismissals(&w);
+    let mut rows = dismissals(&w);
     assert_eq!(rows.len(), 1, "one audit row for one dismissal");
-    assert_eq!(rows[0].actor, "user");
-    assert_eq!(rows[0].detail["kind"], "could_not_start");
+    let row = rows.pop().expect("the dismissal audit row");
+    assert_eq!(row.actor, "user");
+    assert_eq!(row.detail["kind"], "could_not_start");
 
     // A later wait of the same task shows again.
     let later = crate::util::format_unix(crate::util::parse_time(&before.updated_at).unwrap() + 60);

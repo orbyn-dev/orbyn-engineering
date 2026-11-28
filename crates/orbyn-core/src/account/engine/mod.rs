@@ -31,6 +31,7 @@ mod keychain;
 mod keystore;
 #[cfg(any(test, debug_assertions))]
 mod profile;
+mod retry;
 #[cfg(any(test, debug_assertions))]
 mod sealed;
 mod shared;
@@ -53,6 +54,8 @@ pub use keystore::FileKeyStore;
 pub(crate) use keystore::{Anchor, Vault};
 #[cfg(test)]
 pub(crate) use profile::{Kind, Paired, choose};
+#[cfg(test)]
+pub(crate) use retry::Retrying;
 #[cfg(test)]
 pub(crate) use sealed::{PURPOSE, Refusal, SealedSnapshots, VERSION, bound_for};
 pub use snapshot::{MemorySnapshots, SnapshotStore};
@@ -191,7 +194,9 @@ where
     if !dc::is_loopback_literal(address) {
         return Err(DeviceError::Offline);
     }
-    let transport = dc::HttpApi::new(address).map_err(|_| DeviceError::Offline)?;
+    // A sign-in cancel the network lost is sent again under the client (retry.rs).
+    let transport =
+        retry::Retrying::new(dc::HttpApi::new(address).map_err(|_| DeviceError::Offline)?);
     let snapshots = sealed::SealedSnapshots::new(
         dir.join(format!("account-snapshot-{profile}.sealed")),
         profile,
@@ -228,7 +233,9 @@ pub fn connect(address: &str, device_name: &str) -> Result<Backend, DeviceError>
     if !dc::is_loopback_literal(address) {
         return Err(DeviceError::Offline);
     }
-    let transport = dc::HttpApi::new(address).map_err(|_| DeviceError::Offline)?;
+    // A sign-in cancel the network lost is sent again under the client (retry.rs).
+    let transport =
+        retry::Retrying::new(dc::HttpApi::new(address).map_err(|_| DeviceError::Offline)?);
     let platform = match std::env::consts::OS {
         "macos" => dc::DevicePlatform::Macos,
         "windows" => dc::DevicePlatform::Windows,

@@ -476,6 +476,27 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Every project's merges merged at or after `since_unix`: `(project_id, merges)`, counted in SQL.
+    ///
+    /// The project menu's counts are about every repository at once, and this is the one query for
+    /// them: a count per project never reads a merge's own records, and a device with a long merge
+    /// history never hands the window's rows back to be counted one by one. A merge whose task is
+    /// no longer joined to a lead thread is in no project's count, exactly as the per-project read
+    /// leaves it out of that project's answer.
+    pub fn crew_merge_counts_since(&self, since_unix: i64) -> Result<Vec<(String, u32)>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT t.project_id, COUNT(*) FROM crew_merges m
+             JOIN crew_runs r ON r.task_id = m.task_id
+             JOIN threads t ON t.id = r.lead_thread_id
+             WHERE m.merged_unix >= ?1
+             GROUP BY t.project_id ORDER BY t.project_id",
+        )?;
+        Ok(statement
+            .query_map([since_unix], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Makes the dashboard's window query fail, as a damaged table would. Tests only.
     #[cfg(any(test, feature = "test-support"))]
     pub fn break_crew_dashboard_for_test(&self) {

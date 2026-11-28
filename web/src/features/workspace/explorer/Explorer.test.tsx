@@ -6,6 +6,7 @@ import { useWorkspace } from "../../../product/state/workspace";
 import { act, configure, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import "../../../app/routeScreens.test-support";
 import { App } from "../../../app/App";
 import { dataChanged } from "../../../api/shell";
 import { startDataRefresh } from "../../../lib/dataRefresh";

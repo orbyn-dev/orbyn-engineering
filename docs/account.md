@@ -713,3 +713,15 @@ Where the Engine's API differs from the traits the screens and the worker were w
 - **Reveal and ended approvals.** A network blip during the nonce reveal no longer cancels the approval (the client retries
   it); a confirm or deny on an expired, answered or denied approval is `ApprovalExpired`, shown as "That request has
   ended", and never approves.
+- **A cancel the network lost.** The new device's Cancel is sent again, at most twice more, before the person is told the
+  Engine could not be reached. It has to be sent from under the client: `deny_joined` takes the joined handle, so after a
+  failure a second cancel on the screen has nothing left to send with and only lets go locally (issue #758). The retry
+  sits in the transport the client offers a host to wrap (`DeviceClient::api`), in `account/engine/retry.rs`. Sending a
+  cancel twice is safe because the Engine's cancel is terminal and repeatable: the route calls `cancel_approval`, which
+  reads the approval by id without looking at its state, and `close` writes `state = 'closed'` unconditionally (pinned
+  `engine-v0.2.4`, `orbyn-core/src/accounts/devices.rs`), and nothing in the Engine writes a closed approval back to
+  `open`. The first cancel that arrives closes it, a later one writes the same state again and answers 200, so a cancel
+  that was taken before its answer was lost is never applied twice. Only a cancel is sent again, only after `Transport`
+  (the one error that means no answer came back), and only three attempts are made: an answer the Engine did give is
+  never repeated, and a sign-in, code or confirm step is never sent twice. The wait between attempts is
+  `tokio::time::sleep`, so Windows and macOS take the same path.

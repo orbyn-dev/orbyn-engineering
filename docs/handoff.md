@@ -709,7 +709,8 @@ stand-in forge races and the data-directory lock.
   not qualified by the accepted-cancellation correction.
 - Settings opened by direct link closes onto a draft.
 - D25 lacks its menu shortcut. F34 on GitLab is parser-tested only.
-- `core.autocrlf=true` handling is pinned in tests; check real Windows behaviour.
+- `core.autocrlf=true` handling is pinned in tests on real Git for Windows: forcing the conversion off a
+  hardened read publishes a clean checkout as changed, so line-ending conversion stays scoped to the byte-exact checks.
 - Windows cannot stop local servers.
 - Claude and Codex skills: library skills did not reach Codex natively when its
   working folder is the project, so Codex uses MCP tools. Re-check the Claude path

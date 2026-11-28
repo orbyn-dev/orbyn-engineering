@@ -3,9 +3,15 @@ import type { AutopilotRate } from "./AutopilotRate";
 import type { AutopilotRateRow } from "./AutopilotRateRow";
 
 /**
- * The trust record the risk score reads: revert rates by area and by engine over the window, on this device.
+ * The trust record the risk score reads: revert rates by area, by engine and by reviewer over the window, on this device.
  */
 export type AutopilotTrust = { window_days: number, min_sample: number, high_revert_permille: number, total: AutopilotRate, areas: Array<AutopilotRateRow>, engines: Array<AutopilotRateRow>, 
+/**
+ * The reviewer numbers (slice 4g): for each engine whose review lanes read a merge, the merges it read and how many of them
+ * were reverted. A reviewer's own precision (the findings it filed, and how many a finding check confirmed) needs a per-finding
+ * read this one does not make, and a person's solo work is not recorded, so neither is here.
+ */
+reviewers?: Array<AutopilotRateRow>, 
 /**
  * The circuit breaker lowers an area from Full to On, and the merge gate reads it (slice 4j). Earning a higher mode is not built.
  */

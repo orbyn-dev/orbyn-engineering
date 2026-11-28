@@ -36,13 +36,18 @@ test("an upload starts on add, a refused one can be removed, and a good one goes
   const id = await started(page, "[scene:usage] hello");
   await settled(service, id);
   const input = page.getByLabel("Attach files").first();
+  // A PNG over the 10 MiB image limit goes to the real conversion route (B8), not the upload route. These bytes are not a
+  // PNG, so the route refuses the photo and the chip says so; the refusal can be retried and removed.
+  const converted = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith(`/threads/${id}/attachments/convert`));
   const tooBig = Buffer.alloc(10 * 1024 * 1024 + 1);
   await input.setInputFiles({ name: "huge.png", mimeType: "image/png", buffer: tooBig });
-  await expect(page.getByRole("alert").filter({ hasText: "Images can be up to 10 MiB." })).toBeVisible();
+  expect((await converted).status()).toBe(422);
+  const refusal = "Couldn’t convert this photo. It may be damaged.";
+  await expect(page.getByRole("alert").filter({ hasText: refusal })).toBeVisible();
   await box(page).fill("look at this");
   await expect(page.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Retry huge.png" }).click();
-  await expect(page.getByRole("alert").filter({ hasText: "Images can be up to 10 MiB." })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: refusal })).toBeVisible();
   await page.getByRole("button", { name: "Remove huge.png" }).click();
   await input.setInputFiles({ name: "note.txt", mimeType: "text/plain", buffer: Buffer.from("hello") });
   await expect(page.getByRole("list", { name: "Attachments" })).toContainText("note.txt");

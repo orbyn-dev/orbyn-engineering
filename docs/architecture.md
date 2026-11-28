@@ -852,7 +852,9 @@ tried once over HTTPS, and the job says so.
 ## Terminals
 
 A terminal on Windows opens a native `pwsh`, then `powershell`, then `ComSpec`. `SHELL`
-is ignored there. A thread holds up to 32 terminals, each with 5,000 lines and 8 MiB of scrollback kept
+is ignored there. Its shell's module analysis cache is pointed at Orbyn's own data folder
+(`PSModuleAnalysisCachePath`), so PowerShell cannot write `Microsoft\Windows\PowerShell` into a
+project checkout. A thread holds up to 32 terminals, each with 5,000 lines and 8 MiB of scrollback kept
 here. Terminals sharing a `group` are a split. The `main` terminal is what a plain
 socket opens and a terminal-tier run uses, and a plain one nobody returns to closes
 after a minute. Named terminals stay until closed. Settling or archiving closes them
@@ -1177,8 +1179,11 @@ Only existing safe files inside the checkout receive a checkout path; missing tr
 files and sibling Git patches may retain repository coordinates for diff navigation.
 A multi-repository thread resolves the reference in the repository its `repo_id`
 names, the primary repository when it is absent, so a worktree is the checkout and
-the task folder is never one; the request's and the answer's `cwd` stay the thread's
-stored folder, so a thread that moved meanwhile is still refused as stale. Ordinary
+the task folder is never one; a thread-basis reference whose first segment is a
+repository's worktree folder in that task folder resolves in that repository, and
+the answer's `repo_id` names the repository its coordinates are in. The request's
+and the answer's `cwd` stay the thread's stored folder, so a thread that moved
+meanwhile is still refused as stale. Ordinary
 file reads/writes and engine scope remain bounded to thread cwd. File and diff reveal
 intents are transient, capture thread/cwd before resolution, and consume only their
 own nonce. Route/cwd changes and newer navigation invalidate stale responses,
@@ -2392,10 +2397,13 @@ for are not verified on a real install.
 Provider detail pages in the beta are limited to Claude Code, Codex and OpenCode,
 including their named instances. Other registered providers retain their list and
 instance-edit controls, but cannot open an unbuilt detail page, including before
-the catalog arrives. OpenCode reports its version through the bounded CLI probe;
-compatibility still comes only from the authenticated manifest. Without an
-OpenCode entry its support stays Unknown. Its detail page shows reported version,
-login, location and models; Crew tier mapping remains Planned.
+the catalog arrives. The Needs attention rows keep to it as well: an engine outside
+the beta states its gap and offers no action, since both actions it could draw
+(Open, Sign in again) are rows of that page. OpenCode reports its version through
+the bounded CLI probe; compatibility still comes only from the authenticated
+manifest. Without an OpenCode entry its support stays Unknown. Its detail page
+shows reported version, login, location and models; Crew tier mapping remains
+Planned.
 
 The ACP driver offers protocol version 1, the only one it speaks. An agent that answers 2
 in version 1's shape (`agentInfo`, `agentCapabilities`), as some shipped agents do, runs as
@@ -2566,7 +2574,11 @@ is dirty, unpushed, ignored or in a worktree.
 
 Worktrees sit beside the primary clone at `<repo>-wt/<purpose>/`, wherever that repo
 lives, on a neutral `feat/<purpose>` branch, and a registered worktree for a purpose
-is reused. A custom worktree location is not offered or accepted by either settings
+is reused. A writing crew worker's own checkout is one of these too, purpose
+`crew-<member>` on branch `crew-<member>`, built and off by default (docs/crew.md,
+"Isolation"); its checkout is reused only through that branch, never by the folder's
+name alone, and a folder Orbyn did not record making is left alone rather than cleared.
+A custom worktree location is not offered or accepted by either settings
 API. Earlier stored location preferences are left intact but ignored; they cannot
 redirect new worktrees. Existing Git-registered worktrees remain at their current
 paths, including earlier layouts, with no file migration or removal.
@@ -3019,7 +3031,9 @@ Unchanged ignored caches do not require broader scope or data removal; ignored n
 remain an accepted blind spot, pending isolated-checkout work (#436).
 Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
 checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
-other Git reads keep their settings. Those checks need Git 2.40 or later, which
+other Git reads keep the checkout's own conversion, because they compare a working tree against its index and
+forcing the conversion off would publish a clean `core.autocrlf=true` checkout as changed
+(`hardened_reads_keep_the_checkouts_line_ending_conversion`). Those checks need Git 2.40 or later, which
 honours `GIT_ATTR_SOURCE`, so a checkout's own `.gitattributes` stays out of the
 read; older Git errors them rather than pass bytes it did not compare.
 Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
@@ -3424,7 +3438,10 @@ covering session lock acquisition, selector validation, CDP reads and polling.
 A tab's zoom, appearance and phone layout are set with `/view`. Zoom keeps the frame the
 same size and lays the page out smaller, 0.25 to 3 times. New tabs start from the
 `preview_zoom` and `preview_appearance` settings. A tab with no named profile ends with its
-profile. A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
+profile: its folder is removed after the browser is stopped, a removal the system refuses
+because that browser has not released its files is retried within a one-second deadline,
+and one that outlasts it is logged with its path and OS error rather than left unmentioned.
+A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
 one tab at a time because a browser locks its profile folder. A profile can be renamed
 while a tab has it open: only the stored name changes, never the folder, so its cookies
 and history stay. A private tab only stays
@@ -4024,7 +4041,7 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/files?path=&repo_id=` | `FileEntry[]`, one folder; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `GET /api/threads/:id/files/metadata?path=` | `FileMetadata`: one entry's own kind, size, mode, modified time and whether a final link stays inside; no bytes read; `exists: false` for a missing path |
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
-| `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
+| `GET /api/threads/:id/files/search?q=&content=&repo_id=` | `SearchHit[]` by name or by line; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
 | `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |

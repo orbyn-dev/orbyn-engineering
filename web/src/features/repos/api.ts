@@ -135,24 +135,28 @@ export function useRepos(projectId: string): { view: ReposView | null; settled: 
 
 /**
  * The repositories one thread works in; `repos` is `null` while loading, for a thread in one repository or none, and when the
- * service reports none. The answer is kept with the thread it belongs to, so switching threads shows nothing of the old thread's
- * list while the new thread's read is on its way: a multi-repository thread's chooser and tree are not drawn for an ordinary one.
+ * service reports none. `settled` is false until this thread's read answers, so a caller that must not act on a list it has not
+ * read yet can wait for it: the palette's file search would otherwise read the primary while the list is on its way. A failed
+ * read settles too, with `null`. The answer is kept with the thread it belongs to, so switching threads shows nothing of the old
+ * thread's list while the new thread's read is on its way: a multi-repository thread's chooser and tree are not drawn for an
+ * ordinary one.
  */
-export function useThreadRepos(threadId: string, refreshKey = 0, enabled = true): { repos: ThreadRepo[] | null; reload(): void } {
+export function useThreadRepos(threadId: string, refreshKey = 0, enabled = true): { repos: ThreadRepo[] | null; settled: boolean; reload(): void } {
   const version = useApiVersion();
-  const [held, setHeld] = useState<{ threadId: string; repos: ThreadRepo[] | null } | null>(null);
+  const [held, setHeld] = useState<{ threadId: string; repos: ThreadRepo[] | null; settled: boolean } | null>(null);
   const read = useCallback(() => {
     // Off: nothing is asked (a panel that needs the names only while a repository's file is open).
     if (!enabled) return () => undefined;
     const abort = new AbortController();
     reposApi().threadRepos(threadId, abort.signal).then(
-      (next) => { if (!abort.signal.aborted) setHeld({ threadId, repos: next }); },
-      () => { if (!abort.signal.aborted) setHeld({ threadId, repos: null }); },
+      (next) => { if (!abort.signal.aborted) setHeld({ threadId, repos: next, settled: true }); },
+      () => { if (!abort.signal.aborted) setHeld({ threadId, repos: null, settled: true }); },
     );
     return () => abort.abort();
   }, [threadId, version, refreshKey, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => read(), [read]);
-  return { repos: enabled && held?.threadId === threadId ? held.repos : null, reload: read };
+  const mine = enabled && held?.threadId === threadId ? held : null;
+  return { repos: mine?.repos ?? null, settled: mine?.settled === true, reload: read };
 }
 
 /** The thread's task folder; `folder` is `null` while loading, for a thread with none, and when the service has no such route. */

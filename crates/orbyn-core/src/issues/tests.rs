@@ -30,3 +30,39 @@ fn a_keychain_failure_never_carries_a_token() {
         assert!(!message.to_lowercase().contains("glpat"), "{message}");
     }
 }
+
+/// One scope's pages are the only ones a write drops: a scope whose name merely starts with the written one is
+/// another scope and keeps what it cached (docs/issues.md, "Cache").
+#[test]
+fn a_write_drops_only_the_scope_whose_name_it_names() {
+    let query = IssueQuery::default();
+    let written = IssueDesk::list_key(TrackerKind::AzureDevops, "org/Project", &query);
+    let longer = IssueDesk::list_key(TrackerKind::AzureDevops, "org/Project Two", &query);
+    let mut listings = Listings::default();
+    let dropped = listings.dropped;
+    for key in [&written, &longer] {
+        listings.put_since(
+            dropped,
+            key.clone(),
+            ScopeList {
+                issues: Vec::new(),
+                counts: None,
+                next: None,
+            },
+        );
+    }
+    assert_eq!(listings.entries.len(), 2, "both scopes start cached");
+
+    listings.drop_prefixed(&IssueDesk::scope_prefix(
+        TrackerKind::AzureDevops,
+        "org/Project",
+    ));
+    assert!(
+        !listings.entries.contains_key(&written),
+        "the written scope's page is dropped"
+    );
+    assert!(
+        listings.entries.contains_key(&longer),
+        "a scope whose name starts with the written one keeps its pages"
+    );
+}

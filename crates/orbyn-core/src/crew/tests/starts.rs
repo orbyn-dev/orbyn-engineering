@@ -102,6 +102,16 @@ fn count(w: &World, table: &str) -> i64 {
         .unwrap()
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list. A
+/// read that returns none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
 async fn refused(w: &World, brief: Value, key: Value) -> String {
     let (answer, error) = w.start(brief, key).await;
     assert!(error, "expected a refusal");
@@ -165,8 +175,16 @@ async fn a_brief_that_leaks_the_key_or_a_secret_is_refused_at_the_start() {
     assert_eq!(refused(&w, leak, key()).await, "answer_key_forbidden");
     let secret = brief(json!({ "outcome": format!("Use sk-{} to log in.", "b".repeat(24)) }));
     assert_eq!(refused(&w, secret, key()).await, "secret_detected");
+    // The command check is found by its id, so a fixture check inserted before it cannot stand in.
     let mut secret_key = key();
-    secret_key["checks"][1]["params"]["run"] = json!(format!(
+    let checks = secret_key["checks"]
+        .as_array_mut()
+        .expect("the checks list");
+    let command = checks
+        .iter_mut()
+        .find(|check| check["id"] == "chk-run")
+        .expect("the command check");
+    command["params"]["run"] = json!(format!(
         "curl -H 'Authorization: Bearer {}'",
         "c".repeat(30)
     ));
@@ -236,7 +254,9 @@ async fn a_brief_no_engine_can_take_waits_for_a_person() {
     assert_eq!(answer["refusal"]["requested"]["engine"], "ghost");
     let id = answer["task"].as_str().unwrap();
     assert_eq!(w.task(id).state, "needs_person");
-    let result = w.core.store.crew_results(id).unwrap().pop().unwrap();
+    let mut results = w.core.store.crew_results(id).unwrap();
+    assert_eq!(results.len(), 1, "the brief's one result: {results:?}");
+    let result = results.pop().expect("the brief's result");
     assert!(result.route.is_none() && !result.r#final);
     assert!(w.core.store.crew_route_decisions(id).unwrap().is_empty());
     assert!(
@@ -257,13 +277,13 @@ async fn a_stored_decision_moves_the_task_to_routed_only_when_the_lifecycle_allo
     let (answer, _) = w.start(brief(json!({})), key()).await;
     let id = answer["task"].as_str().unwrap().to_owned();
     assert_eq!(w.task(&id).state, "running");
-    let decision = w
-        .core
-        .store
-        .crew_route_decisions(&id)
-        .unwrap()
-        .pop()
-        .unwrap();
+    let mut decisions = w.core.store.crew_route_decisions(&id).unwrap();
+    assert_eq!(
+        decisions.len(),
+        1,
+        "the start stored one route decision: {decisions:?}"
+    );
+    let decision = decisions.pop().expect("the route decision");
     assert_eq!(decision.engine.as_str(), "alpha");
     // A task that is running cannot be routed again.
     let refusal = w.core.route_crew_task(&id, &decision).unwrap_err();
@@ -841,9 +861,10 @@ async fn a_task_that_writes_inherits_the_repositorys_checks_at_its_start() {
         .filter(|check| matches!(check.kind, CheckKind::RepoRequired))
         .collect();
     assert_eq!(inherited.len(), 1, "{:?}", stored.checks);
-    assert_eq!(inherited[0].id.as_str(), "chk-repo-required");
+    let inherited = one(&inherited, "inherited repository check");
+    assert_eq!(inherited.id.as_str(), "chk-repo-required");
     assert_eq!(
-        inherited[0].params["name"], "inherited",
+        inherited.params["name"], "inherited",
         "the inherited check is not marked as inherited"
     );
     // Nothing the lead declared was dropped, and the key's id is the hash of what now runs.
@@ -913,8 +934,9 @@ async fn a_key_that_already_runs_the_repositorys_checks_gets_no_second_one() {
         .filter(|check| matches!(check.kind, CheckKind::RepoRequired))
         .collect();
     assert_eq!(repo_required.len(), 1, "{:?}", stored.checks);
+    let repo_required = one(&repo_required, "repository check");
     assert_eq!(
-        repo_required[0].id.as_str(),
+        repo_required.id.as_str(),
         "chk-repo",
         "the start replaced the lead's own check"
     );
@@ -1040,5 +1062,28 @@ async fn a_repository_that_declares_a_check_condition_refuses_the_start() {
         "{answer}"
     );
     assert_eq!(count(&w, "crew_tasks"), 0, "a refused start stores nothing");
+    w.core.shutdown().await;
+}
+
+/// A created checkout is removed only when the worker's run is confirmed gone: a run still live in
+/// it keeps its folder, so a failed start never pulls the files out from under a running worker.
+#[tokio::test]
+async fn a_checkout_is_only_discarded_once_the_worker_is_confirmed_stopped() {
+    let w = quiet().await;
+    let (answer, error) = w.start(brief(json!({})), key()).await;
+    assert!(!error, "{answer}");
+    let task = answer["task"].as_str().unwrap().to_owned();
+    // The worker's turn hangs, so its run is live and nothing confirms it stopped.
+    w.until("the worker's turn to run", |w| {
+        !w.core.worker_confirmed_stopped(&task)
+    })
+    .await;
+    // Once its run is gone and its queue is empty, the start may remove the checkout it made.
+    let run = w.core.store.crew_run(&task).unwrap().unwrap();
+    w.core.stop_crew_worker(Some(&run), "test").await.unwrap();
+    w.until("the worker to stop", |w| {
+        w.core.worker_confirmed_stopped(&task)
+    })
+    .await;
     w.core.shutdown().await;
 }

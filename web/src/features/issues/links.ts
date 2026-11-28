@@ -14,21 +14,27 @@ interface LinksStore {
 
 const useLinks = create<LinksStore>(() => ({ byThread: {}, readFrom: null, failed: false }));
 const EMPTY: IssueRef[] = [];
-let inflight: { version: number; done: Promise<void> } | null = null;
+let inflight: { version: number; id: number; done: Promise<void> } | null = null;
+let reads = 0;
 
 export function resetIssueLinks(): void {
   inflight = null;
   useLinks.setState({ byThread: {}, readFrom: null, failed: false });
 }
 
-/** Reads the links again. A read for the same client already in flight is shared. */
-export function reloadIssueLinks(version: number): Promise<void> {
-  if (inflight?.version === version) return inflight.done;
+/**
+ * Reads the links again. A read for the same client already in flight is shared, unless `afterWrite` asks for one that starts
+ * now: a write's follow-up read must not be an answer captured before the write. The newest read applies, so one started
+ * earlier can never overwrite it.
+ */
+export function reloadIssueLinks(version: number, { afterWrite = false }: { afterWrite?: boolean } = {}): Promise<void> {
+  if (!afterWrite && inflight?.version === version) return inflight.done;
+  const id = ++reads;
   const done = issuesApi().links().then(
-    (byThread) => { if (inflight?.version === version) useLinks.setState({ byThread, readFrom: version, failed: false }); },
-    () => { if (inflight?.version === version) useLinks.setState({ readFrom: version, failed: true }); },
-  ).finally(() => { if (inflight?.version === version) inflight = null; });
-  inflight = { version, done };
+    (byThread) => { if (inflight?.id === id) useLinks.setState({ byThread, readFrom: version, failed: false }); },
+    () => { if (inflight?.id === id) useLinks.setState({ readFrom: version, failed: true }); },
+  ).finally(() => { if (inflight?.id === id) inflight = null; });
+  inflight = { version, id, done };
   return done;
 }
 

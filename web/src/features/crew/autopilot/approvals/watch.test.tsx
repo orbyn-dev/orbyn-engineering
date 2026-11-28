@@ -100,6 +100,17 @@ describe("watches in the Background list", () => {
     expect(within(panel).getByRole("button", { name: "Open the run" })).toBeVisible();
   });
 
+  it("draws a refused template start's own sentence on the row that kept it (watch-failing-template)", async () => {
+    const user = await openBackground("crew-background-watch-template");
+    await user.click(screen.getByRole("button", { name: "Open the Main build watch" }));
+    const panel = await screen.findByRole("region", { name: "Main build watch" });
+    const changes = within(panel).getByRole("table", { name: "Watch changes" });
+    const did = within(changes).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[3]?.textContent);
+    // The Fri 6 Nov needs_you row is the start that could not run, so it draws core's sentence, not "Raised in Needs you.".
+    expect(did).toContain("Could not start Fix failing CI: No engine is set up for this template. Choose one in Settings.");
+    expect(did).not.toContain("Raised in Needs you.");
+  });
+
   it("a paused watch says no check runs and what the next check is compared with", async () => {
     const user = await openBackground("crew-background-watch-paused");
     await user.click(screen.getByRole("button", { name: "Open the Docs links watch" }));
