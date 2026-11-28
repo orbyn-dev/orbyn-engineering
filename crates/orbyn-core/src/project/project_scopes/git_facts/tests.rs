@@ -699,3 +699,68 @@ fn a_common_directory_ending_in_a_space_keeps_it() {
     std::fs::remove_file(git_dir.join("commondir")).unwrap();
     assert_eq!(super::common_directory(&git_dir), Some(git_dir.clone()));
 }
+
+/// `commondir` is a name Git reads in a directory it accepts as a Git directory, and it names where
+/// that repository's configuration and signatures live. A folder discovery passed that later holds
+/// one is a folder whose part in discovery the answer cannot stand behind without asking Git again:
+/// a folder that keeps none of the names is still reused without spawning anything.
+#[tokio::test]
+async fn a_passed_folder_that_gains_a_common_directory_is_observed_again() {
+    let dir = TempDir::new();
+    let core = core(&dir).await;
+    let root = dir.path().join("repo");
+    repository(&root);
+    configure(&root, "origin", "git@host:Owner/Repo.git");
+    let nested = root.join("nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    core.add_project(nested.to_str().unwrap()).await.unwrap();
+    let first = read(&core).await;
+    assert_eq!(
+        only_member(&first).repository_relative_path.as_deref(),
+        Some("nested"),
+        "the folder is read as part of the repository above it"
+    );
+    let watched = std::slice::from_ref(&nested);
+    let before = spawns(watched);
+    let second = read(&core).await;
+    assert_eq!(
+        since(&before, watched),
+        [0],
+        "a folder that holds none of the names is reused without spawning Git"
+    );
+    assert_eq!(
+        first, second,
+        "a reused observation answers as the read did"
+    );
+    // The folder stays a folder of the repository above it: `commondir` alone names no repository
+    // either. It is still a name the answer cannot vouch for without asking Git again.
+    std::fs::write(nested.join("commondir"), "../.git\n").unwrap();
+    let before = spawns(watched);
+    let third = read(&core).await;
+    assert_eq!(
+        since(&before, watched),
+        [3],
+        "the folder that gained a commondir is observed again"
+    );
+    assert_eq!(
+        third, first,
+        "and Git still names the repository above it as its boundary"
+    );
+    let before = spawns(watched);
+    let fourth = read(&core).await;
+    assert_eq!(
+        since(&before, watched),
+        [0],
+        "the observation that read the commondir is kept while it still holds"
+    );
+    assert_eq!(fourth, third, "and it answers as the read that kept it did");
+    std::fs::remove_file(nested.join("commondir")).unwrap();
+    let before = spawns(watched);
+    let fifth = read(&core).await;
+    assert_eq!(
+        since(&before, watched),
+        [3],
+        "the folder that lost its commondir is observed again"
+    );
+    assert_eq!(fifth, first, "and it is the folder it was");
+}

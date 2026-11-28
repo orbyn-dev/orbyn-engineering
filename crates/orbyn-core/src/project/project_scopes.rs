@@ -321,15 +321,16 @@ impl Answer {
     fn read(output: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(output).ok()?;
         let mut lines = text.lines();
+        // `lines` already drops Git's line terminator, and every byte it leaves belongs to the
+        // path: Git names a folder whose name ends in a space, and trimming it names another one.
         let top = lines.next()?;
         if top.len() > MAX_PATH_BYTES {
             return None;
         }
-        let root = canonicalize(Path::new(top.trim())).ok()?;
+        let root = canonicalize(Path::new(top)).ok()?;
         // Git names its directory after the root; it read the answer from there.
         let git_dir = lines
             .next()
-            .map(str::trim)
             .filter(|dir| !dir.is_empty())
             .map(PathBuf::from);
         Some(Self { root, git_dir })

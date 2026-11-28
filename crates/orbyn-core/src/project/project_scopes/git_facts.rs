@@ -119,8 +119,10 @@ pub(super) struct Watch {
 }
 
 /// The names Git reads in a folder to decide that the folder itself is a repository, which
-/// it does before it passes to the parent: a bare repository has no `.git` at all.
-const REPOSITORY_NAMES: [&str; 3] = ["HEAD", "objects", "refs"];
+/// it does before it passes to the parent: a bare repository has no `.git` at all. `commondir`
+/// joins them because it is where Git reads the rest of that repository from, so a folder that
+/// gains one is a folder discovery can no longer pass without asking Git again.
+const REPOSITORY_NAMES: [&str; 4] = ["HEAD", "objects", "refs", "commondir"];
 
 /// The signatures Git accepts in the common directory before it calls any of it a repository:
 /// it checks that both can be accessed, and reads neither. Renaming either ends the repository,
