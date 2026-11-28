@@ -117,8 +117,9 @@ reviewed. Nothing in this design types into a terminal on its own, and the web n
   HTML, never as a link.
 - **The service redacts and the web does not trust that it did.** The service runs its secret rules (the Redactor, `redact-*`
   frames) over the excerpt before it appends it, through `Core::redactor(Surface::Terminal)`. The hook exists now, so the detector
-  runs only while `terminal_attention_enabled` is true and a redactor was obtained; an event whose redactor cannot be obtained is
-  not sent. Redact first, then cut: a cut line can never leave the front of a hidden value behind.
+  runs only while `terminal_attention_enabled` is true and a redactor was obtained; the detector reads that switch when a console
+  opens and again each time it would report, so turning it off stops new items on a console that is already open. An event whose
+  redactor cannot be obtained is not sent. Redact first, then cut: a cut line can never leave the front of a hidden value behind.
 - For a `secret` prompt the item has Open terminal and Dismiss (Dismiss only hides it on this device) and no answer field, and the notification and the toast say "is waiting for a password" and
   never carry the prompt's text. Orbyn takes no password, token or key here.
 - A notification and a toast never carry an answer. Excerpts are not logged; a log line names the terminal id and a byte count.
@@ -130,7 +131,12 @@ reviewed. Nothing in this design types into a terminal on its own, and the web n
 The frames show one device setting, Settings › General: **Terminal agents waiting for you** (on by default) and **Quiet time before it
 counts as waiting** (10 to 120 s, 20 by default). They follow Thread notifications (system notification) and In-app notifications
 (toast). The service reads two stored device settings: `terminal_attention_enabled` (bool, default `true`) and
-`terminal_attention_quiet_seconds` (whole seconds, 10 to 120, default `20`). Settings › General has both rows in the web (the switch, and a number field kept to 10 to 120 and saved when it loses focus); per-project switches and quiet hours are not in the frames.
+`terminal_attention_quiet_seconds` (whole seconds, 10 to 120, default `20`). The quiet time is read when a console opens. The
+switch is read when a console opens and again each time the detector would report, so turning it off stops new items on a console
+that is already open; an item already shown is not taken back, and it clears as before when the terminal prints, the person types or
+the terminal closes. A console that opens while the switch is off is not watched until it is opened again.
+
+Settings › General has both rows in the web (the switch, and a number field kept to 10 to 120 and saved when it loses focus); per-project switches and quiet hours are not in the frames.
 
 ## Web side
 

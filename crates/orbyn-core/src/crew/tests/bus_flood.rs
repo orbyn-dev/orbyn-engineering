@@ -2,7 +2,7 @@
 //! result notice, or the store its room.
 
 use orbyn_contracts::{CrewRole, ResultState};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::bus_resume::pause_worker;
 use super::bus_support::{Duo, duo};
@@ -10,6 +10,23 @@ use super::bus_support::{Duo, duo};
 /// A body of about 4000 characters, different for each `n`.
 fn big(n: u32) -> String {
     format!("{n} {}", "x".repeat(3990))
+}
+
+/// The delivery row a post to one member answers with, found by the recipient it names: one post answers one row per
+/// target, so a second row or a row for another member is a bug, not a place a test may read.
+fn delivered_to<'a>(sent: &'a Value, to: &str) -> &'a Value {
+    let delivered = sent["delivered"]
+        .as_array()
+        .expect("a post answers with its delivery rows");
+    assert_eq!(
+        delivered.len(),
+        1,
+        "one post to one member answers one delivery row: {sent}"
+    );
+    delivered
+        .iter()
+        .find(|row| row["to"].as_str() == Some(to))
+        .unwrap_or_else(|| panic!("no delivery to {to}: {sent}"))
 }
 
 /// Held messages are capped per prompt, are recorded as sent only when the prompt is accepted,
@@ -28,7 +45,8 @@ async fn a_flood_of_held_messages_costs_no_prompt() {
                 Duo::fact(&d.mb, &big(100 + n)),
             )
             .await;
-        assert!(!error && sent["delivered"][0]["mode"] == "held", "{sent}");
+        assert!(!error, "{sent}");
+        assert_eq!(delivered_to(&sent, &d.mb)["mode"], "held", "{sent}");
     }
     for n in 0..14 {
         let (sent, error) = d.call(&d.ta, "crew_post", Duo::fact("lead", &big(n))).await;
@@ -70,8 +88,7 @@ async fn a_flood_of_held_messages_costs_no_prompt() {
     let (task, _) = (d.w.task(&d.b), ());
     d.w.core.send_to_worker(&task, "retry now").unwrap();
     let queued = d.queued(&wb);
-    assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0], "retry now");
+    assert_eq!(queued, ["retry now"], "the retry is the one prompt queued");
     let left_b = held(&d.mb);
     assert_eq!(left_b, 14);
 
@@ -79,6 +96,7 @@ async fn a_flood_of_held_messages_costs_no_prompt() {
     let base = "y".repeat(119_990);
     d.w.core.send_to_worker(&task, &base).unwrap();
     let queued = d.queued(&wb);
+    // Order is the contract here: the queue is oldest first, so the accepted base prompt comes after the retry.
     assert_eq!(queued.len(), 2);
     assert_eq!(queued[1], base);
     assert_eq!(

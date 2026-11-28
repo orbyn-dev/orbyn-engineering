@@ -314,7 +314,7 @@ pub struct FlowTaskDetail {
 }
 
 wire! {
-/// What one reviewer lane was given: the work's purpose, the commit it read and the checks its brief named.
+/// What one reviewer lane was given: the work's purpose, the commit it read, the checks its brief named and the change it read.
 pub struct FlowLaneGiven {
     pub purpose: String,
     /// The commit the lane read, when its latest round recorded one.
@@ -328,11 +328,38 @@ pub struct FlowLaneGiven {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub checks_of: Option<u32>,
+    /// The change the lane read, from the commit the work started from to the commit it read: files and counts, never a
+    /// patch, pinned at the commit the lane read rather than at the checkout's head. Absent when it cannot be read, and
+    /// `diff_absent` says why.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub diff: Option<crate::FlowTaskDiff>,
+    /// Why there is no diff: `no_commit`, `no_checkout`, `no_base` or `unreadable`. Absent when `diff` is there.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub diff_absent: Option<String>,
 }
 }
 
 wire! {
-/// One reviewer lane in full: the row the task zoom shows, what it was given and the findings it filed.
+/// The repository rule that asked for a lane, read at the commit the work started from (`.orbyn/crew.json`'s `lanes`),
+/// the same file the review that started the lane read.
+pub struct FlowLaneRule {
+    /// A rule of the repository names this lane, so it runs without being named in a review call.
+    pub by_rule: bool,
+    /// A rule locks the lane: it cannot be removed, including by a person, and it keeps the lead tier.
+    pub locked: bool,
+    /// The paths a rule names for the lane, when it names any: the lane runs only when the change touches one. Absent when
+    /// a rule always asks for the lane, and when no rule names it.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub when_paths: Option<Vec<String>>,
+}
+}
+
+wire! {
+/// One reviewer lane in full: the row the task zoom shows, what it was given, the repository rule that asked for it and the
+/// findings it filed.
 pub struct FlowLaneDetail {
     // Stored crew identity, including for a task outside the bounded crew list.
     pub crew: String,
@@ -340,6 +367,14 @@ pub struct FlowLaneDetail {
     pub task: String,
     pub lane: FlowLane,
     pub given: FlowLaneGiven,
+    /// The rule that asked for this lane, read at the commit the work started from.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub rule: Option<FlowLaneRule>,
+    /// Why there is no rule: `no_checkout`, `no_base` or `unreadable`. Absent when `rule` is there.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub rule_absent: Option<String>,
     /// Every finding this lane filed, in every round.
     pub findings: Vec<FlowFinding>,
     // A list was cut at its cap.

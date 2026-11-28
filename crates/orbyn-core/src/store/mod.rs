@@ -55,6 +55,9 @@ mod crew_flow;
 #[cfg(test)]
 mod crew_formats_tests;
 mod crew_guard;
+#[cfg(test)]
+mod crew_lease_tests;
+mod crew_leases;
 mod crew_lessons;
 #[cfg(test)]
 mod crew_lessons_tests;
@@ -141,7 +144,7 @@ mod setup;
 mod tests;
 mod threads;
 
-pub use billed_events::{BilledEvent, BilledTotal, Recorded, parse_billed_events};
+pub use billed_events::{AccountRead, BilledEvent, BilledTotal, Recorded, parse_billed_events};
 pub use changes::{KeptChange, Snapshot};
 pub use crew::{CrewPinnedRef, CrewTask};
 pub use crew_autonomy::{AreaChange, AreaEvent, AreaMode, AreaWrite};

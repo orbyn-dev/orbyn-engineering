@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createDevicesMock, createDevicesPlannedMock, stateFixture } from "../../../../mock/devices";
@@ -175,7 +175,12 @@ it("sends a test push on iOS and keeps the payload per device", async () => {
   const payload = await screen.findByRole("textbox", { name: "Notification payload" });
   expect(payload).toHaveValue('{ "aps": { "alert": { "title": "Order shipped", "body": "Arrives Friday" } } }');
   const user = userEvent.setup();
-  fireEvent.change(payload, { target: { value: '{"aps":{"alert":"Hello"}}' } });
+  // A person's edit, with the editor read before Send: every keystroke is awaited and the value is asserted in the
+  // field, so the write can only carry what the editor shows. The old form poked the textarea with one raw change event
+  // and clicked at once, with no read of the value between the two.
+  await user.clear(payload);
+  await user.paste('{"aps":{"alert":"Hello"}}');
+  expect(payload).toHaveValue('{"aps":{"alert":"Hello"}}');
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(mock.pushWrites).toEqual(["ios:7C2D-0001"]));
   expect(mock.toolState("ios:7C2D-0001")?.push.payload).toBe('{"aps":{"alert":"Hello"}}');

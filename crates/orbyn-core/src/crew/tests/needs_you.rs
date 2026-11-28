@@ -22,6 +22,14 @@ fn item_of(w: &World, kind: NeedsYouKind, id: &str) -> NeedsYouItem {
         .unwrap_or_else(|| panic!("no {kind:?} item for {id}"))
 }
 
+/// The one item a task has, by its id: a task is one item and the first rule wins, so a missing row or a second one for
+/// the same task fails here with the rows attached, rather than being read by place.
+fn one_item(w: &World, id: &str) -> NeedsYouItem {
+    let mut ours: Vec<_> = items(w).into_iter().filter(|item| item.id == id).collect();
+    assert_eq!(ours.len(), 1, "one item for {id}: {ours:?}");
+    ours.pop().expect("the task's one item")
+}
+
 /// A task whose worker is running and stays running.
 async fn started_hanging(w: &World, outcome: &str) -> String {
     let (answer, error) = w.start(brief(json!({ "outcome": outcome })), key()).await;
@@ -399,10 +407,9 @@ async fn a_failed_stop_outranks_the_same_task_waiting_on_a_person() {
         .move_crew_task(&id, "needs_person", None)
         .unwrap();
 
-    let ours: Vec<_> = items(&w).into_iter().filter(|item| item.id == id).collect();
-    assert_eq!(ours.len(), 1, "one item for the task");
-    assert_eq!(ours[0].kind, NeedsYouKind::CouldNotStop);
-    assert!(!ours[0].dismissible);
+    let item = one_item(&w, &id);
+    assert_eq!(item.kind, NeedsYouKind::CouldNotStop);
+    assert!(!item.dismissible);
 }
 
 #[tokio::test]
@@ -420,9 +427,12 @@ async fn a_task_is_one_item_and_the_first_rule_wins() {
     record.review_state = "waiting".to_owned();
     record.needs_person = Some("The break needs a person.".to_owned());
     w.core.store.add_crew_merge(&record).unwrap();
-    let matching: Vec<_> = items(&w).into_iter().filter(|item| item.id == id).collect();
-    assert_eq!(matching.len(), 1, "the task is one item");
-    assert_eq!(matching[0].kind, NeedsYouKind::CouldNotStart);
+    let item = one_item(&w, &id);
+    assert_eq!(
+        item.kind,
+        NeedsYouKind::CouldNotStart,
+        "the start rule outranks the merge wait"
+    );
 
     // A stopped task with both a trip wire and the worker-stopped-twice detail is still one item: the trip wire wins.
     let stopped = started_hanging(&w, "Both reasons.").await;
@@ -432,12 +442,12 @@ async fn a_task_is_one_item_and_the_first_rule_wins() {
         .store
         .add_crew_autopilot_event(&stopped, &crew_id, "tripwire", &json!({ "in_a_row": 3 }))
         .unwrap();
-    let matching: Vec<_> = items(&w)
-        .into_iter()
-        .filter(|item| item.id == stopped)
-        .collect();
-    assert_eq!(matching.len(), 1);
-    assert_eq!(matching[0].kind, NeedsYouKind::TripwireStop);
+    let item = one_item(&w, &stopped);
+    assert_eq!(
+        item.kind,
+        NeedsYouKind::TripwireStop,
+        "the trip wire outranks the stopped-twice detail"
+    );
 }
 
 #[tokio::test]
@@ -500,10 +510,11 @@ async fn a_dismissed_item_is_hidden_until_its_since_is_later_and_nothing_else_ch
             .filter(|row| row.action == "crew.needs_you.dismiss")
             .collect::<Vec<_>>()
     };
-    let rows = dismissals(&w);
+    let mut rows = dismissals(&w);
     assert_eq!(rows.len(), 1, "one audit row for one dismissal");
-    assert_eq!(rows[0].actor, "user");
-    assert_eq!(rows[0].detail["kind"], "could_not_start");
+    let row = rows.pop().expect("the dismissal audit row");
+    assert_eq!(row.actor, "user");
+    assert_eq!(row.detail["kind"], "could_not_start");
 
     // A later wait of the same task shows again.
     let later = crate::util::format_unix(crate::util::parse_time(&before.updated_at).unwrap() + 60);
@@ -703,5 +714,123 @@ async fn the_autopilot_digest_needs_you_count_is_the_one_field() {
     assert!(
         !digest.quiet,
         "the merge wait is still a person's to answer"
+    );
+}
+
+/// A command Autopilot held for the person is a wait of its own in the one field: it names the hold, not the task, and
+/// deciding the hold drops it. The Inbox cannot dismiss it — only the Approvals tab decides a held command.
+#[tokio::test]
+async fn a_held_command_is_its_own_wait_and_a_decision_drops_it() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let task = started_hanging(&w, "Hold a command.").await;
+    let hold = crate::crew::fixtures::hold_command(
+        &w.core,
+        &task,
+        std::path::Path::new("checkout"),
+        "make deploy",
+    );
+    let item = item_of(&w, NeedsYouKind::CommandApproval, &hold);
+    assert_eq!(
+        item.reason.as_deref(),
+        Some("A command waits for your approval.")
+    );
+    assert!(!item.dismissible, "only Approvals decides a held command");
+    let crew_id = w.task(&task).crew_id;
+    assert_eq!(item.crew_id.as_deref(), Some(crew_id.as_str()));
+    assert!(matches!(
+        w.core
+            .crew_needs_you_dismiss(NeedsYouKind::CommandApproval, &hold, "user"),
+        Err(CoreError::Invalid(_))
+    ));
+    // The task keeps working beside the hold, so the hold is not a task wait and does not take the task's place.
+    assert!(
+        w.core
+            .crew_needs_you()
+            .unwrap()
+            .items
+            .iter()
+            .filter(|item| item.kind == NeedsYouKind::CommandApproval)
+            .count()
+            == 1
+    );
+    // The person dismisses the hold itself; the wait leaves the field.
+    w.core.autopilot_dismiss_held(&hold).unwrap();
+    assert!(
+        items(&w)
+            .iter()
+            .all(|item| item.kind != NeedsYouKind::CommandApproval)
+    );
+}
+
+/// A hold whose worker's task ended is not a wait: approving it would fail (the approve path finds no live worker and
+/// closes the hold as over), so it must not be counted or announced. The field drops it on its own read, which sweeps
+/// nothing and leaves the hold's book as it found it; a sweep closes the hold later.
+#[tokio::test]
+async fn a_held_command_for_an_ended_task_is_not_a_wait() {
+    let w = crew(arc(|_, _| Turn::Silent)).await;
+    let task = started_hanging(&w, "Hold a command.").await;
+    let hold = crate::crew::fixtures::hold_command(
+        &w.core,
+        &task,
+        std::path::Path::new("checkout"),
+        "make deploy",
+    );
+    let found = || {
+        items(&w)
+            .into_iter()
+            .find(|item| item.kind == NeedsYouKind::CommandApproval && item.id == hold)
+    };
+    // Its worker still runs the task, so the hold waits for the person.
+    assert!(found().is_some(), "a live worker's hold is a wait");
+
+    stop_task(&w, &task, "repeated_failure");
+    assert!(found().is_none(), "a hold whose task ended is not a wait");
+    // The read wrote nothing behind the item: no hold ended, and no ledger row says one did.
+    assert!(
+        w.core
+            .store
+            .crew_autopilot_events(&task)
+            .unwrap()
+            .iter()
+            .all(|event| event.kind != "hold_ended"),
+        "the needs-you read must not sweep the held book"
+    );
+}
+
+/// A merge the queue holds for the person at the gate is its own kind, not the review wait of a merge that already
+/// landed; the person's release moves the entry out of the gate and drops the wait.
+#[tokio::test]
+async fn a_merge_held_at_the_gate_is_its_own_wait_and_a_release_drops_it() {
+    let w = crew(arc(|_, root| built(root))).await;
+    let task = w.built_work().await;
+    let crew_id = w.task(&task).crew_id;
+    let mut entry =
+        crate::crew::fixtures::merge_entry(&task, "/repo", "The merge is held at the gate.");
+    entry.crew_id = crew_id.clone();
+    w.core.store.add_merge_entry(&entry).unwrap();
+
+    let item = item_of(&w, NeedsYouKind::MergeGateWaiting, &task);
+    assert_eq!(
+        item.reason.as_deref(),
+        Some("A merge waits for your release.")
+    );
+    assert!(
+        !item.dismissible,
+        "the merge queue answers it, not the Inbox"
+    );
+    assert_eq!(item.crew_id.as_deref(), Some(crew_id.as_str()));
+    assert!(
+        items(&w)
+            .iter()
+            .all(|item| item.kind != NeedsYouKind::MergeWaiting),
+        "a merge still at the gate has not landed and is not a review wait"
+    );
+
+    w.core.crew_release_merge(&task).unwrap();
+    assert!(
+        items(&w)
+            .iter()
+            .all(|item| item.kind != NeedsYouKind::MergeGateWaiting),
+        "the release moves it out of the gate"
     );
 }

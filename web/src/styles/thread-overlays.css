@@ -188,7 +188,12 @@
   color: var(--color-text);
   font-weight: 500;
 }
+/* Target size (WCAG 2.2 AA 2.5.8): the changed-files toggle was a 19 px inline box. Its summary row already clears the
+   minimum through the View diff button, so the crew links' 24 px box only extends the toggle's own click area. */
 .diff-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   padding: 0;
   border: 0;
   background: transparent;

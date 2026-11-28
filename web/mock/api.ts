@@ -58,6 +58,7 @@ import { createFoldersMock } from "./folders.ts";
 import { createQuestionsMock } from "./questions.ts";
 import { createTerminalsMock } from "./terminals.ts";
 import * as fixtures from "./fixtures.ts";
+import { multiRepoRepos, multiRepoTaskFolder, projectReposView } from "./multiRepo.ts";
 import { acpRegistry, historyScan } from "./history.ts";
 import { customModels, instanceEngines, providerInstances } from "./instances.ts";
 import { cleanupPreview, cleanupSummary, diagnostics } from "./maintenance.ts";
@@ -98,7 +99,7 @@ export type Scenario =
   /** Crew KC6 watches (watch-* frames): "crew-background-watch" is the mixed list (Passing, Failing, Could not run, Paused beside a normal crew); "crew-background-watch-passing", "crew-background-watch-failing", "crew-background-watch-still-failing", "crew-background-watch-recovered", "crew-background-watch-paused", "crew-background-watch-could-not-run" and "crew-background-watch-template" each open one watch's page in that state; "crew-background-watch-needsyou" is the inbox with its two watch rows and one background run; "crew-background-watch-needsyou-p-two" is the same with the watch rows in project p-two; "crew-background-run-detail" is one watch whose newest run stopped at its budget, for the background-run-detail frame; "crew-background-watch-refused" holds the seven fixed refusal sentences on its change rows (watch-could-not-start-reasons). */
 
   /** Escape log, Crew Designs v79: "crew-escapes" (the design’s six rows), "crew-escapes-checks" (the check frames’ escapes), "crew-escapes-limit" (5,000 in all), "crew-escapes-empty", "crew-escapes-low", "crew-escapes-unreadable", "crew-escapes-stale", "crew-escapes-stored" (a person’s stored thresholds). */
-  /** Lessons, KC5: "crew-lessons" (five sample lessons, one disabled and one over the cap), "crew-lessons-empty", "crew-lessons-unreadable", "crew-lessons-off" (the repository switch off, every lesson still readable), "crew-lessons-states" (one lesson left out of a brief, one over the five-lesson brief limit, one active confirmed escape and one repository revert). Skill proposals, KC9: "crew-proposals" (one open proposal from the design's three repeated failures), "crew-proposals-none", "crew-proposals-stale" (a source lesson turned off, so Approve is off), "crew-proposals-approved" (the skill exists and its lessons carry it), "crew-proposals-secret" (the scan refuses a text holding a key) and "crew-proposals-approve-fails" (skills-local refuses the write). */
+  /** Lessons, KC5: "crew-lessons" (five sample lessons, one disabled and one over the cap), "crew-lessons-empty", "crew-lessons-unreadable", "crew-lessons-off" (the repository switch off, every lesson still readable), "crew-lessons-states" (one lesson left out of a brief, one over the five-lesson brief limit, one active confirmed escape and one repository revert), "crew-lessons-add-secret" (the scan refuses an add whose text holds a key), "crew-lessons-add-fails", "crew-lessons-save-fails" and "crew-lessons-delete-fails" (the service fails that write with a 500 of its own). Skill proposals, KC9: "crew-proposals" (one open proposal from the design's three repeated failures), "crew-proposals-none", "crew-proposals-stale" (a source lesson turned off, so Approve is off), "crew-proposals-approved" (the skill exists and its lessons carry it), "crew-proposals-secret" (the scan refuses a text holding a key) and "crew-proposals-approve-fails" (skills-local refuses the write). */
   /** Review capacity and the coverage map, Crew Designs v77: "crew-capacity" (a limit of 8 saved, pausing off, every batch reviewed) and "crew-capacity-save-fails" (every save refused with 403 person_required). */
   /** Reviewer backtest, Crew Designs v23: "crew-backtest" (the estimate and a finished last run), "crew-backtest-report" (the finished run "run-4n"), "crew-backtest-stopped" (the stopped run "run-stopped"), "crew-backtest-kind-none" (a lane whose kind was not recorded), "crew-backtest-budget-none" (one engine has no budget), "crew-backtest-none" (the project never ran a backtest), "crew-backtest-failed" (a failed last run) and "crew-backtest-running" (a stored run in progress). */
   /** Crew Preview on (`crew`, `crew-<state>`): see `mock/crew.ts` for the states. Autopilot approvals: "crew-one-vendor". Autopilot by area: "crew-areas", "crew-areas-tripped", "crew-areas-ceiling-off", "crew-areas-recovering", "crew-areas-criteria-met", "crew-areas-restored", "crew-areas-lowdata", "crew-areas-empty", "crew-areas-stale". Guard, classes and routing: "crew-guard", "crew-guard-unknown", "crew-guard-full", "crew-guard-empty", "crew-classes", "crew-classes-invalid", "crew-classes-note", "crew-route-blocked", "crew-route-invalid", "crew-route-none". */
@@ -1204,6 +1205,11 @@ export function createMockApi(options: MockOptions = {}) {
           return project ? { status: 200, body: { project_id: project.id, project_path: project.path, image: null } }
             : err(404, "not_found", "Project not found.");
         }
+        // The project's repositories (docs/multi-repo.md): a ReposView, not the plain project list the fallthrough answers.
+        if (seg[3] === "repos" && !seg[4]) {
+          const project = projects.find((entry) => entry.id === seg[2]);
+          return project ? { status: 200, body: projectReposView(project) } : err(404, "not_found", "Project not found.");
+        }
         return { status: 200, body: projects };
       }
       case "POST /api/projects": {
@@ -1338,6 +1344,21 @@ export function createMockApi(options: MockOptions = {}) {
           }
           if (seg[3] === "queue") return { status: 200, body: queued.filter((q) => q.thread_id === seg[2]) };
           if (seg[3] === "commands") return { status: 200, body: fixtures.slashCommands };
+          // The multi-repository reads of docs/multi-repo.md. A subpath must never fall back to the thread object: the
+          // client reads a non-list as "nothing", so the Repos chip would not draw (and once crashed on `repos.map`).
+          // The sample's fixture id alone is not enough: a deleted or reset thread is gone, so both reads 404 as any
+          // missing thread's do.
+          if ((seg[3] === "repos" || seg[3] === "task-folder") && !threads.some((t) => t.id === seg[2])) {
+            return err(404, "not_found", "Thread not found.");
+          }
+          if (seg[3] === "repos") {
+            const repos = multiRepoRepos(seg[2] ?? "");
+            return repos === null ? err(404, "not_found", "This thread is not a multi-repository thread.") : { status: 200, body: repos };
+          }
+          if (seg[3] === "task-folder") {
+            const folder = multiRepoTaskFolder(seg[2] ?? "");
+            return folder === null ? err(404, "not_found", "This thread has no task folder.") : { status: 200, body: folder };
+          }
           // The Files surface: a small checkout tree, and text for any file in it.
           if (seg[3] === "files" && seg[4] === "content") {
             const file = query.get("path") ?? "";

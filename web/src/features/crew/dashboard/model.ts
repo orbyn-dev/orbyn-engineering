@@ -157,6 +157,8 @@ export interface DashModel {
 const WAITING_KIND_LABELS = new Map<string, string>([
   ["task_needs_person", "Asked a question"],
   ["merge_waiting", "A merge that waits"],
+  ["merge_gate_waiting", "A merge to release"],
+  ["command_approval", "A command to approve"],
   ["manual_check", "A check only you can make"],
   ["could_not_start", "A task that could not start"],
   ["could_not_stop", "A task that could not be stopped"],

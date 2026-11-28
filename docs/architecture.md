@@ -538,15 +538,35 @@ after 150 ms while the scan is pending. A failed refresh keeps those figures and
 offers Retry. Changing the period clears them, and an earlier response cannot
 replace the new period or clear its pending state. Cursor keeps no local history of its own: its spend is billed to the account, so the core keeps
 the account's billed events in `billed_events`, one row per event, keyed by a digest of the
-conversation, timestamp, model and counters because Cursor sends no event id. The usage reader (`agents/cursor_usage.rs`) is built against a fake server, takes the account's
-access token as an argument and has no caller yet, so the table stays empty and no `cursor` row
-appears in `/api/usage` — the row is drawn only when the store holds events, never as an
-always-empty engine; the credential read, its caller and a real account run remain owner-approved
-work.
-Three states stay apart: no store and no rows are no row at all, and a period that holds none of
-the stored events is a scanned engine of nothing. When the host read lands it must hand over one
+conversation, timestamp, model and counters because Cursor sends no event id, and the window of
+that history it has read, with the time it read it, in `billed_reads`. The window is a fact of its
+own because a read that found no spend writes no event: the events alone cannot say whether a day
+was looked at and came back empty. A window read less than a minute ago that still reaches back to
+the period's own start and into the period answers the read. A window whose own read time is after
+the clock is not fresh either — the clock moved back after that read, so no elapsed time can be
+taken from it — and it is read again under the same rules as a window that is no longer fresh, while
+what it already covered still counts as read. Otherwise the next read starts at the newest end, because
+that is where the spend a person opens the screen to see is; then it covers the last covered hour
+again, because Cursor finalizes an amount after it first reported it; then it walks older history
+backwards, one span at a time and never past the period's start, and a read still fresh walks older
+history before the newest end is read again, so a period shorter than that overlap, and a clock that
+moved since the read, still reach the period's start. A window whose end is after the clock — a read
+kept across a backward clock adjustment — answers nothing and starts the read at the newest end
+again, because no bound taken from it names a window inside the period; the read it starts there
+replaces that window instead of merging with it, so the end after the clock is not kept and later
+reads walk back again. A span bounds one read, not
+the history. Two windows that meet or overlap are one window, because nothing between them was left
+unread; a window with a gap between it and the stored one claims only itself, since the gap was
+never read. A day the read covers whole is what that day held, and the read replaces it, including
+with nothing; a day it covers in part keeps its other rows, because a part says nothing about the
+rest of that day. The usage reader (`agents/cursor_usage.rs`) is built against a fake server, takes the account's
+access token as an argument and has no caller yet, so both tables stay empty and no `cursor` row
+appears in `/api/usage` — the row is drawn for an engine whose window the core has read or whose
+store holds events, never as an always-empty engine; the credential read, its caller and a real
+account run remain owner-approved work.
+Three states stay apart: no store, and a store whose account was never read and which holds no event, are no row at all; a store whose account was read is a scanned engine even with no spend on it; and a period that holds none of the stored events is a scanned engine of nothing. When the host read lands it must hand over one
 complete window, as T3 reconciles against `totalUsageEventsCount`: a report replaces the rows of
-the days it names, so reading a window twice writes the same rows and a window of two events is
+the days it covers whole, so reading a window twice writes the same rows and a window of two events is
 stored as two, while an amount that settles later updates its row instead of adding one. A record
 that cannot be read as a billed event — no usage block, no timestamp or model that names a day,
 a negative counter — is dropped rather than counted as zero. The account's counters are separate,
@@ -855,7 +875,9 @@ tried once over HTTPS, and the job says so.
 ## Terminals
 
 A terminal on Windows opens a native `pwsh`, then `powershell`, then `ComSpec`. `SHELL`
-is ignored there. A thread holds up to 32 terminals, each with 5,000 lines and 8 MiB of scrollback kept
+is ignored there. Its shell's module analysis cache is pointed at Orbyn's own data folder
+(`PSModuleAnalysisCachePath`), so PowerShell cannot write `Microsoft\Windows\PowerShell` into a
+project checkout. A thread holds up to 32 terminals, each with 5,000 lines and 8 MiB of scrollback kept
 here. Terminals sharing a `group` are a split. The `main` terminal is what a plain
 socket opens and a terminal-tier run uses, and a plain one nobody returns to closes
 after a minute. Named terminals stay until closed. Settling or archiving closes them
@@ -1180,8 +1202,11 @@ Only existing safe files inside the checkout receive a checkout path; missing tr
 files and sibling Git patches may retain repository coordinates for diff navigation.
 A multi-repository thread resolves the reference in the repository its `repo_id`
 names, the primary repository when it is absent, so a worktree is the checkout and
-the task folder is never one; the request's and the answer's `cwd` stay the thread's
-stored folder, so a thread that moved meanwhile is still refused as stale. Ordinary
+the task folder is never one; a thread-basis reference whose first segment is a
+repository's worktree folder in that task folder resolves in that repository, and
+the answer's `repo_id` names the repository its coordinates are in. The request's
+and the answer's `cwd` stay the thread's stored folder, so a thread that moved
+meanwhile is still refused as stale. Ordinary
 file reads/writes and engine scope remain bounded to thread cwd. File and diff reveal
 intents are transient, capture thread/cwd before resolution, and consume only their
 own nonce. Route/cwd changes and newer navigation invalidate stale responses,
@@ -2395,10 +2420,13 @@ for are not verified on a real install.
 Provider detail pages in the beta are limited to Claude Code, Codex and OpenCode,
 including their named instances. Other registered providers retain their list and
 instance-edit controls, but cannot open an unbuilt detail page, including before
-the catalog arrives. OpenCode reports its version through the bounded CLI probe;
-compatibility still comes only from the authenticated manifest. Without an
-OpenCode entry its support stays Unknown. Its detail page shows reported version,
-login, location and models; Crew tier mapping remains Planned.
+the catalog arrives. The Needs attention rows keep to it as well: an engine outside
+the beta states its gap and offers no action, since both actions it could draw
+(Open, Sign in again) are rows of that page. OpenCode reports its version through
+the bounded CLI probe; compatibility still comes only from the authenticated
+manifest. Without an OpenCode entry its support stays Unknown. Its detail page
+shows reported version, login, location and models; Crew tier mapping remains
+Planned.
 
 The ACP driver offers protocol version 1, the only one it speaks. An agent that answers 2
 in version 1's shape (`agentInfo`, `agentCapabilities`), as some shipped agents do, runs as
@@ -2569,7 +2597,11 @@ is dirty, unpushed, ignored or in a worktree.
 
 Worktrees sit beside the primary clone at `<repo>-wt/<purpose>/`, wherever that repo
 lives, on a neutral `feat/<purpose>` branch, and a registered worktree for a purpose
-is reused. A custom worktree location is not offered or accepted by either settings
+is reused. A writing crew worker's own checkout is one of these too, purpose
+`crew-<member>` on branch `crew-<member>`, built and off by default (docs/crew.md,
+"Isolation"); its checkout is reused only through that branch, never by the folder's
+name alone, and a folder Orbyn did not record making is left alone rather than cleared.
+A custom worktree location is not offered or accepted by either settings
 API. Earlier stored location preferences are left intact but ignored; they cannot
 redirect new worktrees. Existing Git-registered worktrees remain at their current
 paths, including earlier layouts, with no file migration or removal.
@@ -3022,7 +3054,9 @@ Unchanged ignored caches do not require broader scope or data removal; ignored n
 remain an accepted blind spot, pending isolated-checkout work (#436).
 Admission refuses an index with assume-unchanged or skip-worktree entries, including sparse
 checkouts; verification fails if either flag appears. Crew's scope, size and changed-path checks read Git without line-ending conversion;
-other Git reads keep their settings. Those checks need Git 2.40 or later, which
+other Git reads keep the checkout's own conversion, because they compare a working tree against its index and
+forcing the conversion off would publish a clean `core.autocrlf=true` checkout as changed
+(`hardened_reads_keep_the_checkouts_line_ending_conversion`). Those checks need Git 2.40 or later, which
 honours `GIT_ATTR_SOURCE`, so a checkout's own `.gitattributes` stays out of the
 read; older Git errors them rather than pass bytes it did not compare.
 Scope and size checks error on nonempty, unreadable or nonregular `info/attributes` overrides,
@@ -3427,7 +3461,10 @@ covering session lock acquisition, selector validation, CDP reads and polling.
 A tab's zoom, appearance and phone layout are set with `/view`. Zoom keeps the frame the
 same size and lays the page out smaller, 0.25 to 3 times. New tabs start from the
 `preview_zoom` and `preview_appearance` settings. A tab with no named profile ends with its
-profile. A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
+profile: its folder is removed after the browser is stopped, a removal the system refuses
+because that browser has not released its files is retried within a one-second deadline,
+and one that outlasts it is logged with its path and OS error rather than left unmentioned.
+A named profile lives in `<data>/browser-profiles`, survives restarts, and holds
 one tab at a time because a browser locks its profile folder. A profile can be renamed
 while a tab has it open: only the stored name changes, never the folder, so its cookies
 and history stay. A private tab only stays
@@ -4027,7 +4064,7 @@ every method, path and which routes need a credential.
 | `GET /api/threads/:id/files?path=&repo_id=` | `FileEntry[]`, one folder; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `GET /api/threads/:id/files/metadata?path=` | `FileMetadata`: one entry's own kind, size, mode, modified time and whether a final link stays inside; no bytes read; `exists: false` for a missing path |
 | `GET /api/threads/:id/files/ignored` | Ignored paths |
-| `GET /api/threads/:id/files/search?q=&content=` | `SearchHit[]` by name or by line |
+| `GET /api/threads/:id/files/search?q=&content=&repo_id=` | `SearchHit[]` by name or by line; `repo_id` names one repository of a multi-repository thread, absent is its primary |
 | `GET, PUT /api/threads/:id/files/content` | `FileContent`; a stale `base_revision` is `409 file_conflict` |
 | `POST /api/threads/:id/files/mutate` | `ExplorerFileAction`: create, move (rename) or nonrecursive delete in the thread's checkout; `204`, `403` active session/untrusted, `404` unknown thread, `400` invalid path or destination |
 | `GET /api/threads/:id/files/raw?path=&download=` | Bytes with `Range`, `If-Range` and `If-None-Match`; `206`, `304`, `413 file_too_large`, `416`; `download` forces an attachment |

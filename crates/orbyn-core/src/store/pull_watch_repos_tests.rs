@@ -1,4 +1,4 @@
-//! Migration 91: a pull request watch is kept per repository, and every older watch stays on the thread's own
+//! Migration 92: a pull request watch is kept per repository, and every older watch stays on the thread's own
 //! project.
 
 use rusqlite::Connection;
@@ -103,7 +103,7 @@ fn watches_made_before_the_migration_stay_on_the_threads_own_project() {
          CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,applied_at TEXT NOT NULL)",
     )
     .unwrap();
-    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 91) {
+    for (version, sql) in migrations::MIGRATIONS.iter().filter(|(v, _)| *v < 92) {
         conn.execute_batch(sql).unwrap();
         conn.execute(
             "INSERT INTO schema_migrations VALUES (?1,'fixture')",

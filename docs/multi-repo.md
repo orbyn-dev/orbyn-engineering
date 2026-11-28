@@ -252,7 +252,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   repository. The service answers ONE repository's files per read (`?repo_id=`, absent is the primary) and `FileDiff` has no repository
   field. The panel now reads once per trusted repository of `GET .../repos` and marks each file itself; a thread with no repositories
   reads once, as before. An untrusted repository reports no changes (`files: null`) and its reads are `409 repo_untrusted`, so it is not
-  read; if every read fails the Changes show the error.
+  read; if every read fails the Changes show the error. A line comment made on one of those files names the repository the
+  file came from and carries its `repo_id` when that is another repository, so it is drawn only under that repository's file
+  and the message the agent receives says `<repo name>/<path>`; two repositories' files of one path keep their own comments.
+  The primary repository is the thread's own checkout, which carries no `repo_id` anywhere else either, so a comment on its
+  file names it without one and stays the same file as that tab's comments. An ordinary thread's comments name no repository.
 - **`ThreadRepo.files` is `string[] | null`** (null for an untrusted repository); `pull_request` does not exist. The menu on a
   repository's group therefore offers Commit, Push and Create pull request only (`POST .../git/action` with `repo_id`). Open, Merge
   and Review pull request are gone until the pull request routes take `repo_id`; they would have acted on the primary repository's
@@ -304,8 +308,20 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   says "200 shown" quietly on its header.
 - **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
   chosen) and the Create pull request base check of the Changes footer act on the primary repository.
-- **Not verified against a live service.** Checked with the mock and spies on the client; the thread paths have not run against an
-  `orbynd` with `ORBYN_MULTI_REPO=1`.
+- **Verified against a live service.** The project repository screens and the thread's repository routes ran against a real
+  `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec 3152baf7;
+  `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677 + spec f2b539677, 26 Nov 2026; and
+  `web/e2e/real/multi-repo-scan.spec.ts`, 2 passed @ app 97068179d + spec 97068179d, 26 Nov 2026. The Changes grouping ran
+  in `web/e2e/real/multi-repo-changes.spec.ts` (2 passed in #1592's evidence, which records no app or spec run id). The
+  repository choice in the header Git menu, the branch dialog and the commit picker also ran
+  (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed, recorded 26 Nov 2026 in the commit that added the spec, 4d147ab08;
+  that record names no app or spec revision): the reads of the chosen repository carry its `repo_id` in the query and the
+  primary's carry none, the dialog's write names it in the body, a branch created there is in that repository's worktree
+  alone and the Git menu's commit lands only there. The primary-worktree assertions the commit case gained afterwards
+  (a1fa807ea, 27 Nov 2026: a pending file written into the primary worktree before the commit, whose `HEAD` and
+  `git status --porcelain` must be unchanged after it) were not covered by that run. Run again on the current head,
+  28 Nov 2026: 4 passed (48.2s) @ app ccf98d924 + spec ccf98d924, those assertions included. Still not run against a
+  live service: per-repository push and pull requests, and opening another repository's file tab from the Changes list.
 
 ### As built: web UI (repo threads)
 
@@ -344,7 +360,8 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab, which draws it
   by what it holds; it is not dragged into the message, because the thread's composer chips name a checkout's path (its Open in editor,
   Open in browser, Reveal and line comments carry the `repo_id`, and a comment on another repository's file is context for the next
-  message, never a service write; the Changes panel's comments do not name a repository yet). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
+  message, never a service write; a line comment made in the Changes panel names its file's repository as well, so two repositories'
+  files of one path keep their own comments and the engine is told which repository the comment is about). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
   chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
   carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the
@@ -354,8 +371,12 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   stays on disk when it holds changes; several threads, a thread in one repository and a failed repository read keep the existing words
   (the service removes the clean worktrees; see "As built: pull requests and removal").
 - **Not done.** `GET .../files/metadata` still has no web caller. `ThreadRepo.pull_request`, `repo_id` on pull request routes and on `FileDiff` and removing a repository are now in the service ("As built: pull requests and removal"); the web side draws them (below).
-- **Not verified against a live service.** Checked with the mock (which now applies the rules above) and request-level tests of the
-  client; the routes have not been run against an `orbynd` with `ORBYN_MULTI_REPO=1`.
+- **Verified against a live service.** The new-thread dialog, its `POST .../repo-threads`, the task folder read and the Repos popover
+  ran against a real `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec
+  3152baf7 (a repository added later joins the thread); `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677
+  + spec f2b539677, 26 Nov 2026 (the Repos chip's 390 px phone sheet). The repository choice in the header Git menu, the branch
+  dialog and the commit picker also ran (`web/e2e/real/multi-repo-git.spec.ts`, 4 passed); the rest of the routes above are
+  checked with the mock (which applies the rules they state) and request-level tests of the client.
 
 ## As built: repo_id on Git and file calls
 
@@ -366,7 +387,12 @@ nothing below changes for it. The rows are written by thread creation in the nex
 - **Where `repo_id` goes.** Body: `POST /api/threads/{id}/git/action`, `POST .../branches`, `POST .../branches/switch`,
   `PUT .../files/content`, `POST .../previews/file`, `POST .../files/open` and `POST .../paths/resolve` (`GitAction`,
   `CreateBranch`, `SwitchBranch`, `WriteFile`, `OpenPreviewFile`, `OpenInEditor`, `ResolveThreadPath`). Query: `GET .../commits`,
-  `GET .../diff`, `GET .../branches` and `GET .../files/content`. Absent is the primary repository (position 0).
+  `GET .../diff`, `GET .../branches`, `GET .../files/content` and `GET .../files/search`. Absent is the primary
+  repository (position 0). The file search is what the command palette's Go to file and Search in project read, so
+  both answer the repository the explorer's chip names, and a hit opens as that repository's tab. The palette reads the
+  thread's repository list before it searches, so a list still on its way cannot answer the primary while the chip names
+  another; a settled, ordinary or failed read searches the primary as before. The service's `409 repo_untrusted` is shown
+  in the palette with the shared trust prompt instead of an empty list.
 - **One resolver.** Every thread Git and file call reads the thread through one function that, for a multi-repository thread,
   returns it with its `cwd` set to the chosen repository's worktree. So the repository is the only thing that changes: the path of a
   file is resolved inside that worktree by the usual guard (a path that leaves it, an absolute path or a link out is refused), and a
@@ -388,11 +414,14 @@ nothing below changes for it. The rows are written by thread creation in the nex
   folder and the answer's `checkout_path` is relative to that repository's worktree. The request's `cwd` is the thread's own
   stored folder (the task folder) and so is the answer's: the thread's move is still `409 stale_owner`, and it is that folder,
   not a worktree, that a client fences against.
-- **Known limit: a task-folder reference.** A reference the engine writes relative to its task folder (a message link or a tool
-  result such as `planner/src/x.ts`) still resolves in the thread's primary repository: the task folder is not a checkout, and
-  its worktrees share no one path namespace. A repository-relative reference that names its `repo_id` resolves in that
-  repository; following a task-folder reference to the repository that owns it needs the link, chip or reveal intent to carry
-  the repository (issue #1581).
+- **A task-folder reference names its repository in its first segment.** A thread-basis reference is written relative to the
+  task folder, whose children are the repositories' worktrees: `planner/src/x.ts` is the thread's `planner` repository's
+  `src/x.ts`, never the primary repository's `planner/src/x.ts`. The resolver maps the first segment to the thread repository
+  whose worktree folder it is, with the platform's own case rules, and resolves the rest inside that worktree; an untrusted
+  repository among them answers `409 repo_untrusted`. The answer's `repo_id` names the repository the coordinates belong to
+  (absent for an ordinary thread, and for a repository that is not the thread's), so the web opens that repository's tab and
+  its read and write carry the `repo_id`; a reference under no repository's folder keeps its older meaning after the
+  repeated-workspace strip, which is the primary repository's worktree.
 - **Refusals.** A `repo_id` on an ordinary thread, one that is not the thread's, or any `repo_id` with the flag off is `404 not_found`. A
   repository whose row in the project is untrusted is `409 repo_untrusted` for every call; a repository removed from the project keeps
   working in a thread that already has its worktree.
@@ -439,7 +468,7 @@ navigation coordinates.
 - **`repo_id` on the thread pull request routes.** `?repo_id=` on `GET` and `POST /api/threads/{id}/pulls`, `POST .../pulls/refresh`,
   `GET` and `DELETE .../pulls/{number}`, `POST .../pulls/{number}/review` and `.../merge`, and on the watches (`GET .../watches`,
   `POST`/`DELETE .../pulls/{number}/watch`). Absent means the primary repository, so every older client is unchanged. Unknown, untrusted or
-  flag-off repositories are refused as for the Git routes. A watch is kept by (thread, repository, number) (migration 91), so two
+  flag-off repositories are refused as for the Git routes. A watch is kept by (thread, repository, number) (migration 92), so two
   repositories can both watch a #12; every watch made before it moved to the thread's own project, which is its primary repository.
   Unlinking a link drops that repository's watch. The watch pass refreshes the open links of each repository of a thread and reads each
   watch in its own repository's worktree.

@@ -66,16 +66,20 @@ fn good() -> Script {
     })
 }
 
-/// The task a run started: the one task of its lead thread.
+/// The task a run started: the one task of its lead thread. The count names the row, so no read takes it by position.
 fn task_of(w: &World, run: &wire::BackgroundRun) -> String {
-    let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
+    let mut tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
     assert_eq!(tasks.len(), 1, "one task per run");
-    tasks[0].0.id.clone()
+    tasks.pop().expect("the run's one task").0.id
 }
 
+/// The crew's one run: each test starts that crew's run once before reading it, so the count says the row is the one
+/// the test means and the read's position never picks another.
 fn run_of(w: &World, crew: &str) -> wire::BackgroundRun {
     let page = crate::crew::Page::new(None, None).unwrap();
-    w.core.background_runs(crew, page).unwrap().runs.remove(0)
+    let mut runs = w.core.background_runs(crew, page).unwrap().runs;
+    assert_eq!(runs.len(), 1, "the crew has one run: {runs:?}");
+    runs.pop().expect("the crew's run")
 }
 
 fn threads(w: &World) -> i64 {
@@ -357,13 +361,12 @@ async fn review_capacity_pauses_a_background_start_and_leaves_nothing_behind() {
     assert_eq!(w.core.background_runs(&id, page).unwrap().total, 0);
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
     assert_eq!(rows.len(), 1, "{rows:?}");
+    let held = rows
+        .iter()
+        .find(|row| row.kind == PausedKind::Background)
+        .expect("the one held row, found by its kind");
     assert_eq!(
-        (
-            rows[0].kind,
-            rows[0].waiting,
-            rows[0].limit,
-            rows[0].started
-        ),
+        (held.kind, held.waiting, held.limit, held.started),
         (PausedKind::Background, 3, 2, false)
     );
     // A second press is the same held row, not another.
@@ -387,7 +390,12 @@ async fn review_capacity_pauses_a_background_start_and_leaves_nothing_behind() {
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     assert_eq!(run.state, wire::BackgroundRunState::Running);
     let rows = w.core.store.crew_paused_starts(&project(&w)).unwrap();
-    assert!(rows.len() == 1 && rows[0].started, "{rows:?}");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let started_row = rows
+        .iter()
+        .find(|row| row.kind == PausedKind::Background)
+        .expect("the started row, found by its kind");
+    assert!(started_row.started, "{rows:?}");
 }
 
 #[tokio::test]
@@ -571,8 +579,12 @@ async fn a_background_start_refused_for_low_disk_keeps_one_stopped_history_row()
     assert_eq!(threads(&w), threads_before);
     let page = crate::crew::Page::new(None, None).unwrap();
     let listed = w.core.background_runs(&id, page).unwrap();
-    assert_eq!(listed.total, 1);
-    let run = &listed.runs[0];
+    assert_eq!(listed.total, 1, "the refused start is the crew's history");
+    let run = listed
+        .runs
+        .iter()
+        .find(|row| row.reason_code.as_deref() == Some("disk_low"))
+        .expect("the refused start row, found by its reason code");
     assert!(w.core.store.crew_tasks_in_crew(&run.id).unwrap().is_empty());
     assert_eq!(run.state, wire::BackgroundRunState::Stopped);
     assert_eq!(run.stop_reason, None);
@@ -602,9 +614,15 @@ async fn a_background_start_refused_for_low_disk_keeps_one_stopped_history_row()
     assert_eq!(started.state, wire::BackgroundRunState::Running);
     assert_eq!(started.reason_code, None);
     let listed = w.core.background_runs(&id, page).unwrap();
-    assert_eq!(listed.total, 2);
-    assert_eq!(listed.runs[0].id, started.id);
-    assert_eq!(listed.runs[1].id, run.id);
+    assert_eq!(listed.total, 2, "the refused start and the run after it");
+    // Order is the contract here: the runs read is newest first, so the run that started is the front row.
+    assert_eq!(listed.runs[0].id, started.id, "newest first");
+    let refused = listed
+        .runs
+        .iter()
+        .find(|row| row.id == run.id)
+        .expect("the refused start stays in the history, found by its id");
+    assert_eq!(refused.state, wire::BackgroundRunState::Stopped);
     crate::host::disk::set_free_for_test(&path, None);
 }
 
@@ -1049,9 +1067,10 @@ async fn a_post_row_launch_refusal_keeps_its_task_and_lead_reviewable() {
         "needs_person"
     );
     // The task was moved to waiting by the start itself, which wrote no result: the unwind writes exactly one.
-    let results = w.core.store.crew_results(&task).unwrap();
+    let mut results = w.core.store.crew_results(&task).unwrap();
     assert_eq!(results.len(), 1, "{results:?}");
-    assert_eq!(results[0].state, wire::ResultState::NeedsPerson);
+    let result = results.pop().expect("the unwind's one result");
+    assert_eq!(result.state, wire::ResultState::NeedsPerson);
     assert!(w.core.store.thread(&run.id).is_ok());
     assert_eq!((threads(&w), mode_rows(&w)), (before.0 + 1, before.1));
     let saved = w.core.store.background_run(&run.id).unwrap();

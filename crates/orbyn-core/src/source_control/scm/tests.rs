@@ -400,3 +400,54 @@ async fn another_forges_kept_marks_are_this_services_own() {
     let unmarked = core.pull_files(&project.id, 12, false).await.unwrap();
     assert!(!unmarked[0].viewed);
 }
+
+/// The frame `pr-detail-none` asks two things of one ref listing: is the branch a local branch,
+/// and does the `origin` remote already hold it (issue 506).
+#[test]
+fn a_branch_the_remote_holds_is_named_by_its_origin_ref() {
+    let listing = "refs/heads/main\nrefs/heads/feat/login\nrefs/remotes/origin/feat/login\n";
+    assert_eq!(
+        super::pulls::branch_refs(listing, "feat/login"),
+        (true, Some("origin/feat/login".to_owned()))
+    );
+}
+
+#[test]
+fn a_local_branch_the_remote_does_not_hold_is_not_pushed() {
+    let listing = "refs/heads/main\nrefs/remotes/origin/HEAD\n";
+    assert_eq!(super::pulls::branch_refs(listing, "main"), (true, None));
+}
+
+#[test]
+fn a_branch_only_the_remote_holds_is_pushed_and_not_local() {
+    let listing = "refs/remotes/origin/feat/login\n";
+    assert_eq!(
+        super::pulls::branch_refs(listing, "feat/login"),
+        (false, Some("origin/feat/login".to_owned()))
+    );
+}
+
+#[test]
+fn a_local_branch_named_origin_main_does_not_stand_in_for_the_origin_ref() {
+    let listing = "refs/heads/origin/main\n";
+    assert_eq!(
+        super::pulls::branch_refs(listing, "origin/main"),
+        (true, None)
+    );
+}
+
+#[test]
+fn another_remote_does_not_answer_for_origin() {
+    let listing = "refs/remotes/upstream/feat/login\n";
+    assert_eq!(
+        super::pulls::branch_refs(listing, "feat/login"),
+        (false, None)
+    );
+}
+
+#[test]
+fn a_branch_with_slashes_is_matched_whole() {
+    let listing = "refs/remotes/origin/feat/login\n";
+    assert_eq!(super::pulls::branch_refs(listing, "feat"), (false, None));
+    assert_eq!(super::pulls::branch_refs(listing, "login"), (false, None));
+}

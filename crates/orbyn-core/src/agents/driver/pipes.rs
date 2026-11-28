@@ -140,10 +140,12 @@ pub(crate) fn spawn_engine_confined(
         None => command,
     };
     let mut builder = engine_command(command, args, cwd);
+    builder.envs(env.iter().copied());
     if let Some(confinement) = confine {
+        // After the run's own variables, so none of them can put a route to the data folder or
+        // the command line back.
         confinement.scrub_env(builder.as_std_mut());
     }
-    builder.envs(env.iter().copied());
     let mut child = ManagedChild::spawn(builder).map_err(|error| {
         CoreError::EngineUnavailable(format!("Could not start engine: {error}"))
     })?;

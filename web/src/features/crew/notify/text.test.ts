@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NeedsYouItem } from "../../../generated/NeedsYouItem";
 import type { NeedsYouKind } from "../../../generated/NeedsYouKind";
-import { cut120, groupNoticeOf, NEEDS_YOU_INBOX, noticeOf, QUESTION_HIDDEN, REVIEW_QUEUE } from "./text";
+import { APPROVALS, cut120, groupNoticeOf, NEEDS_YOU_INBOX, noticeOf, QUESTION_HIDDEN, REVIEW_QUEUE } from "./text";
 
 const item = (kind: NeedsYouKind, over: Partial<NeedsYouItem> = {}): NeedsYouItem => ({
   id: "task-1",
@@ -52,6 +52,19 @@ describe("a Crew notification's words", () => {
       title: "The merge waits for you",
       lines: ["The merge waits for you."],
       target: NEEDS_YOU_INBOX,
+    });
+    // No Merge queue tab is built yet, so the notice opens the merge's task on the Flow line whose Merge cell says
+    // "Needs you"; it must not open the Inbox, which draws no row for the kind.
+    expect(noticeOf(item("merge_gate_waiting", { id: "task-merged", reason: "A merge waits for your release." }))).toEqual({
+      title: "A merge waits for your release",
+      lines: ["A merge waits for your release."],
+      target: { name: "crew", tab: "flow", task: "task-merged" },
+    });
+    // A held command is answered only in the Approvals tab, not the Inbox (which draws approvals from the ledger).
+    expect(noticeOf(item("command_approval", { reason: "A command waits for your approval." }))).toEqual({
+      title: "A command waits for your approval",
+      lines: ["A command waits for your approval."],
+      target: APPROVALS,
     });
     expect(noticeOf(item("background_review", { reason: "It used its whole turn budget." }))).toEqual({
       title: "The review waits for you",

@@ -17,8 +17,15 @@ finding, and **does not replace CodeQL**.
     call through a variable, which the inline `orbyn-rust-sql-format` rule cannot see.
   - `orbyn-rust-secret-field-in-log` for `rust/cleartext-logging`: a secret-named field reaching a log call through
     another value; `redact`, `redacted_tail` and length-only reads are sanitizers.
-  - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")` whose
-    character class does not escape a backslash (`web/src/styles/tokens.test.ts:165` is the known case).
+  - `orbyn-js-regex-escape-skips-backslash` for `js/incomplete-sanitization`: `replace(/[…]/g, "\\$&")`, in either
+    quote style, whose character class matches no backslash of its own — not negated, and without a `\W`, `\S` or `\D`
+    shorthand, a `\x5c` or `\u005c` escape, an octal `\134`, or a range that spans a backslash (`[A-z]`, `[[-^]`); a
+    range with an escaped endpoint cannot be classified, so it is skipped rather than guessed, and only an unescaped
+    hyphen with an endpoint on both sides separates a range, so an escaped `\-` and a leading `-` are literals
+    (`web/src/styles/tokens.test.ts:165` was the known case; it is fixed). A hyphen that follows a completed range is
+    a literal as well, which the range lookahead cannot read: `[A-Z-a.]` misses a backslash and is skipped
+    (known limitation, [#1840](https://github.com/orbyn-dev/orbyn-engineering/issues/1840)). A `\p{…}` property escape
+    is outside the rule.
 - `tests/`: a matching case and a safe look-alike for every rule. A rule is unproven without both. The workflow runs
   them first.
 
@@ -35,25 +42,48 @@ opengrep scan --config .opengrep/rules --exclude .opengrep --exclude node_module
 
 Use only local rules: a `p/...` ruleset or `opengrep validate` downloads from `semgrep.dev`.
 
-## Status against CodeQL (re-checked 2026-11-23)
+## Status against CodeQL (record updated 2026-11-27)
 
-Four of the five query classes named in issue #849 now have a rule with tests: `rust/path-injection`,
-`rust/sql-injection`, `rust/cleartext-logging` and `js/incomplete-sanitization`. What is still open before CodeQL can be
-turned off:
+Gap 3 of issue #849 is closed for the literal replacement the rule matches: `orbyn-js-regex-escape-skips-backslash`
+covers `js/incomplete-sanitization` written as `"\\$&"` or `'\\$&'` — the same replacement in either quote style — with
+a matching case and a safe look-alike for each, and the one instance it named
+(`web/src/styles/tokens.test.ts:165`) is fixed, so the helper now carries a backslash through instead of eating it.
 
-- **Parser limits, not rules.** Opengrep v2.0.0 still cannot parse five files under `crates/orbyn-core/src`
+What the rule does not read, so this record does not claim it: a replacement built another way (a variable, `$1` with a
+capture group, `replaceAll`); a regex flag other than `g`, so `/[…]/gi` and a flagless `/[…]/` are not matched; a negated
+class, which is skipped even where it really does exclude a backslash (`/[^\\]/` is not reported); a class range with an
+escaped endpoint, skipped rather than classified, which can hide a real finding; and a class that matches a backslash of
+its own, including through a range such as `[A-z]` or `[[-^]`, which needs no backslash-specific fix, though other
+regex metacharacters in that class may still need their own escaping.
+
+**Known limitation: a hyphen after a completed range** ([#1840](https://github.com/orbyn-dev/orbyn-engineering/issues/1840)).
+`[A-Z-a.]` reads as `A-Z`, `-`, `a` and `.`, so it misses a backslash and the rule should report it, but the range
+lookahead reads `Z-a` as a backslash-spanning range and skips the class; `[A-Z-a-z]` and `[A-Z---a]` are skipped for the
+same reason. It is recorded rather than patched again because a bounded fix was measured: one lookbehind level closes
+`[A-Z-a.]` and then reports `[-A-z]` and `[A-Z-.-^]`, which do match a backslash, and two levels close those and still
+miss `[A-Z---a]`. Each level moves the same hole one hyphen along, so the class needs a parser, not another lookahead
+(the proposed parse is in that issue).
+
+The other four gaps are **open** and need the owner's decision. None is accepted here, and the advisory workflow stays
+non-required. The parser set below is the 2026-11-23 re-check; this change did not re-run the full scan.
+
+- **Gap 1 — parser limits, not rules.** Opengrep v2.0.0 could not parse five files under `crates/orbyn-core/src`
   (`host/process.rs:557`, `host/process/unix_tree.rs:85`, `governance/computer/mod.rs:323`,
-  `governance/computer/cdp.rs:560`, `crew/cancel.rs:156`) or `web/src/api/client.ts:262`. A clean scan says nothing
-  about those files. The 2026-11-21 snapshot named six; `cdp.rs` and `client.ts` joined them since.
-- **No interfile taint.** Request data reaches a filesystem path across the route/core boundary, where an intrafile rule
-  cannot follow it. Closing that needs `--enable-interfile` in the scan and `taint_interfile: true` on the rule: a
-  workflow change that was not made or measured with the runners disabled.
-- **Cleartext transmission has no rule.** Telling `http` from `https` needs the configured endpoint, which a rule
-  cannot see; a rule that fires on every authenticated call would be worse than none.
-- **The side-by-side run has not happened** (the CI-gate method in the `orbyn-opengrep` skill).
-- The session-storage question in the issue is a design decision, not a rule.
+  `governance/computer/cdp.rs:560`, `crew/cancel.rs:156`) or `web/src/api/client.ts:262`; the issue also names
+  `crates/orbynd/src/bin/orbyn_fake_engine/acp.rs` and `desktop/src-tauri/src/system.rs`. A clean scan says nothing
+  about them. Decision needed: wait for a parser fix, rewrite the constructs, or keep CodeQL's Rust analysis for them.
+- **Gap 2 — no rule for what CodeQL's Rust queries find.** `rust/path-injection`, `rust/sql-injection` and
+  `rust/cleartext-logging` have taint rules with tests. Still missing: cleartext transmission (telling `http` from
+  `https` needs the configured endpoint, which a rule cannot see) and the cross-file flow where request data reaches
+  a filesystem path across the route/core boundary (needs `--enable-interfile` and `taint_interfile: true`, a workflow
+  change neither made nor measured). Decision needed: accept the gap or fund those rules.
+- **Gap 4 — the side-by-side run has not happened.** Decision needed: choose the stretch in advance, then record what
+  each scanner reports and the other misses (the CI-gate method in the `orbyn-opengrep` skill).
+- **Gap 5 — the session-storage question.** Ten test files write the launch token with
+  `sessionStorage.setItem("orbyn.token", ...)` (the issue counted seven). Decision needed: whether the product should
+  keep it there; it is a design decision, not a rule.
 
-Do not turn CodeQL off until that side-by-side comparison has been run for a stretch chosen in advance.
+Do not turn CodeQL off until gap 4 has run for that stretch and the owner has accepted gaps 1, 2 and 5.
 
 ## Findings are leads
 

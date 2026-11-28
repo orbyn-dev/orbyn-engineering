@@ -262,7 +262,7 @@ impl Shell {
 }
 
 /// One value as one word. An empty value is no word at all (an optional parameter left empty disappears).
-fn quote(value: &str, shell: Shell) -> Result<String> {
+pub(crate) fn quote(value: &str, shell: Shell) -> Result<String> {
     if value.is_empty() {
         return Ok(String::new());
     }

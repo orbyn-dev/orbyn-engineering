@@ -71,12 +71,15 @@ type IssueSummary = { tracker; scope; key; display_key; title; url; author: {log
 type IssueDetail = IssueSummary & {
   body: string;
   comments: IssueComment[];            // the first 50, oldest first; never more in the beta
+  activity?: IssueActivity[];          // the issue's own state changes, oldest first; absent when none was read
   linked_pull_requests: { repository: string; number: number; title: string; url: string;
                           state: "open" | "closed" | "merged"; is_draft: boolean; closes_issue: boolean;
                           checks?: PullChecks | null }[];  // absent is unknown, never "no checks"
   linked_threads: string[];            // thread ids that link this issue
   reactions?: { content: string; count: number }[] | null;  // null unless this answer reports them
 };
+type IssueActivity = { kind: "closed" | "reopened"; actor: {login}|null; at: string;
+                       close_reason?: "completed" | "not_planned" | null };  // never on a reopen
 type IssueRef = { tracker; scope; key; display_key; title; state; labels };  // what a link stores
 type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: number } | null;
                    failed: { tracker: TrackerKind; message: string }[];
@@ -99,14 +102,34 @@ type IssueList = { issues: IssueSummary[]; counts: { open: number; closed: numbe
 - `counts` are the tracker's totals before label, assignee and text filters; `null` when it cannot say.
 - A tracker that fails for any other reason while others answer goes in `failed`, with the service's own message
   (never the raw tracker response). An invalid request, such as a paging cursor the service did not issue, is
-  `400 invalid_input` instead and fails the whole listing. A listing is up to 100 issues per tracker and scope; results are
-  cached 30 seconds.
+  `400 invalid_input` instead and fails the whole listing.
+- **Cache.** A listing is up to 100 issues per tracker and scope, and each page is kept 30 seconds. A write through
+  this service in that tracker and scope (create, comment, an edit, a state change) drops every cached page of it as
+  soon as the tracker answers, so the next listing reads the tracker again instead of the page cached before it; a
+  listing that was still asking the tracker when the write landed is not cached, so it cannot put the page it read
+  back. It is that whole scope and no more: the tracker applies the filters, so which cached pages the changed issue
+  belongs to cannot be known here, while nothing outside the tracker and scope of the write can have changed. A scope
+  is matched by its whole name, so a write to `org/Project` leaves `org/Project Two` cached. A write whose answer does
+  not prove it failed may have been applied, so it drops the same pages: that is a tracker that never answered, and
+  one that answered a read of a write it had already stored (a rate limit, a refusal, a `404` or an unreadable reply
+  on that read). A reaction changes no field a page carries and no order it sorts by, so it drops none. Dropping the
+  page guarantees a fresh read, not that the write is in its answer: on GitHub that read is a `gh issue list`
+  `--search` call (`sort`), which can lag a new or changed issue, so a page read in that window can still miss it.
 - `linked_pull_requests` is what the tracker reports of its own accord, read-only. A tracker that does not
   report them gives `[]`. A link carries `checks` when the tracker reports CI for it: the same `PullChecks`
   counts the pull request list carries. GitHub reads them with one `gh pr view --json statusCheckRollup` per
   link, in that link's own repository and best effort, so a link the person cannot read leaves the other links
   shown. Only the first 20 links of an issue are read (each read is one API call against the account's shared hourly limit); a link past that stays shown with no `checks`, which is unknown (over the read limit). Absent is unknown, never "no checks"; the other trackers report no linked pull requests, so they carry
   no `checks` either.
+- `activity` is the issue's own state changes as the tracker's timeline reports them, oldest first: the closed event
+  (`kind: "closed"`, carrying `close_reason` when the tracker says how it closed) and a reopen after it
+  (`kind: "reopened"`, never with a reason). GitHub reads them beside the detail in one bounded GraphQL page
+  (`timelineItems(last: 50, itemTypes: [CLOSED_EVENT, REOPENED_EVENT])`, through the person's own `gh`), best effort:
+  a timeline the account cannot read, or a `gh` that does not answer, leaves `activity` empty — no event known, never
+  "nothing happened" — and the issue is still shown. At most 50 events are kept. The other four trackers report no
+  timeline, so the field is left out of their answer (an absent `activity` means no event known, never an empty `[]`).
+  It rides on `IssueDetail`: no route and no stored field. These events are tracker text like the rest and never reach an
+  engine ("Issue text is untrusted").
 - A link keeps an `IssueRef` snapshot beside the thread (table `issue_links`; the migration takes the next
   free number at merge time), so a chip draws with the tracker offline. A read of the issue refreshes it.
 
@@ -128,8 +151,8 @@ A message never contains a token or a raw tracker body.
 ## GitLab as built
 
 `gitlab` reads issues in `crates/orbyn-core/src/issues/gitlab.rs`, behind the same `ORBYN_ISSUES` flag. List and
-detail are built, and the thread link, start-thread, draft and find paths use them; of the T3 issue work the
-`update` and `state` writes, the `candidates` read and the list's `sort` option are missing for GitLab (Planned).
+detail are built, and the thread link, start-thread, draft and find paths use them; the `update` and `state` writes
+and the `candidates` read are built (R15 PR4), and the list's `sort` option is accepted but not ordered by.
 
 - **Requests.** `GET {host}/api/v4/projects/{path}/issues` (`state` `opened|closed|all`, `labels`, `search`,
   `assignee_username`, `assignee_id=None`, `scope=assigned_to_me`, `order_by=updated_at`, `per_page` up to 100,
@@ -172,8 +195,8 @@ detail are built, and the thread link, start-thread, draft and find paths use th
   and at most 50 assignees, an issue body to 64 KiB and a comment to 16 KiB. Text is never read for instructions
   and the draft framing above is unchanged.
 - **Planned, not built.** Linked merge requests (`linked_pull_requests` stays empty), "won't fix" and other close
-  reasons (`close_reason` stays `null`), a tracker state name other than Open and Closed, the T3 writes `update` and
-  `state`, and the `candidates` read. Thread link, start-thread, draft and find already work through list and detail.
+  reasons (`close_reason` stays `null`), a tracker state name other than Open and Closed, and the list's `sort`
+  order (accepted and not ordered by). Thread link, start-thread, draft and find already work through list and detail.
   `find` parses only `https://github.com/.../issues/<n>` links: a pasted GitLab link is not parsed as one and goes
   to the tracker as search text. A bare number is looked up as the `iid` in every connected scope.
 - **Not verified.** No real GitLab (gitlab.com or self-managed) was contacted. The reader is tested against a
@@ -472,8 +495,9 @@ into them, so they are **data**, never instructions to an engine, and never reac
 
 T3 Code at `9168ca73d` (`issue.ts`: `IssueListSort`, `IssueUpdateInput`, `IssueSetStateInput`,
 `IssueCandidates`) has all of these, so they are in the beta, built after the read routes above. `update`,
-`state`, `candidates` and the list's `sort` are built for GitHub (R15 PR3); the other four trackers keep them
-Planned, answer `422 unsupported` and say so in their own section below. Each write is
+`state` and `candidates` are built for GitHub (R15 PR3) and GitLab (R15 PR4), and the list's `sort` for GitHub
+only: every other tracker accepts it without ordering by it. The other three trackers keep all four Planned,
+answer `422 unsupported` and say so in their own section below. Each write is
 Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the updated `IssueDetail`.
 
 | Route | Person | Answers |
@@ -493,7 +517,8 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   description pencil and the label and assignee "+" controls: the page sends the full new set.
 - `state`: a name taken from `IssueDetail.states`, a list the detail then carries (name, category). A closed
   state takes an optional `close_reason`, `completed` (the default) or `not_planned`; a tracker that cannot say
-  `not_planned` closes as completed and the answer's `IssueState.close_reason` says what it stored. A
+  `not_planned` closes the issue with what it does store — `completed` where it stores a reason, `null` where it
+  stores none — and the answer's `IssueState.close_reason` says which. A
   `close_reason` on an open state, or a name the issue does not declare, is `400 invalid_input`.
 - `sort` defaults to `updated`; an unknown value is `400 invalid_input`. Only GitHub orders by it: the other trackers accept
   `sort=created` but still fetch by updated date, and the cut at 100 issues is made in that order. Every GitHub list is now a
@@ -528,7 +553,40 @@ Person-class and goes in `ENFORCED` and `PERSON_ROUTES`; a write answers the upd
   `gh` has no order flag. The order is part of the paging cursor's tag, so a cursor issued for one order is refused
   for the other.
 - **`states`** is `Some` for every GitHub detail and answers `[]` never: the three states above are always offered.
-  The other four trackers answer `None`, so the web app keeps their State row as Planned.
+  The other three trackers answer `None`, so the web app keeps their State row as Planned.
+
+### As built, GitLab (R15 PR4)
+
+- **`update`** is one `PUT /api/v4/projects/{path}/issues/{iid}` through the connection's own token, carrying only
+  the fields that are present: `title`, `description` (the body), `labels` as one comma-separated value and
+  `assignee_ids` as the whole new set (an empty list clears them). Core checks the title, the body, the labels and
+  the assignees before anything is sent. A GitLab label cannot be told apart inside that comma-separated value, so a
+  name with a comma is `400 invalid` with nothing sent. The read cuts a description at 64 KiB and a label name at 200
+  characters without saying so, so a body or a label name at that cut is also `400 invalid` with nothing sent: writing
+  the cut form back would shorten the description GitLab holds, or replace a longer label with its cut name. A body
+  write reads the stored description first and is `400 invalid` with nothing written when GitLab holds more than 64 KiB
+  of it, because then every copy of the description the app can hold is the cut form, so an edit anywhere in the text
+  it shows would drop what lies past the cut; the length check above runs before that read, and a description no longer
+  than the cut is written as before. The read also keeps only the first 100 labels and the first 50 assignees of an
+  issue, so a write that replaces either set reads the stored issue the same way and is `400 invalid` with nothing
+  written when it holds more: the set the app can show is only the first page of it, so a replacement built from that
+  read — however many entries were removed first — would drop the entries past the cut. The answer is the issue read
+  back, so it carries the comments and the states a detail read does.
+- **`state`** is one `PUT` of `state_event` (`close` or `reopen`). GitLab has one closed state and stores no reason
+  for it, so the detail offers `Open` and `Closed`; a close reason the person sends is not stored, and the answer's
+  `IssueState.close_reason` is `null`, which is what GitLab has. The detail is read before the write, so a name the
+  issue does not offer is `400 invalid` with nothing sent.
+- **`candidates`** answers the project's labels (`GET /projects/{path}/labels`, 100 a page) and its members, inherited
+  ones included (`GET /projects/{path}/members/all`, 100 a page): at most 200 of each, `truncated` when a full second
+  page may have more. A label carries its colour. A label whose name is 200 characters or more is left out rather than
+  cut, because the read cuts at that length and a write refuses a name that long (GitLab itself allows up to 255), so
+  `truncated` says the answer is partial. An assignee's `id` is the numeric member id, which is what the write
+  sends, and its `name` is the person's own when GitLab reports one. A login is kept at the 80 characters the app
+  keeps (`web/src/features/issues/edit.ts`), because the picker keys a person by that login and sends the id it looks
+  up by it: two members whose kept login is the same cannot be told apart, so neither is offered and `truncated` says
+  the answer is partial, rather than one of them standing for both and a write reassigning the issue to the other.
+- **`states`** is `Some` for every GitLab detail, its create answer and both write answers: `Open` and `Closed`. The
+  other three trackers answer `None` and keep their State row as Planned.
 
 ## Create, comment, react, templates and project binding (contract)
 
@@ -566,12 +624,11 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
   (`IssueDetail.reactions`).
 - `templates` (**built, PR2**): the tracker's own issue templates for the scope, read-only:
   `{ id, name, description?, body, labels[] }`, at most 50, bodies cut at 16 KiB. A tracker with none answers `[]`,
-  never `404`: GitHub, Forgejo and Azure DevOps answer none. GitHub and Forgejo have no issue-template endpoint,
-  only repository files (`.github/ISSUE_TEMPLATE` on GitHub, `.gitea`/`.forgejo` `ISSUE_TEMPLATE` on Forgejo) that a
-  later row reads through the contents API (a `.yml` form needs a YAML reader; a `.md` template does not):
-  [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has no issue template source at
-  all (its work item types are not templates).
-  GitLab and Linear answer their own.
+  never `404`. GitLab, Linear and GitHub answer their own; Forgejo and Azure DevOps answer none. GitHub and Forgejo
+  have no issue-template endpoint: their templates are repository files (`.github/ISSUE_TEMPLATE` on GitHub,
+  `.gitea`/`.forgejo` `ISSUE_TEMPLATE` on Forgejo) that the contents API lists (a `.yml` form needs a YAML reader; a
+  `.md` template does not). GitHub's markdown templates are read (#1548); Forgejo's files are not yet. Azure DevOps
+  has no issue template source at all (its work item types are not templates).
   Template text is the tracker's text and as untrusted as any other (see "Issue text is untrusted"); it only ever
   fills the person's own create form.
 - `bindProject` (**built, PR3**): stores which connected tracker and scope this project's issues come from, so the
@@ -624,16 +681,17 @@ user's `gh`, the others through their keychain token); a tracker that needs a ke
     word (all eight map); both directions first read the reader's own award, so a repeated add or a removal with
     nothing left writes nothing, and a removal deletes by the award's id. The answer carries each award name and
     count from the award list's first page of 100, and carries no counts (`null`) when that page is full, because
-    more may be behind it; a removal whose own-award lookup runs out of those pages answers `tracker_unavailable`
-    rather than pretending the award is gone.
+    more may be behind it; an add or a removal whose own-award lookup runs out of those pages answers
+    `tracker_unavailable` rather than pretending the award is not there.
   - **Forgejo**: create resolves each label name to the repository's label id first (a name the repository lacks is
     `400 invalid_input` before anything is sent) and writes the assignees as logins; comment answers the stored comment.
     React writes or deletes the `content` word on the issue's or a comment's reactions path (all eight map); both
     directions first read the reader's own reaction, so a repeated add writes one reaction and a removal with nothing
-    left writes nothing. The answer carries each content word and count from at most two pages of 50, and carries
-    no counts when the last page is full, because more may be behind it. Label names are resolved against the
-    repository's labels read up to five pages of 50, so a label beyond the first 250 is `400 invalid_input` even though it
-    exists.
+    left writes nothing, as far as those pages show: a reaction they do not carry while the last page is full may be
+    behind it, so both directions answer `tracker_unavailable` rather than guess, writing nothing. The answer carries
+    each content word and count from at most two pages of 50, and carries no counts when the last page is full, because
+    more may be behind it. Label names are resolved against the repository's labels read up to five pages of 50, so a
+    label beyond the first 250 is `400 invalid_input` even though it exists.
   - **Azure DevOps**: create picks the project's first of `Issue`, `Task` and `Bug` and sends the fields as a JSON
     Patch document (title, description HTML-escaped, labels as the semicolon-joined `System.Tags`, one assignee; more
     than one is `400 invalid_input`, as is a label with a semicolon in it); comment writes markdown and answers the stored
@@ -705,17 +763,45 @@ create form; nothing feeds it to an engine.
   form shows. At most 50 and 16 KiB of body. A failed label read is swallowed: the templates answer with empty labels
   rather than failing the read. [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548) tracks making that
   visible.
-- **GitHub, Forgejo, Azure DevOps**: answer `[]`. GitHub and Forgejo have **no issue-template endpoint**: their
-  templates are repository files under `.github/ISSUE_TEMPLATE` and `.gitea`/`.forgejo` `ISSUE_TEMPLATE`, which their
-  contents APIs can list cheaply (GitHub through the person's own `gh`); a later row reads them, with a YAML reader
-  for GitHub's `.yml` forms: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). Azure DevOps has
-  no issue template source at all (work item types are not templates). None of the three invents a template.
+- **GitHub**: the repository's markdown issue templates, read through the person's own `gh` (below). **Forgejo** has
+  **no issue-template endpoint** either: its templates are repository files under `.gitea`/`.forgejo`
+  `ISSUE_TEMPLATE`, which its contents API can list cheaply, and a later row reads them with a YAML reader for a
+  `.yml` form: [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548). **Azure DevOps** has no issue
+  template source at all (work item types are not templates). Neither invents a template.
 - **The web client reads this with the create dialog**: its Template row is drawn only when the read answers one, so
-  GitHub, Forgejo and Azure DevOps (all `[]`) draw no row. [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548)
-  tracks GitHub's and Forgejo's template files, and a later pass makes that picker visible for them.
-- **Not verified.** No real GitLab or Linear template list was read; both are tested against their local fake server,
-  and the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
-  `hasFormFields`) are from the APIs as understood. No real `orbynd` service run exercises the route.
+  Forgejo and Azure DevOps (both `[]`) draw no row while GitLab, Linear and GitHub draw theirs. Forgejo's template
+  files stay [#1548](https://github.com/orbyn-dev/orbyn-engineering/issues/1548).
+- **Not verified.** No real GitLab, Linear or GitHub template list was read; each is tested against its own fake, and
+  the shapes (`templates/issues` entries and content, Linear's `templates` connection, `templateData` and
+  `hasFormFields`, GitHub's contents listing and base64 body) are from the APIs as understood. No real `orbynd`
+  service run exercises the route.
+
+### As built (#1548, GitHub repository templates)
+
+GitHub has no issue-template endpoint, so `templates` for GitHub is the contents API read through the person's own
+`gh`: one `GET repos/{scope}/contents/.github/ISSUE_TEMPLATE` lists the folder and one
+`GET repos/{scope}/contents/{path}` per markdown file answers its body. A repository without that folder answers
+none (GitHub's 404 for a path it does not have is "no templates", never an error); any other refusal is the usual
+`tracker_not_connected`, `rate_limited`, `forbidden` or `tracker_unavailable`, and one template's own body read
+that answers 404 is `not_found`; the read answers nothing. At most 50 templates, each body cut to 16 KiB; one read
+is one listing plus one body per markdown template, and a templated create re-runs it.
+
+- **A markdown template is split at its front matter.** The block is the file's first lines, opened and closed by a
+  line that is exactly `---`; a file whose block never closes is all body. Only three keys are read, one
+  `key: value` line each: `name` (the template's name), `about` (its `description`) and `labels` (its label names,
+  split on commas). A value in matching quotes is unquoted. This is not a YAML reader: an indented continuation, a
+  list, an escape, a block-scalar header (`|`, `>` and their modifiers such as `|-`, `>+` or `|2`, with or without an
+  inline comment, whose text is on the following lines) and every other key are dropped rather than guessed, and a
+  `name` the file does not give falls back to the file's own name.
+- **A form is skipped.** `.yml` and `.yaml` issue forms are not read at all, because their shape needs a YAML
+  interpreter Orbyn does not carry and a form is not a body: a repository whose only templates are forms answers
+  none (`[]`), which is honest but is not what GitHub's site offers. `config.yml`, a folder and anything else in the
+  listing are skipped too.
+- **The id is the file's name** (`bug_report.md`): it is what `POST /api/issues/item/create` names as `template`, and
+  the same file answers the same id on every read.
+- **A body GitHub did not send as base64** (a file over 1 MB, `encoding: "none"`, or content that does not decode)
+  is skipped, so the list keeps the templates it can read; a `gh` failure is not skipped and answers the read.
+- Not verified: no real repository's templates were read, and no real `orbynd` service run exercises the route.
 
 ### As built (R15 PR3)
 
@@ -763,8 +849,8 @@ this row they were list, read, link, unlink and thread list; now `orbyn_issue_cr
   `POST /api/issues/item/state`: `state` is the `name` of one of the issue's `states` (the detail is read first),
   and `close_reason` is `completed` or `not_planned`, only for a closed state and `completed` when omitted. It
   answers the issue as the other issue tools do: the summary fields, the body cleaned of the framing markers and cut at
-  16 KiB, and the note. Only GitHub's edit is built, so in a project on another connected tracker the call answers the
-  route's `422 unsupported` refusal verbatim as a plain tool failure, and nothing is read or sent.
+  16 KiB, and the note. Only GitHub's and GitLab's edits are built, so in a project on another connected tracker the
+  call answers the route's `422 unsupported` refusal verbatim as a plain tool failure, and nothing is read or sent.
 - **Permission and approval.** All three writes are acting tools: each call goes through the run's own tool approval
   policy (`ActionKind::Tool`) exactly as the project and pull acting tools do, and no tool uses the person key. A Crew
   worker's allow list names no issue tool, so a worker is refused by default; the allow list was not widened.
@@ -787,25 +873,29 @@ Found in the post-merge review of the create, comment, react, template and bindi
 
 ## What T3 has that this does not (Planned)
 
-The event timeline, "involved/mentioned"
-filters and more than the first 50 comments. None is in the beta; each is a later row. Creating, commenting and
+The event timeline's state changes (the closed event and a reopen) are read for GitHub and carried in
+`IssueDetail.activity`; the rest of the timeline, the "involved/mentioned" filters and more than the first 50
+comments are not. Neither is in the beta; each is a later row. Creating, commenting and
 reactions are built for all five trackers (GitHub in R15 PR1, the rest in R15 PR1b), templates in R15 PR2 and
-project binding in R15 PR3. The edits, state moves and the list's order are built for GitHub (R15 PR3) and Planned
-for the other four, whose sections say so; `candidates` is a GitLab, Forgejo, Azure DevOps and Linear gap too. The
-engine-facing issue tools (N24) list, read, create, comment, set a state, link, unlink and list a thread's linked
-issues; a state move is GitHub-only, as the route is.
+project binding in R15 PR3. The edits and state moves are built for GitHub (R15 PR3) and GitLab (R15 PR4) and
+Planned for the other three, whose sections say so; the list's order is built for GitHub only, and `candidates` is a
+Forgejo, Azure DevOps and Linear gap too. The engine-facing issue tools (N24) list, read, create, comment, set a state,
+link, unlink and list a thread's linked issues; a state move is built for GitHub and GitLab, the two trackers whose
+edit is.
 
 ## Differences from the web side's guessed contract
 
-- **State changes** are specified above ("Issue writes and list controls") and built for GitHub: the detail carries
-  `states` (its own names and categories, `None` when the tracker offers none) and a closed issue's name tells a
-  completed close from a not-planned one. A tracker whose `states` is absent keeps the State row as Planned.
+- **State changes** are specified above ("Issue writes and list controls") and built for GitHub and GitLab: the
+  detail carries `states` (its own names and categories, `None` when the tracker offers none) and a closed issue's
+  name tells a completed close from a not-planned one where the tracker names them apart. A tracker whose `states`
+  is absent keeps the State row as Planned.
 - `IssueDetail` adds `states`; `IssueCandidates` (`labels`, `assignees`, `truncated`) is a new read, and `sort` a new
   list query value.
 
 - `get` takes the whole ref, `get(tracker, scope, key)`: a key is unique only within a scope.
 - `TrackerRow` adds `host` and `detail`; `connect` and `disconnect` are new calls (Person-class).
-- `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests` and `linked_threads`, and
+- `IssueSummary` adds `closed_at`; `IssueDetail` adds `linked_pull_requests`, `linked_threads` and
+  `activity` (the state changes its tracker's timeline reports, GitHub only), and
   `reactions` (the tracker's own words and counts, absent when it does not report them); `IssueList` adds
   `next_cursors`. A linked pull request adds `checks` (the pull request list's own counts, absent when the
   read did not answer).

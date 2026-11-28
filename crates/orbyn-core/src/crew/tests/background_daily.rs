@@ -19,6 +19,16 @@ fn project(w: &World) -> String {
     w.core.store.thread(&w.lead).unwrap().project_id
 }
 
+/// The one row a read returned, unpacked by pattern so a test never reads a place in the list: a read that returns
+/// none or several fails here with the rows attached.
+fn one<'a, T: std::fmt::Debug>(rows: &'a [T], what: &str) -> &'a T {
+    match rows {
+        [row] => row,
+        [] => panic!("no {what}: {rows:?}"),
+        _ => panic!("{} {what}s where one is expected: {rows:?}", rows.len()),
+    }
+}
+
 /// A stored crew with a daily budget, on. The run budget is wide enough that only the daily one can stop a run here.
 async fn crew_daily(w: &World, name: &str, runs: u32, turns: u32) -> String {
     let body: wire::BackgroundCrewCreate = serde_json::from_value(json!({
@@ -75,9 +85,12 @@ fn good() -> Script {
     })
 }
 
+/// The crew's one run, unpacked after a count of one: the read is newest first, and a test that starts a run waits
+/// on that one, so no place in the list is read.
 fn run_of(w: &World, crew: &str) -> wire::BackgroundRun {
     let page = crate::crew::Page::new(None, None).unwrap();
-    w.core.background_runs(crew, page).unwrap().runs.remove(0)
+    let runs = w.core.background_runs(crew, page).unwrap().runs;
+    one(&runs, "run of the crew").clone()
 }
 
 async fn until_run(w: &World, crew: &str, state: wire::BackgroundRunState) -> wire::BackgroundRun {
@@ -134,7 +147,8 @@ async fn a_run_is_cancelled_at_the_daily_cap_and_shows_what_it_spent() {
 
     // The task stopped with it, and the ledger holds one row: this run, today, one turn of alpha.
     let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
-    assert_eq!(w.task(&tasks[0].0.id).state, "stopped");
+    let (task, _) = one(&tasks, "task of the stopped run");
+    assert_eq!(w.task(&task.id).state, "stopped");
     let rows: i64 = w
         .core
         .store
@@ -146,6 +160,7 @@ async fn a_run_is_cancelled_at_the_daily_cap_and_shows_what_it_spent() {
         )
         .unwrap();
     assert_eq!(rows, 1, "the turn is on the engine's day");
+    // The audits read is oldest first, so the last spend row is the newest: the turn just counted.
     assert!(
         audits(&w, "crew.background.daily.spend")
             .last()
@@ -192,14 +207,12 @@ async fn a_new_event_is_refused_with_the_reset_time_and_never_queued() {
 
     // The audit row reads the same and names the engine.
     let refused = audits(&w, "crew.background.daily.refused");
-    assert_eq!(refused.len(), 1, "{refused:?}");
+    let refused = one(&refused, "refused event's audit row");
     assert!(
-        refused[0]["reason"]
+        refused["reason"]
             .as_str()
             .is_some_and(|reason| reason == "daily budget spent: alpha")
-            && refused[0]["resets_at"]
-                .as_str()
-                .is_some_and(|at| at == reset),
+            && refused["resets_at"].as_str().is_some_and(|at| at == reset),
         "{refused:?}"
     );
 
@@ -268,7 +281,8 @@ async fn a_turn_that_reaches_the_cap_but_passes_ends_the_run_needs_review() {
     assert_eq!(done.stop_reason, None, "{done:?}");
     assert!(done.review_waiting);
     let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
-    assert_eq!(w.task(&tasks[0].0.id).state, "passed");
+    let (task, _) = one(&tasks, "task of the passed run");
+    assert_eq!(w.task(&task.id).state, "passed");
 
     // The next event is the one the daily budget refuses.
     let error = w
@@ -396,13 +410,8 @@ async fn a_late_turn_that_cannot_be_counted_leaves_the_ended_run_and_its_task_al
     let id = crew_daily(&w, "Late and uncountable", 5, 100).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
-    let task = w
-        .core
-        .store
-        .crew_tasks_in_crew(&run.id)
-        .unwrap()
-        .remove(0)
-        .0;
+    let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
+    let (task, _) = one(&tasks, "task of the ended run");
     let worker = w
         .core
         .store
@@ -422,7 +431,7 @@ async fn a_late_turn_that_cannot_be_counted_leaves_the_ended_run_and_its_task_al
         )
         .unwrap();
     // The count fails, but the run is over: best effort, nothing stops and nothing changes.
-    assert!(w.core.crew_background_turn_ended(&task, &worker).is_ok());
+    assert!(w.core.crew_background_turn_ended(task, &worker).is_ok());
     assert_eq!(
         (w.task(&task.id).state, results(&w), run_of(&w, &id)),
         before
@@ -435,13 +444,8 @@ async fn a_turn_that_ends_after_its_run_still_counts_for_the_engines_day() {
     let id = crew_daily(&w, "Late turn", 5, 100).await;
     let run = w.core.crew_background_run_now(&id, "user").await.unwrap();
     let done = until_run(&w, &id, wire::BackgroundRunState::NeedsReview).await;
-    let task = w
-        .core
-        .store
-        .crew_tasks_in_crew(&run.id)
-        .unwrap()
-        .remove(0)
-        .0;
+    let tasks = w.core.store.crew_tasks_in_crew(&run.id).unwrap();
+    let (task, _) = one(&tasks, "task of the run");
     let worker = w
         .core
         .store
@@ -462,7 +466,7 @@ async fn a_turn_that_ends_after_its_run_still_counts_for_the_engines_day() {
             .unwrap()
     };
     let counted = day_turns(&w);
-    w.core.crew_background_turn_ended(&task, &worker).unwrap();
+    w.core.crew_background_turn_ended(task, &worker).unwrap();
     // The run is over, so its own total stays; the engine's day still grows by the turn.
     assert_eq!(day_turns(&w), counted + 1);
     assert_eq!(run_of(&w, &id).turns_spent, done.turns_spent);

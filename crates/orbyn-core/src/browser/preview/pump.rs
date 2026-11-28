@@ -3,7 +3,10 @@
 use super::crash::{Crashes, bring_back};
 use super::favicon::{FAVICON, favicon_url};
 use super::lock;
-use super::{FRAME_EVERY, FRAME_QUALITY, HISTORY_TICKS, PROFILE_GRACE, RECORDING_SAFE_FOCUS, Tab};
+use super::{
+    FRAME_EVERY, FRAME_QUALITY, HISTORY_TICKS, PROFILE_REMOVAL_DEADLINE, PROFILE_REMOVAL_RETRY,
+    RECORDING_SAFE_FOCUS, Tab,
+};
 use crate::browser::preview_bridge;
 use crate::browser::preview_recording::MAX_JPEG;
 use serde_json::json;
@@ -57,6 +60,23 @@ async fn refresh_metadata(tab: &Tab) {
     }
 }
 
+/// Takes a closed tab's profile away. The browser that used it was stopped a moment
+/// before, so the system can still refuse to delete files it has not released; a refusal
+/// is retried inside the one-second deadline other owned folders get, and one that
+/// outlasts it is returned so the caller can log its path and OS error. A profile left
+/// behind is a folder nothing else ever collects.
+pub(super) async fn remove_profile(profile: &std::path::Path) -> std::io::Result<()> {
+    let deadline = Instant::now() + PROFILE_REMOVAL_DEADLINE;
+    loop {
+        match std::fs::remove_dir_all(profile) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if Instant::now() >= deadline => return Err(error),
+            Err(_) => tokio::time::sleep(PROFILE_REMOVAL_RETRY).await,
+        }
+    }
+}
+
 /// Polls frames while anyone wants them. A page that did not change sends nothing,
 /// and a tab that stops answering just skips that frame.
 pub(super) async fn pump(tab: Arc<Tab>) {
@@ -76,9 +96,18 @@ pub(super) async fn pump(tab: Arc<Tab>) {
                 }
                 let (profile, keep) = (tab.profile.clone(), tab.keep_profile);
                 let files = tab.files.clone();
+                // Dropping the last handle stops the browser; its files are only free
+                // once the process has gone, which is why the removal is retried.
                 drop(tab);
-                tokio::time::sleep(PROFILE_GRACE).await;
-                if !keep { let _ = std::fs::remove_dir_all(profile); }
+                if !keep
+                    && let Err(error) = remove_profile(&profile).await
+                {
+                    tracing::warn!(
+                        %error,
+                        path = %profile.display(),
+                        "could not remove a closed preview tab's profile"
+                    );
+                }
                 let _ = std::fs::remove_dir_all(files);
                 return;
             }

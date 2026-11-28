@@ -11,6 +11,22 @@ fn threads(w: &super::harness::World) -> usize {
     w.core.store.list_threads(None, true).unwrap().len()
 }
 
+/// The worker's one prompt saying a check failed, found by the sentence that starts it rather than
+/// by its place among the thread's turns: a missing or repeated one fails here.
+fn failure_prompt(prompts: &[String]) -> &str {
+    let mut failed = prompts
+        .iter()
+        .filter(|prompt| prompt.contains("Verification failed."));
+    let prompt = failed
+        .next()
+        .unwrap_or_else(|| panic!("the worker was not told the check failed: {prompts:?}"));
+    assert!(
+        failed.next().is_none(),
+        "the worker was told the check failed more than once: {prompts:?}"
+    );
+    prompt
+}
+
 /// H3: a worker is refused every tool that makes a thread or a schedule, or reads another
 /// thread, so it cannot make an unmarked thread that would count as a lead.
 #[tokio::test]
@@ -78,7 +94,8 @@ async fn a_worker_that_edits_the_checks_runs_none_and_is_not_told_which() {
         "no check ran on the worker's tampered checkout"
     );
     let prompts = w.sent_to(&w.worker(&id));
-    assert!(prompts[1].contains("may not modify"));
+    let told = failure_prompt(&prompts);
+    assert!(told.contains("may not modify"), "{told}");
     for prompt in &prompts {
         assert!(
             !prompt.contains("hack.txt") && !prompt.contains("tests/"),
@@ -123,7 +140,8 @@ async fn the_checks_wait_for_the_workers_turn_to_end() {
     w.until_state(&id, "passed").await;
     // The late file was seen by the first check, which failed, so the worker was told.
     let prompts = w.sent_to(&w.worker(&id));
-    assert!(prompts[1].contains("docs/late.txt"), "{}", prompts[1]);
+    let told = failure_prompt(&prompts);
+    assert!(told.contains("docs/late.txt"), "{told}");
 }
 
 /// A task whose time budget ends is stopped even in the middle of a turn.
@@ -138,7 +156,13 @@ async fn the_budget_ends_a_task_in_the_middle_of_a_turn() {
         (task.state.as_str(), task.stop_reason.as_deref()),
         ("stopped", Some("budget"))
     );
-    let result = w.core.store.crew_results(&id).unwrap().pop().unwrap();
+    let results = w.core.store.crew_results(&id).unwrap();
+    assert_eq!(
+        results.len(),
+        1,
+        "one result for the task the budget stopped"
+    );
+    let result = results.first().expect("the budget-stopped task's result");
     assert!(result.r#final);
     // Once it has ended, a late timer changes nothing.
     w.core.crew_budget_ended(&id);
@@ -168,7 +192,11 @@ async fn a_failing_check_that_prints_its_own_command_leaks_nothing_to_the_worker
     let worker = w.worker(&id);
     let prompts = w.sent_to(&worker);
     // The check really did print its command, and the worker was told only that it failed.
-    assert!(prompts[1].contains("exited with 3") && prompts[1].contains("[check]"));
+    let told = failure_prompt(&prompts);
+    assert!(
+        told.contains("exited with 3") && told.contains("[check]"),
+        "{told}"
+    );
     let member = w.core.store.crew_run(&id).unwrap().unwrap().member;
     let readable = [
         prompts.join("\n"),
@@ -301,6 +329,17 @@ fn a_verification_gets_what_is_left_of_the_budget() {
     assert_eq!(budget_left(start, 30, at + 30 * 60 + 5).as_secs(), 0);
 }
 
+/// The task a fixture made for `state`, found by what its fixture was for and not by the order
+/// the test made them in: a missing or second one fails here.
+fn made_for<'a>(made: &'a [(&str, String)], state: &str) -> &'a str {
+    let mut rows = made.iter().filter(|row| row.0 == state);
+    let row = rows
+        .next()
+        .unwrap_or_else(|| panic!("no task was made for {state}: {made:?}"));
+    assert!(rows.next().is_none(), "one task made for {state}: {made:?}");
+    &row.1
+}
+
 /// A restart leaves tasks `running` or `verifying` with nothing driving them. The next start
 /// verifies the one that was being checked and resumes the builder whose worker is gone, once.
 #[tokio::test]
@@ -331,6 +370,7 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
         }
     };
     let mut made = Vec::new();
+    // Each task is kept with the fixture it was made for, so the lookups below never read a place.
     for (n, state) in [(1, "verifying"), (2, "running")] {
         let s = stamper();
         let brief = s
@@ -375,14 +415,15 @@ async fn a_restart_picks_up_tasks_left_running_or_verifying() {
                 .begin_crew_verification(&task.id, "gone", None)
                 .unwrap();
         }
-        made.push(task.id);
+        made.push((state, task.id));
     }
     w.core.recover_crew_tasks().await;
-    w.until_state(&made[0], "passed").await;
+    w.until_state(made_for(&made, "verifying"), "passed").await;
     // The builder whose worker is gone gets the one resume its life has: it stays running, the lost
     // turn counts (the second restart is `crew::tests::resume`).
-    let run = w.core.store.crew_run(&made[1]).unwrap().unwrap();
-    assert_eq!(w.task(&made[1]).state, "running");
+    let running = made_for(&made, "running");
+    let run = w.core.store.crew_run(running).unwrap().unwrap();
+    assert_eq!(w.task(running).state, "running");
     assert_eq!(run.resume_count, 1);
 }
 

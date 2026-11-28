@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use super::*;
 use crate::app::CoreConfig;
 use crate::credentials::{ENV_DEV_SERVICE, EnvSets, Failure, MemoryBackend};
+use crate::library::params::{Shell, quote};
 use crate::redaction::LiteralMasker;
 use crate::store::{NewProject, NewThread};
 use crate::testing::TempDir;
@@ -832,9 +833,13 @@ fn rendering_checks_required_choices_paths_and_unknown_values() {
         code(&render(&[("mode", "medium")]).unwrap_err()),
         (400, "invalid_input")
     );
+    // A value is quoted for the shell this platform runs (params.rs): `'fast'` under a POSIX
+    // shell, `"fast"` under `cmd.exe`. The expectation comes from that one rule, so it cannot
+    // drift from the product.
+    let quoted = |value: &str| quote(value, Shell::native()).expect("the test values are quotable");
     assert_eq!(
         render(&[("mode", "fast")]).unwrap().command,
-        "run 'fast' 'src'  --"
+        format!("run {} {}  --", quoted("fast"), quoted("src"))
     );
     for bad in ["../x", "a/../b", "/etc/passwd", "-rf", "C:\\x", "~/x"] {
         assert_eq!(

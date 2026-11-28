@@ -484,8 +484,10 @@ async fn a_quiet_console_with_a_question_appends_the_waiting_event() {
     let dir = TempDir::new();
     let (core, thread_id) = core_with_thread(&dir);
     let spec = PtySpec {
-        program: console_program(),
-        args: console_args(),
+        // A pty hands the program to `CreateProcessW` as the application name, which a bare
+        // `cmd.exe` is not found by: the path is resolved first, as the twin test does.
+        program: console_program_absolute(),
+        args: console_args_blocking(),
         cwd: dir.path().to_owned(),
         cols: 80,
         rows: 24,
@@ -526,7 +528,10 @@ async fn a_quiet_console_with_a_question_appends_the_waiting_event() {
         }
         assert!(
             Instant::now() < deadline,
-            "the quiet question should become an event"
+            "the quiet question should become an event; scrollback: {:?}",
+            core.terminals
+                .named(&thread_id, "engine-console")
+                .map(|session| String::from_utf8_lossy(&session.scrollback()).into_owned())
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
@@ -553,22 +558,9 @@ fn console_program() -> std::path::PathBuf {
     "/bin/sh".into()
 }
 
-#[cfg(unix)]
-fn console_args() -> Vec<std::ffi::OsString> {
-    vec!["-c".into(), "printf 'Continue? (y/N)\\n'; sleep 30".into()]
-}
-
 #[cfg(windows)]
 fn console_program() -> std::path::PathBuf {
     "cmd.exe".into()
-}
-
-#[cfg(windows)]
-fn console_args() -> Vec<std::ffi::OsString> {
-    vec![
-        "/C".into(),
-        "echo Continue? (y/N) & ping -n 31 127.0.0.1 >nul".into(),
-    ]
 }
 
 #[tokio::test]
@@ -614,6 +606,122 @@ async fn the_redactor_runs_before_the_event_is_appended() {
             seq: events[0].seq,
         }
     );
+}
+
+/// The setting is consulted while the detector runs, not only when the console opens
+/// (#1764): turning it off before the first report keeps the item away, and turning it
+/// back on reports the same question, so the console really was waiting and only the
+/// setting held the item back.
+#[tokio::test]
+async fn turning_the_setting_off_stops_new_detection_on_an_open_console() {
+    let dir = TempDir::new();
+    let (core, thread_id) = core_with_thread(&dir);
+    let spec = PtySpec {
+        program: console_program_absolute(),
+        args: console_args_blocking(),
+        cwd: dir.path().to_owned(),
+        cols: 80,
+        rows: 24,
+        engine: true,
+    };
+    core.terminals
+        .open_named(
+            &thread_id,
+            "engine-console",
+            TerminalLabel {
+                title: Some("Fake console".into()),
+                ..TerminalLabel::default()
+            },
+            spec,
+        )
+        .unwrap();
+    let session = core.terminals.named(&thread_id, "engine-console").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !String::from_utf8_lossy(&session.scrollback()).contains("(y/N)") {
+        assert!(
+            Instant::now() < deadline,
+            "the fake console should print its question"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // Off before the watcher's first tick could report the question.
+    set_enabled(&core, false);
+    let watch = Watch {
+        thread_id: thread_id.clone(),
+        terminal_id: "engine-console".into(),
+        terminal_title: "Fake console".into(),
+        engine: "claude".into(),
+        quiet: Duration::from_millis(100),
+        redactor: Arc::new(Redactor::default()),
+        hub: core.attention.clone(),
+        store: core.store.clone(),
+        shell: core.shell.clone(),
+        session,
+    };
+    let task = tokio::spawn(run(watch));
+    let off = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < off {
+        assert_eq!(
+            attention_events(&core, &thread_id),
+            0,
+            "the setting is off, so no item is reported"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    set_enabled(&core, true);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while attention_events(&core, &thread_id) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "with the setting back on the question becomes an item"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let _ = core.terminals.close_one(&thread_id, "engine-console");
+    task.abort();
+}
+
+fn set_enabled(core: &Core, on: bool) {
+    let values = BTreeMap::from([(ENABLED_PREFERENCE.to_owned(), json!(on))]);
+    core.set_preferences(None, &values).unwrap();
+}
+
+/// The fake console's program as the absolute path a new pty is spawned from.
+fn console_program_absolute() -> std::path::PathBuf {
+    let program = console_program();
+    crate::host::process::resolve(&program.to_string_lossy())
+        .map_or(program, |command| command.program)
+}
+
+/// A console that prints one question and then waits inside the shell, with no
+/// external program to find on `PATH`.
+#[cfg(unix)]
+fn console_args_blocking() -> Vec<std::ffi::OsString> {
+    vec![
+        "-c".into(),
+        "printf 'Continue? (y/N)\\n'; read answer".into(),
+    ]
+}
+
+#[cfg(windows)]
+fn console_args_blocking() -> Vec<std::ffi::OsString> {
+    vec![
+        "/D".into(),
+        "/C".into(),
+        "echo Continue? (y/N) & pause >nul".into(),
+    ]
+}
+
+/// How many attention items a thread's log holds.
+fn attention_events(core: &Core, thread_id: &str) -> usize {
+    core.store
+        .events_after(thread_id, 0, 50)
+        .unwrap()
+        .into_iter()
+        .filter(
+            |event| matches!(&event.event, AgUiEvent::Custom { name, .. } if name == EVENT_NAME),
+        )
+        .count()
 }
 
 /// Where no echo mode can be read (Windows ConPTY), a `Password:` line is a plain question and

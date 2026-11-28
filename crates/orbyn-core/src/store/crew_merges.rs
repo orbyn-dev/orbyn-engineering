@@ -229,6 +229,39 @@ impl Store {
             .collect())
     }
 
+    /// The entries a person has to release before their task can merge (state `waiting`), in the order they were queued.
+    /// `crew` and `project` narrow the query itself, so a read scoped to one crew or one repository never loads another's.
+    pub fn crew_waiting_merge_entries(
+        &self,
+        crew: Option<&str>,
+        project: Option<&str>,
+    ) -> Result<Vec<MergeEntry>> {
+        // The joins only answer the repository filter; a device-wide or one-crew read pays for neither.
+        let mut sql = String::from("SELECT q.* FROM crew_merge_queue q");
+        if project.is_some() {
+            sql.push_str(
+                " LEFT JOIN crew_runs r ON r.task_id = q.task_id
+                  LEFT JOIN threads t ON t.id = r.lead_thread_id",
+            );
+        }
+        sql.push_str(" WHERE q.state = 'waiting'");
+        let mut args: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(crew) = crew {
+            sql.push_str(" AND q.crew_id = ?");
+            args.push(rusqlite::types::Value::Text(crew.to_owned()));
+        }
+        if let Some(project) = project {
+            sql.push_str(" AND t.project_id = ?");
+            args.push(rusqlite::types::Value::Text(project.to_owned()));
+        }
+        sql.push_str(" ORDER BY q.queued_unix, q.rowid");
+        let conn = self.reader();
+        let mut statement = conn.prepare(&sql)?;
+        Ok(statement
+            .query_map(rusqlite::params_from_iter(args.iter()), entry_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// One page of the queue across targets, in the order queued, with the number of entries in the given states.
     pub fn merge_entries_page(
         &self,
@@ -440,6 +473,27 @@ impl Store {
         )?;
         Ok(statement
             .query_map((project_id, since_unix), merge_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Every project's merges merged at or after `since_unix`: `(project_id, merges)`, counted in SQL.
+    ///
+    /// The project menu's counts are about every repository at once, and this is the one query for
+    /// them: a count per project never reads a merge's own records, and a device with a long merge
+    /// history never hands the window's rows back to be counted one by one. A merge whose task is
+    /// no longer joined to a lead thread is in no project's count, exactly as the per-project read
+    /// leaves it out of that project's answer.
+    pub fn crew_merge_counts_since(&self, since_unix: i64) -> Result<Vec<(String, u32)>> {
+        let conn = self.reader();
+        let mut statement = conn.prepare(
+            "SELECT t.project_id, COUNT(*) FROM crew_merges m
+             JOIN crew_runs r ON r.task_id = m.task_id
+             JOIN threads t ON t.id = r.lead_thread_id
+             WHERE m.merged_unix >= ?1
+             GROUP BY t.project_id ORDER BY t.project_id",
+        )?;
+        Ok(statement
+            .query_map([since_unix], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 

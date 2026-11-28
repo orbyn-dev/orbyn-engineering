@@ -955,7 +955,7 @@ async fn target_status(root: &Path, project: &orbyn_contracts::Project) -> Targe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{TempDir, library, run_git};
+    use crate::testing::{TempDir, library, link_dir, run_git};
 
     async fn service(dir: &TempDir) -> Arc<Workspace> {
         let data = dir.path().join("data");
@@ -1046,13 +1046,49 @@ mod tests {
         assert!(matches!(incomplete, Err(CoreError::WorkspaceRefused(_))));
     }
 
-    #[cfg(unix)]
     #[tokio::test]
-    async fn symlinked_roots_and_targets_are_refused() {
+    async fn linked_roots_and_targets_are_refused() {
         let dir = TempDir::new();
         let path = library(&dir.path().join("mine"));
         let link = dir.path().join("link");
-        std::os::unix::fs::symlink(&path, &link).unwrap();
+        link_dir(&path, &link);
+        let workspace = service(&dir).await;
+        let Err(CoreError::WorkspaceRefused(reason)) = workspace.setup(adopt(&link)).await else {
+            panic!("a linked library root was not refused");
+        };
+        assert_eq!(
+            reason,
+            format!(
+                "{} is a symlink, which is not supported here.",
+                link.display()
+            ),
+            "the link itself is named, not only refused"
+        );
+
+        std::fs::create_dir_all(path.join("repo")).unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        run_git(&outside, &["init", "-q"]);
+        let escape = path.join("repo/escape");
+        link_dir(&outside, &escape);
+        // A link is followed to its real folder, and the real folder is what counts.
+        assert_eq!(
+            check_target(&path, &escape).await.unwrap(),
+            canonicalize(&outside).unwrap()
+        );
+    }
+
+    /// The Windows twin of the symlinked root and target. A junction is a directory link that
+    /// needs no symbolic-link privilege, and a reparse point is refused like a symlink, so the
+    /// link's own path is never the registered root. A junction under `repo/` is followed to its
+    /// real folder, and the real folder is what the boundary checks.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn junctioned_roots_are_refused_and_targets_are_followed() {
+        let dir = TempDir::new();
+        let path = library(&dir.path().join("mine"));
+        let link = dir.path().join("link");
+        crate::testing::junction(&link, &path);
         let workspace = service(&dir).await;
         assert!(matches!(
             workspace.setup(adopt(&link)).await,
@@ -1063,16 +1099,56 @@ mod tests {
         let outside = dir.path().join("outside");
         std::fs::create_dir_all(&outside).unwrap();
         run_git(&outside, &["init", "-q"]);
-        let escape = path.join("repo/escape");
-        std::os::unix::fs::symlink(&outside, &escape).unwrap();
-        // A link is followed to its real folder, and the real folder is what counts.
+        let escape = path.join("repo").join("escape");
+        crate::testing::junction(&escape, &outside);
         assert_eq!(
             check_target(&path, &escape).await.unwrap(),
             canonicalize(&outside).unwrap()
         );
     }
 
-    #[cfg(unix)]
+    /// A fixture can sit under a `TEMP` path whose name holds `&`, which cmd.exe splits a bare
+    /// argument on: the junction helper must quote the paths it is given.
+    #[test]
+    fn a_link_is_created_under_a_folder_named_with_a_shell_character() {
+        let dir = TempDir::new();
+        let holder = dir.path().join("a&b");
+        let target = holder.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("probe.txt"), "here\n").unwrap();
+        let link = holder.join("link");
+        link_dir(&target, &link);
+        assert_eq!(
+            std::fs::read_to_string(link.join("probe.txt")).unwrap(),
+            "here\n",
+            "the link names the target folder"
+        );
+        crate::testing::unlink_dir(&link);
+    }
+
+    /// cmd.exe also expands `%NAME%` inside a quoted argument, which `mklink` needs, so a fixture under
+    /// `a%USERNAME%b` would be linked as `a<user>b`: the junction helper must hand the paths over so that
+    /// nothing expands them.
+    #[test]
+    fn a_link_is_created_under_a_folder_named_with_a_percent_expansion() {
+        let dir = TempDir::new();
+        let holder = dir.path().join("a%USERNAME%b");
+        let target = holder.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("probe.txt"), "here\n").unwrap();
+        // The name the shell would expand to, so a link that expands is caught instead of only failing to link.
+        let expanded = format!("a{}b", std::env::var("USERNAME").unwrap_or_default());
+        std::fs::create_dir_all(dir.path().join(expanded)).unwrap();
+        let link = holder.join("link");
+        link_dir(&target, &link);
+        assert_eq!(
+            std::fs::read_to_string(link.join("probe.txt")).unwrap(),
+            "here\n",
+            "the link names the target folder, not an expanded name"
+        );
+        crate::testing::unlink_dir(&link);
+    }
+
     #[tokio::test]
     async fn the_library_is_refused_from_every_side() {
         let dir = TempDir::new();
@@ -1093,19 +1169,26 @@ mod tests {
         let nested = resolve_project(&root, &repo.join("app")).await.unwrap();
         assert_eq!(nested.path, repo.join("app"));
 
-        for bad in [
-            root.clone(),
-            root.join("skills/how/inner"),
-            repo.clone(),
-            dir.path().to_path_buf(),
+        for (bad, expected) in [
+            (
+                root.clone(),
+                "This is the skills library, or a folder containing it.",
+            ),
+            (
+                root.join("skills/how/inner"),
+                "This folder is inside the skills library.",
+            ),
+            (repo.clone(), "This folder is inside the skills library."),
+            (
+                dir.path().to_path_buf(),
+                "This is the skills library, or a folder containing it.",
+            ),
         ] {
-            assert!(
-                matches!(
-                    resolve_project(&root, &bad).await,
-                    Err(CoreError::WorkspaceRefused(_))
-                ),
-                "{bad:?}"
-            );
+            let Err(CoreError::WorkspaceRefused(reason)) = resolve_project(&root, &bad).await
+            else {
+                panic!("{bad:?} was not refused");
+            };
+            assert_eq!(reason, expected, "{bad:?}");
         }
 
         // A folder in a repository keeps the selected physical scope.
@@ -1117,12 +1200,23 @@ mod tests {
         let plain = dir.path().join("plain");
         std::fs::create_dir_all(&plain).unwrap();
         assert!(!resolve_project(&root, &plain).await.unwrap().is_git);
-        assert!(resolve_project(&root, Path::new("relative")).await.is_err());
+        let Err(CoreError::WorkspaceRefused(reason)) =
+            resolve_project(&root, Path::new("relative")).await
+        else {
+            panic!("a relative path was not refused");
+        };
+        assert_eq!(reason, "Use an absolute path.");
 
         // A link into the library is the library.
         let link = dir.path().join("link");
-        std::os::unix::fs::symlink(&root, &link).unwrap();
-        assert!(resolve_project(&root, &link).await.is_err());
+        link_dir(&root, &link);
+        let Err(CoreError::WorkspaceRefused(reason)) = resolve_project(&root, &link).await else {
+            panic!("a link to the library was not refused");
+        };
+        assert_eq!(
+            reason,
+            "This is the skills library, or a folder containing it."
+        );
 
         // A linked worktree of the library is the library's history elsewhere.
         run_git(&root, &["config", "user.email", "t@example.com"]);
@@ -1139,7 +1233,11 @@ mod tests {
                 worktree.to_str().unwrap(),
             ],
         );
-        assert!(resolve_project(&root, &worktree).await.is_err());
+        let Err(CoreError::WorkspaceRefused(reason)) = resolve_project(&root, &worktree).await
+        else {
+            panic!("a worktree of the library was not refused");
+        };
+        assert_eq!(reason, "This is a worktree of the skills library.");
 
         // An external clone's worktree parked under repo/ keeps its Git data outside.
         let external = dir.path().join("external");
@@ -1153,10 +1251,10 @@ mod tests {
             &external,
             &["worktree", "add", "-q", linked.to_str().unwrap()],
         );
-        assert!(matches!(
-            resolve_project(&root, &linked).await,
-            Err(CoreError::WorkspaceRefused(_))
-        ));
+        let Err(CoreError::WorkspaceRefused(reason)) = resolve_project(&root, &linked).await else {
+            panic!("a worktree with Git data outside the workspace was not refused");
+        };
+        assert_eq!(reason, "This checkout's Git data is outside the workspace.");
     }
 
     #[tokio::test]

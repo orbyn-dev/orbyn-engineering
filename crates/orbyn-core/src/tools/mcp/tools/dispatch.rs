@@ -208,6 +208,12 @@ impl Core {
                 return Err(CoreError::PolicyDenied(reason));
             }
         }
+        // The device tools carry the deepest chain on the tool surface, so they run before the
+        // general dispatcher's large frame exists, and their own future lives on the heap: a
+        // debug build's transport call must fit a normal thread's stack (#1515).
+        if is_device_tool(name) {
+            return Box::pin(self.run_device_tool(binding, name, args)).await;
+        }
         self.run_orbyn_tool(binding, name, args).await
     }
 
@@ -1029,12 +1035,25 @@ impl Core {
                 self.project_task(binding, id)?;
                 json!({ "thread_id": self.run_task(id).await? })
             }
+            other => return Err(CoreError::NotFound(format!("tool {other}"))),
+        })
+    }
+
+    /// The device tools' own dispatch, kept out of [`Self::run_orbyn_tool`]'s match: the
+    /// screenshot's device chain is the deepest future on the tool surface, and a debug build's
+    /// frame for the general dispatcher (about 450 KiB here) must not sit under it (#1515).
+    async fn run_device_tool(
+        &self,
+        binding: &McpBinding,
+        name: &str,
+        args: &Value,
+    ) -> Result<Value> {
+        Ok(match name {
             "orbyn_device_list" => {
                 // Rule 6: the row goes before the effect it describes, so it carries fixed
                 // values only; the list's counts are the answer's, not the audit row's.
                 self.audit_device_tool(binding, "device.tool.list", "", json!({}))?;
-                // Boxed: the device call's future is deep and a debug test thread's stack is
-                // small, so it lives on the heap (the #1515 follow-up).
+                // Boxed: the device call's future is deep, so it lives on the heap.
                 let list = Box::pin(self.devices.list()).await;
                 serde_json::to_value(&list)?
             }
