@@ -845,6 +845,47 @@ async fn a_markdown_template_carries_its_front_matter_and_its_body() {
 }
 
 #[tokio::test]
+async fn a_template_whose_name_is_a_block_header_uses_its_file_name() {
+    // docs/issues.md, "As built (#1548)": a `|`/`>` header opens a block of following lines that this reader does not
+    // read, so it is not a value. Such a `name` falls back to the file's own name, and an `about` block gives no
+    // description, instead of naming the template `|` and describing it as `>-`.
+    let fixture = Arc::new(
+        |_forge: Forge, _cwd: &Path, args: &[&str], _input: Option<&str>| -> Result<String> {
+            let args = strings(args);
+            if args == strings(&TEMPLATE_DIR_ARGS) {
+                return Ok(contents_listing(&[("block.md", "file")]).to_string());
+            }
+            assert_eq!(
+                args.get(1).map(String::as_str),
+                Some("repos/acme/app/contents/.github/ISSUE_TEMPLATE/block.md"),
+                "the one markdown file is read"
+            );
+            Ok(contents_file(
+                ".github/ISSUE_TEMPLATE/block.md",
+                "---\nname: |\n  The whole name\nabout: >-\n  A folded description\n---\nBody\n",
+            )
+            .to_string())
+        },
+    );
+    let templates =
+        with_crew_input_fixture(fixture, async { github().templates("acme/app").await })
+            .await
+            .unwrap();
+    assert_eq!(templates.len(), 1, "the one markdown template is read");
+    let one = &templates[0];
+    assert_eq!(one.id, "block.md", "the id is still the file name");
+    assert_eq!(
+        one.name, "block.md",
+        "a rejected `name` falls back to the file's own name, never the `|` header"
+    );
+    assert_eq!(
+        one.description, None,
+        "an `about: >-` header is not a description"
+    );
+    assert_eq!(one.body, "Body\n", "the block is not the body");
+}
+
+#[tokio::test]
 async fn a_markdown_template_below_fifty_forms_and_the_config_is_still_read() {
     // The 50 places are for templates, not for listed entries: a folder that starts with its forms, its config and a
     // folder still answers the markdown templates below them, and one file is read per markdown template (#1548).

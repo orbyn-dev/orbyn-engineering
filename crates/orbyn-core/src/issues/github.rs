@@ -902,9 +902,34 @@ fn unquoted(value: &str) -> Option<&str> {
     (!escaped).then_some(inner)
 }
 
-/// One front matter value as a line of at most `chars` characters, or `None` when it is empty or carries an escape
-/// this reader does not decode.
+/// True for a YAML block-scalar header: `|` or `>` with at most one chomping modifier (`+`/`-`) and at most one
+/// indentation digit (`1`-`9`), in either order, as in `|-`, `>+`, `|2` or `>-2`. That header opens a block whose
+/// text is on the following, indented lines. This reader keeps one `key: value` line each and reads no block (an
+/// indented continuation is already dropped), so the header is not a value: kept as one it would put a `|` or `>-`
+/// into a template's name or description and hide the file name a rejected `name` falls back to.
+fn block_scalar_header(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix(['|', '>']) else {
+        return false;
+    };
+    let (mut chomp, mut indent) = (false, false);
+    for modifier in rest.chars() {
+        match modifier {
+            '+' | '-' if !chomp => chomp = true,
+            '1'..='9' if !indent => indent = true,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// One front matter value as a line of at most `chars` characters, or `None` when it is empty, carries an escape this
+/// reader does not decode, or is a block-scalar header. Only an unquoted value can be that header: a quoted `"|"` is
+/// one scalar whose text happens to be that character.
 fn one_line(value: &str, chars: usize) -> Option<String> {
+    let value = value.trim();
+    if !value.starts_with(['\'', '"']) && block_scalar_header(value) {
+        return None;
+    }
     let value: String = unquoted(value)?.trim().chars().take(chars).collect();
     (!value.is_empty()).then_some(value)
 }
@@ -1807,6 +1832,41 @@ mod tests {
             vec!["bug".to_owned(), "ui".to_owned()],
             "`'bug, ui'` is one quoted scalar whose two names are split on the comma inside the quotes"
         );
+    }
+
+    #[test]
+    fn a_block_scalar_header_is_not_a_front_matter_value() {
+        // docs/issues.md, "As built (#1548)": this is not a YAML reader, so the `|`/`>` header that opens a block of
+        // following, indented lines is dropped rather than stored as the value. Keeping it would put a `|` or `>-` in
+        // a template's name or description, and would hide the file name the rejected name falls back to.
+        for header in ["|", ">", "|-", ">+", "|2", ">-2", ">2+", "|9-"] {
+            let file =
+                format!("---\nname: {header}\nabout: {header}\nlabels: {header}\n---\nBody\n");
+            let (parsed, body) = markdown_template(&file);
+            assert_eq!(
+                parsed.name, None,
+                "{header:?}: a block header is not a name, so the name falls back to the file's own name"
+            );
+            assert_eq!(
+                parsed.about, None,
+                "{header:?}: a block header is not a description"
+            );
+            assert!(
+                parsed.labels.is_empty(),
+                "{header:?}: a block header is not a label name: {:?}",
+                parsed.labels
+            );
+            assert_eq!(body, "Body\n", "{header:?}: the block is not the body");
+        }
+    }
+
+    #[test]
+    fn a_quoted_scalar_that_looks_like_a_block_header_is_still_carried() {
+        // A quoted value is one scalar whatever its text, so a `"|"` written in quotes is the single character `|`
+        // and not the header of a block.
+        let (header, _) = markdown_template("---\nname: \"|\"\nabout: '>'\n---\nBody\n");
+        assert_eq!(header.name, Some("|".to_owned()));
+        assert_eq!(header.about, Some(">".to_owned()));
     }
 
     #[test]

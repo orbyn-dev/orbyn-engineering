@@ -782,15 +782,17 @@ GitHub has no issue-template endpoint, so `templates` for GitHub is the contents
 `gh`: one `GET repos/{scope}/contents/.github/ISSUE_TEMPLATE` lists the folder and one
 `GET repos/{scope}/contents/{path}` per markdown file answers its body. A repository without that folder answers
 none (GitHub's 404 for a path it does not have is "no templates", never an error); any other refusal is the usual
-`not_connected`, `rate_limited`, `not_found` or `unavailable` and answers nothing. At most 50 templates, each body cut
-to 16 KiB; one read is one listing plus one body per markdown template, and a templated create re-runs it.
+`tracker_not_connected`, `rate_limited`, `forbidden` or `tracker_unavailable`, and one template's own body read
+that answers 404 is `not_found`; the read answers nothing. At most 50 templates, each body cut to 16 KiB; one read
+is one listing plus one body per markdown template, and a templated create re-runs it.
 
 - **A markdown template is split at its front matter.** The block is the file's first lines, opened and closed by a
   line that is exactly `---`; a file whose block never closes is all body. Only three keys are read, one
   `key: value` line each: `name` (the template's name), `about` (its `description`) and `labels` (its label names,
   split on commas). A value in matching quotes is unquoted. This is not a YAML reader: an indented continuation, a
-  list, an escape and every other key are dropped rather than guessed, and a `name` the file does not give falls back
-  to the file's own name.
+  list, an escape, a block-scalar header (`|`, `>` and their modifiers such as `|-`, `>+` or `|2`, whose text is on
+  the following lines) and every other key are dropped rather than guessed, and a `name` the file does not give
+  falls back to the file's own name.
 - **A form is skipped.** `.yml` and `.yaml` issue forms are not read at all, because their shape needs a YAML
   interpreter Orbyn does not carry and a form is not a body: a repository whose only templates are forms answers
   none (`[]`), which is honest but is not what GitHub's site offers. `config.yml`, a folder and anything else in the
