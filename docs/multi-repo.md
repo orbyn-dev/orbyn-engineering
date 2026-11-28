@@ -281,8 +281,9 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
 - **Trust from a refused write.** `409 repo_untrusted` on a hunk revert, undo or line edit adds a "Trust repository…" button to the
   notice, which opens the same trust dialog the repository's Git menu opens (one click, one write, busy guard). Trusting clears the
   notice and re-reads; the refused write is not repeated, the person tries again. It is offered for a multi-repository thread only.
-- **Editor and file tabs of another repository's file.** A file tab can name a repository: its id is `["t", path, repo_id]` where a
-  primary-repository or ordinary-thread tab is still `["t", path]` (byte for byte what older sessions saved; those restore as before).
+- **Editor and file tabs of a repository's file.** A file tab can name a repository: another repository's id is
+  `["t", path, repo_id]`, the thread's primary repository's `["t", path, repo_id, "primary"]`, and an ordinary thread's tab is still
+  `["t", path]` (byte for byte what older sessions saved; those restore as before).
   "Open" and "Open in editor" on a changed file of another repository open that tab, with the repo-relative path, instead of a notice.
   The read is `GET .../files/content?path=&repo_id=`, the write sends `repo_id` in the body with the revision of that repository's own
   read, and the editor session is keyed by repository and path, so the same path in two repositories is two files that never share
@@ -291,12 +292,24 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   dialog, keeps the text and repeats nothing; a path outside the repository (`400`) or a repository that is not the thread's (`404`) is
   said in words. A text file of that tab is drawn like the thread's own: Markdown and its siblings render, with Source and line
   comments beside Preview, and any other text is the editor; a line comment carries that repository's `repo_id` and name, so the
-  chip and the message the agent receives name its file. It still offers no "Add file to message" and no absolute path (those name
-  a checkout's path), and a link in its rendered Markdown opens that repository's tab while an image or video it draws
-  loads from that repository's worktree. An absolute path is left as written there: the thread's task folder holds every
-  worktree, so the app has no absolute root for one repository to strip, and asking it without the `repo_id` would read
-  whichever same-named file the folder happens to hold. The Changes panel's rendered Markdown still resolves against the
-  thread's folder. Its image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
+  chip and the message the agent receives name its file. The bar and the tab menu add that file to the message too, once the
+  panel has read the repository's name: the file chip carries the same client-only `repo_id` and name, so the message names
+  `<name>/<path>`, and a copy and paste of the chip reads that repository's file through the existing `repo_id` (a chip field,
+  not a route one). Copy path
+  is the file's absolute path, `<thread folder>/<name>/<path>` — where the task folder puts a repository's worktree — built from
+  the thread's own `cwd` and the repository's name, both already served; a one-repository thread is unchanged.
+  The primary repository's tab carries that identity too, with the project's own repository id: its reads, writes and failures stay
+  the thread's own (no `repo_id` is sent, the editor session is keyed as before, and `file_conflict`, `repo_untrusted` and 404 are
+  handled exactly as the thread's file always was), while its bar and tab menu now name the repository — the file chip carries the
+  client-only name and no `repo_id`, so the message says `<name>/<path>`, Copy path is `<thread folder>/<name>/<path>`, and its line
+  comments name the repository too. Changed files of the primary repository and files of the explorer's primary repository tree open
+  that tab when a tab is what is wanted (a binary file's Open; Open in editor still opens the outside editor, as before); an
+  ordinary thread and a thread in one repository still open `["t", path]` and are unchanged. A link in another
+  repository's rendered Markdown opens that repository's tab, and an image or video it draws loads from that repository's worktree;
+  an absolute path is left as written there, because the thread's task folder holds every worktree and asking it without the
+  `repo_id` would read whichever same-named file the folder holds. The Changes panel's rendered Markdown still resolves against the
+  thread's folder. Its
+  image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
   worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment decision and
   `download` are that repository's file (see "As built: repo_id on Git and file calls"). The service's `previews/file` and
   `files/open` take one now too: the file-tab menu's outside editor, the binary view's Reveal/Open in editor and the viewer's Open in
@@ -365,20 +378,24 @@ The new-thread dialog, the Repos popover and the client now use the generated `S
   project's Worktrees, labelled with the thread's branch and marked as the thread's own. The repository chip above it (the explorer's own,
   sharing the choice of the header Git menu and the Changes panel: the thread's primary until the person picks another) names the
   repository shown. Its tree is read through `GET /api/threads/{id}/files?path=&repo_id=` (no `repo_id` for the primary, so it reads as
-  the service's default). A file of the primary repository opens as the thread's own file tab, with no repository on the tab (the shape
-  the rest of the app opens a thread's files with); a file of another repository opens as that repository's tab, whose read and write
-  carry its `repo_id` rather than being resolved against the thread's task folder. A thread in one repository, and every ordinary
+  the service's default). A file the row lists opens as its repository's tab: the primary repository's is the thread's own tab for
+  reads, writes and failures and names the repository (see "Editor and file tabs of a repository's file"), while another repository's
+  tab carries its `repo_id` on the read and the write rather than being resolved against the thread's task folder. A thread in one repository, and every ordinary
   thread, keeps the explorer it had: no chip, no checkout row and no call to that route. Known limits: the route answers no change
   letters (the service cuts a folder at 5,000 entries and its answer says nothing about it, so the level is shown as complete), no
   file watcher covers the thread's worktree, so the tree reads again when the project's data changes (a finished run, for one) or the
   person presses Refresh, and on re-entering the thread; the repository list is read again with the thread's Changes (a run that ended,
   a repository added or trusted), so one added to a running thread can be picked. A file the row lists opens its tab, which draws it
-  by what it holds; it is not dragged into the message, because the thread's composer chips name a checkout's path (its Open in editor,
-  Open in browser, Reveal and line comments carry the `repo_id`, and a comment on another repository's file is context for the next
-  message, never a service write; a line comment made in the Changes panel names its file's repository as well, so two repositories'
-  files of one path keep their own comments and the engine is told which repository the comment is about). The primary repository's tab is the thread's own, whose cwd is the task folder, so its Copy path,
-  chip and line comments name the file relative to the repository and not to the task folder (the Changes panel has the same shape);
-  carrying the primary's `repo_id` on its tab would fix those and is left to a follow-up. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
+  by what it holds; another repository's file is dragged into the message and added from its own row, the drag carrying that
+  repository's client-only `repo_id` and name, so the mention and the file chip name `<name>/<path>` and a pasted chip reads that
+  repository's file rather than the thread's own copy of the path (its Open in editor, Open in browser, Reveal and line comments
+  carry the `repo_id`, and a comment on another repository's file is context for the next message, never a service write; a line
+  comment made in the Changes panel names its file's repository as well, so two repositories' files of one path keep their own
+  comments and the engine is told which repository the comment is about). The primary repository's file is neither dragged nor added from its row:
+  that row is the thread's own checkout, whose composer chips name a checkout's path, while its tab — opened from that row or
+  from a changed file — names the repository and keeps the thread's own reads, writes and failures (see "Editor and file tabs of
+  a repository's file"), so its Copy path is `<thread folder>/<name>/<path>` and its line comments and chip name the repository
+  too. `GET .../files/metadata` still has no web caller: no screen shows a file's metadata. No frame
   draws this row or the explorer's chip, so both reuse what exists: a worktree row (branch label, Git icon, current dot) and the
   repository chip the header, Changes and branch dialogs already draw, in the explorer's own header; listed as undrawn for the Designer.
 - **First message and delete.** The new-thread dialog asks for an optional First message; a trimmed non-empty one is sent as `message`
@@ -556,4 +573,6 @@ that restores one repository and then fails on another writes what did move and 
 (`workspace.restore.failed`, keeping the success row `workspace.restore` as it was); navigation coordinates
 resolve in the repository their `repo_id` names too, the primary when absent, so a repository's file is found in
 its own worktree and the task folder is never the checkout, and a thread that moved answers `409 stale_owner`;
-an unknown repository is `404` and an untrusted one is refused.
+an unknown repository is `404` and an untrusted one is refused. A primary repository's file tab names its
+repository in its chip, Copy path and line comments while its read and write send no `repo_id`, and an
+ordinary thread's file tab, chip and paths are unchanged.

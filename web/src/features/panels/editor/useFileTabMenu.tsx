@@ -14,9 +14,11 @@ import { threadPathOf, useExplorer } from "../../workspace";
 /**
  * The ⋯ menu of an open file (editor-tab-menu): the path in two forms, the file in an outside editor (the picker of
  * installed ones, the favourite marked) and Close tab. Reveal in the left bar is not here: the left bar has no way to
- * be told to show a file yet.
+ * be told to show a file yet. `repoName` is the repository's own name when the tab names one of a multi-repository
+ * thread, which is also the name of its worktree inside the thread's task folder; the primary repository's tab names it
+ * too, while its reads and writes stay the thread's own.
  */
-export function useFileTabMenu(threadId: string, tab: string | null, close: () => void, closeKey?: string): MenuItem[] | null {
+export function useFileTabMenu(threadId: string, tab: string | null, close: () => void, closeKey?: string, repoName?: string): MenuItem[] | null {
   const target = tab ? parseFileTab(tab) : null;
   const editors = useAsync("editors", (signal) => api.editors(signal));
   const preferred = useUi((state) => state.preferredEditor);
@@ -29,10 +31,21 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   if (!target) return null;
   if (target.kind === "worktree" || target.kind === "issue") return [closeItem];
   const relative = target.path;
-  // Another repository's file is not under the thread's folder: its absolute path is unknown and the composer's file chip names a checkout, so both stay off. Its repo-relative path goes to the outside editor with its repo_id.
-  const foreign = target.kind === "thread" && target.repoId !== undefined;
+  // A repository's worktree is `<task folder>/<name>` (docs/multi-repo.md), so once the panel has read that repository the
+  // absolute path is known too. Its repo-relative path still goes to the outside editor with the `repo_id` of another
+  // repository; the primary repository's tab sends none, as the thread's own does.
   const repoId = target.kind === "thread" ? target.repoId : undefined;
-  const root = target.kind === "thread" ? (foreign ? "" : cwd) : (worktree?.path ?? "");
+  const named = repoId !== undefined;
+  const foreign = named && (target.kind !== "thread" || target.primary !== true);
+  const wireRepoId = foreign ? repoId : undefined;
+  const root =
+    target.kind === "thread"
+      ? named
+        ? cwd && repoName
+          ? `${cwd.replace(/[\\/]+$/, "")}/${repoName}`
+          : ""
+        : cwd
+      : (worktree?.path ?? "");
   const absolute = root ? `${root.replace(/\/$/, "")}/${relative}` : null;
   const copy = (text: string, done: string) =>
     navigator.clipboard?.writeText(text).then(
@@ -46,7 +59,7 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
   const open = async (id: string, remember: boolean) => {
     if (own === null) return;
     try {
-      await api.openInEditor(threadId, { path: own, editor: id, ...(repoId === undefined ? {} : { repo_id: repoId }) });
+      await api.openInEditor(threadId, { path: own, editor: id, ...(wireRepoId === undefined ? {} : { repo_id: wireRepoId }) });
       // Choosing another editor here opens the file in it once; the favourite stays.
       if (remember) useUi.getState().setPrefs({ preferredEditor: id });
     } catch (failure) {
@@ -79,16 +92,25 @@ export function useFileTabMenu(threadId: string, tab: string | null, close: () =
                   )
                 : pushToast("Couldn't copy. The clipboard is unavailable.")),
           },
-          ...(foreign ? [] : [
           {
             label: "Add file to message",
             icon: <Paperclip size={14} aria-hidden />,
+            // A repository's chip names its repository: before the panel has read the name, a path alone would read as the thread's own file.
+            ...(named && repoName === undefined ? { disabled: true, title: "The repository hasn't been read yet." } : {}),
             onSelect: () => {
-              useComposerChips.getState().add(threadId, { id: chipId(), kind: "file", path: held.path, line: held.line, excerpt: fileExcerpt(held.saved, held.line), language: languageForPath(held.path) });
+              useComposerChips.getState().add(threadId, {
+                id: chipId(),
+                kind: "file",
+                path: held.path,
+                line: held.line,
+                excerpt: fileExcerpt(held.saved, held.line),
+                language: languageForPath(held.path),
+                ...(wireRepoId === undefined ? {} : { repoId: wireRepoId }),
+                ...(repoName === undefined ? {} : { repoName }),
+              });
               pushToast("File added to your message");
             },
           },
-          ]),
         ]
       : []),
     ...(own !== null && primary

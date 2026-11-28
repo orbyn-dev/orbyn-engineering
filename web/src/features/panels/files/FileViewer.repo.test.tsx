@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { api } from "../../../api/client";
 import { chipLabel, chipPrompt } from "../../../product/composer/composerContext";
 import { useComposerChips } from "../../../product/state/composerChipStore";
 import { fileTabId, useUi } from "../../../product/state/ui";
@@ -26,8 +27,13 @@ interface ServedFile {
 function serve(file: ServedFile = {}, raw?: Uint8Array<ArrayBuffer>) {
   const asked: string[] = [];
   const puts: Record<string, unknown>[] = [];
+  const previews: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/previews/file")) {
+      previews.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({}));
+    }
     if (init?.method === "PUT") {
       const body = JSON.parse(String(init.body));
       puts.push(body);
@@ -49,7 +55,7 @@ function serve(file: ServedFile = {}, raw?: Uint8Array<ArrayBuffer>) {
       truncated: file.truncated ?? false,
     }));
   }));
-  return { asked, puts };
+  return { asked, puts, previews };
 }
 
 const query = (url: string) => new URL(url, "http://127.0.0.1").searchParams;
@@ -121,6 +127,142 @@ it("renders another repository's Markdown from the same read, named with its rep
   expect(contentAsk(asked).get("repo_id")).toBe(REPO);
   // Rendered from the content read, so the raw route is asked for nothing.
   expect(rawAsks(asked)).toEqual([]);
+});
+
+it.each(["orbyn-planner", `repo-${"x".repeat(59)}`])("adds another repository's file to the message under its full repository name %s", async (repoName) => {
+  serve({ content: "# planner\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} repoName={repoName} line={null} />);
+
+  await screen.findByRole("heading", { name: "planner" });
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+
+  const chip = useComposerChips.getState().chips.t![0]!;
+  // The chip names the tab's repository, client-only, so the next message points at the right README.md.
+  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null, repoId: REPO, repoName });
+  expect(chipLabel(chip)).toBe(`${repoName}/README.md`);
+  expect(chipPrompt(chip)).toContain(`File \`${repoName}/README.md\``);
+});
+
+it("keeps Add file to message off on another repository's tab until the panel names the repository", async () => {
+  serve({ content: "# planner\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoId={REPO} line={null} />);
+
+  await screen.findByRole("heading", { name: "planner" });
+  // A path alone would read as the thread's own file of the same name, so the chip waits for the repository's name.
+  expect(screen.getByRole("button", { name: "Add file to message" })).toBeDisabled();
+});
+
+it("adds the thread's own file to the message with no repository, as before", async () => {
+  serve({ content: "# mine\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" line={null} />);
+
+  await screen.findByRole("heading", { name: "mine" });
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+
+  const chip = useComposerChips.getState().chips.t![0]!;
+  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null });
+  expect(chip).not.toHaveProperty("repoId");
+  expect(chip).not.toHaveProperty("repoName");
+  expect(chipLabel(chip)).toBe("README.md");
+});
+
+// #1060 follow-up: the thread's primary repository has a tab of its own that names it, and still reads and writes as
+// the thread's own (the service's absent repo_id is the primary).
+const PRIMARY = "p";
+const APP = "orbyn-engineering";
+
+it("adds the primary repository's file to the message under its name, reading it as the thread's own", async () => {
+  const { asked, puts } = serve({ content: "# app\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoName={APP} primaryRepo line={null} />);
+
+  await screen.findByRole("heading", { name: "app" });
+  // The primary repository is the service's default: the read sends no repo_id.
+  expect(contentAsk(asked).has("repo_id")).toBe(false);
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+
+  const chip = useComposerChips.getState().chips.t![0]!;
+  // The chip names the primary repository, client-only; its id is not carried, because the service's absent one is the primary.
+  expect(chip).toMatchObject({ kind: "file", path: "README.md", line: null, repoName: APP });
+  expect(chip).not.toHaveProperty("repoId");
+  expect(chipLabel(chip)).toBe(`${APP}/README.md`);
+  expect(chipPrompt(chip)).toContain(`File \`${APP}/README.md\``);
+
+  // The save is the thread's own write too: no repo_id in the body.
+  await userEvent.click(screen.getByRole("radio", { name: "Edit" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "Edit README.md" }), "more");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(puts).toHaveLength(1));
+  expect(puts[0]).toEqual({ path: "README.md", content: "# app\nmore", base_revision: "r1" });
+});
+
+it("keeps Add file to message off on the primary repository's tab until the panel names the repository", async () => {
+  serve({ content: "# app\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" primaryRepo line={null} />);
+
+  await screen.findByRole("heading", { name: "app" });
+  // A path alone would read as the thread's own file of the same name, so the chip waits for the repository's name.
+  expect(screen.getByRole("button", { name: "Add file to message" })).toBeDisabled();
+});
+
+it("makes a line comment on the primary repository's file name its repository, without a repo_id", async () => {
+  serve({ content: "# one\ntwo\n" });
+  render(<Viewer threadId="t" tabId="tab" path="README.md" repoName={APP} primaryRepo line={null} />);
+
+  await screen.findByRole("heading", { name: "one" });
+  await userEvent.click(screen.getByRole("radio", { name: "Source" }));
+  await userEvent.click(screen.getByRole("button", { name: "Comment on line 2" }));
+  await userEvent.type(screen.getByRole("textbox", { name: "File comment" }), "Why here?");
+  await userEvent.click(screen.getByRole("button", { name: "Add comment" }));
+
+  const chip = useComposerChips.getState().chips.t![0]!;
+  expect(chip).toMatchObject({ kind: "review", path: "README.md", line: 2, comment: "Why here?", repoName: APP, sourceRevision: "r1", sourceCwd: "/repo" });
+  expect(chip).not.toHaveProperty("repoId");
+  expect(chipLabel(chip)).toBe(`${APP}/README.md:2`);
+});
+
+it("keeps the thread's own failure wording on the primary repository's tab", async () => {
+  // The primary tab's read is the thread's own route, so a file it cannot find is said in the thread's words, not a repository's.
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ code: "not_found", message: "No such file." }), { status: 404 })));
+  render(<Viewer threadId="t" tabId="tab" path="gone.md" repoName={APP} primaryRepo line={null} />);
+  expect(await screen.findByText("This file isn't in this checkout.")).toBeInTheDocument();
+});
+
+it("opens the primary repository's tab as the thread's own file, named with the repository", async () => {
+  const { asked } = serve({ content: "# notes\n" });
+  window.location.hash = "#/threads/t";
+  const resolve = vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: "README.md", repository_path: "README.md" });
+  const id = fileTabId({ kind: "thread", path: "README.md", repoId: PRIMARY, primary: true });
+  render(<FileTab id={id} threadId="t" repoName={APP} />);
+
+  expect(await screen.findByRole("heading", { name: "notes" })).toBeInTheDocument();
+  // The path is resolved as the thread's own and read with no repo_id: absent is the primary repository.
+  expect(resolve).toHaveBeenCalledTimes(1);
+  expect(resolve.mock.calls[0]![1]).not.toHaveProperty("repo_id");
+  expect(contentAsk(asked).has("repo_id")).toBe(false);
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+  expect(useComposerChips.getState().chips.t![0]).toMatchObject({ kind: "file", path: "README.md", repoName: APP });
+});
+
+it("opens a primary tab's HTML in its repository, while reading the primary without an id", async () => {
+  const { asked, previews } = serve({ content: "<p>app</p>" });
+  window.location.hash = "#/threads/t";
+  vi.spyOn(api, "resolveThreadPath").mockResolvedValue({ cwd: "/repo", checkout_path: "index.html", repository_path: "index.html" });
+  const id = fileTabId({ kind: "thread", path: "index.html", repoId: PRIMARY, primary: true });
+  render(<FileTab id={id} threadId="t" repoName={APP} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: PRIMARY }]));
+  expect(contentAsk(asked).has("repo_id")).toBe(false);
+});
+
+it("keeps browser previews scoped for a foreign file and unchanged for an ordinary thread", async () => {
+  const { previews } = serve({ content: "<p>file</p>" });
+  const first = render(<Viewer threadId="t" tabId="foreign" path="index.html" repoId={REPO} line={null} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: REPO }]));
+  first.unmount();
+  render(<Viewer threadId="t" tabId="own" path="index.html" line={null} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open in browser" }));
+  await waitFor(() => expect(previews).toEqual([{ path: "index.html", repo_id: REPO }, { path: "index.html" }]));
 });
 
 it("draws another repository's plain text file as the editor, read with its repo_id", async () => {

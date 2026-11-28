@@ -180,13 +180,13 @@ it("a file tab of the thread opens the repository's file, and a thread-less pane
 
 const VSCODE = { id: "vscode", name: "VS Code", launch_style: "goto", file_manager: false };
 
-function RepoMenu({ tab }: { tab: string }) {
-  const items = useFileTabMenu("t", tab, () => undefined);
+function RepoMenu({ tab, repoName }: { tab: string; repoName?: string }) {
+  const items = useFileTabMenu("t", tab, () => undefined, undefined, repoName);
   return (
     <>
       {items?.map((item) => (
         <div key={item.label}>
-          <button onClick={item.onSelect}>{item.label}</button>
+          <button disabled={item.disabled} onClick={item.onSelect}>{item.label}</button>
           {item.children?.map((child) => (
             <button key={child.label} onClick={child.onSelect}>{child.label}</button>
           ))}
@@ -205,6 +205,68 @@ it("offers the outside editor on another repository's file tab, with its repo-re
   await userEvent.click(await screen.findByRole("button", { name: "VS Code" }));
   await waitFor(() => expect(served.opens).toHaveLength(1));
   expect(served.opens[0]).toEqual({ path: "notes.txt", editor: "vscode", repo_id: REPO });
+});
+
+it("adds another repository's file to the message from its tab menu and copies its absolute path", async () => {
+  serve();
+  const written: string[] = [];
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { written.push(text); } }, configurable: true });
+  const tab = fileTabId({ kind: "thread", path: "notes.txt", repoId: REPO });
+  render(<><Viewer threadId="t" tabId={tab} path="notes.txt" repoId={REPO} line={null} /><RepoMenu tab={tab} repoName="orbyn-planner" /></>);
+  await planner();
+  // The chip names the tab's repository, client-only, as its line comments do.
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+  const chip = useComposerChips.getState().chips.t![0]!;
+  expect(chip).toMatchObject({ kind: "file", path: "notes.txt", line: null, repoId: REPO, repoName: "orbyn-planner" });
+  expect(chipLabel(chip)).toBe("orbyn-planner/notes.txt");
+  // The repository's worktree is the thread folder's own subfolder, so the file's absolute path is known.
+  await userEvent.click(screen.getByRole("button", { name: "Copy path" }));
+  expect(written).toContain("/repo/orbyn-planner/notes.txt");
+  await userEvent.click(screen.getByRole("button", { name: "Copy relative path" }));
+  expect(written).toContain("notes.txt");
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+});
+
+it("keeps the path and the chip off on another repository's tab until the panel has named the repository", async () => {
+  serve();
+  const tab = fileTabId({ kind: "thread", path: "notes.txt", repoId: REPO });
+  render(<><Viewer threadId="t" tabId={tab} path="notes.txt" repoId={REPO} line={null} /><RepoMenu tab={tab} /></>);
+  await planner();
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Add file to message" })).toBeDisabled();
+});
+
+it("adds the primary repository's file to the message from its tab menu and copies its absolute path, with no repo_id", async () => {
+  const served = serve({ editors: [VSCODE] });
+  const written: string[] = [];
+  Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { written.push(text); } }, configurable: true });
+  const tab = fileTabId({ kind: "thread", path: "notes.txt", repoId: "p", primary: true });
+  render(<><Viewer threadId="t" tabId={tab} path="notes.txt" repoName="app" primaryRepo line={null} /><RepoMenu tab={tab} repoName="app" /></>);
+  await planner();
+  // The chip names the primary repository, client-only; no repo_id is carried, because the service's absent one is the primary.
+  await userEvent.click(screen.getByRole("button", { name: "Add file to message" }));
+  const chip = useComposerChips.getState().chips.t![0]!;
+  expect(chip).toMatchObject({ kind: "file", path: "notes.txt", line: null, repoName: "app" });
+  expect(chip).not.toHaveProperty("repoId");
+  expect(chipLabel(chip)).toBe("app/notes.txt");
+  // Its worktree is the thread folder's own `app` subfolder, so the file's absolute path names it.
+  await userEvent.click(screen.getByRole("button", { name: "Copy path" }));
+  expect(written).toContain("/repo/app/notes.txt");
+  // The file still opens in the outside editor through the thread's own route: no repo_id in the body.
+  await userEvent.click(await screen.findByRole("button", { name: "VS Code" }));
+  await waitFor(() => expect(served.opens).toHaveLength(1));
+  expect(served.opens[0]).toEqual({ path: "notes.txt", editor: "vscode" });
+  Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+});
+
+it("keeps Copy path and Add file to message off on the primary repository's tab until the panel names it", async () => {
+  serve();
+  const tab = fileTabId({ kind: "thread", path: "notes.txt", repoId: "p", primary: true });
+  render(<><Viewer threadId="t" tabId={tab} path="notes.txt" primaryRepo line={null} /><RepoMenu tab={tab} /></>);
+  await planner();
+  // A path alone would name the task folder rather than the repository's worktree, so both wait for the name.
+  expect(screen.getByRole("button", { name: "Copy path" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Add file to message" })).toBeDisabled();
 });
 
 it("keeps the outside editor for a primary file tab without repo_id", async () => {

@@ -1,5 +1,5 @@
 import { useState, type DragEvent } from "react";
-import { FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
+import { draggedRepository, FILE_MENTION_REPO_TYPE, FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { TranscriptShelf } from "./TranscriptShelf";
 import { transcriptsApi, willBeTranscript } from "./transcriptDrop";
 import { useTranscripts } from "./useTranscripts";
@@ -33,7 +33,12 @@ export function useComposerDrop(thread: { id: string }, upload: (files: File[]) 
         event.preventDefault();
         end();
         const mentioned = event.dataTransfer.getData(FILE_MENTION_TYPE);
-        if (mentioned) return mention(mentioned);
+        if (mentioned) {
+          // Another repository's worktree is `<task folder>/<name>` (docs/multi-repo.md), so its mention is the path from the
+          // thread's folder and names the file from the right repository.
+          const repository = draggedRepository(event.dataTransfer.getData(FILE_MENTION_REPO_TYPE));
+          return mention(repository === null ? mentioned : `${repository.repoName}/${mentioned}`);
+        }
         if (event.dataTransfer.files.length === 0) return;
         const rest = transcripts.take([...event.dataTransfer.files]);
         if (rest.length > 0) upload(rest);

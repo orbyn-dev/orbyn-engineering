@@ -349,6 +349,11 @@ export function DiffPanel({ threadId }: { threadId: string }) {
   const offerPull = canCreate && (changedHere.length > 0 || (branchAhead.data?.length ?? 0) > 0);
   const foot = thread && thread.active_run === null && ((source === "turn" && latestRun) || offerPull);
 
+  // A file of a multi-repository thread's primary repository opens as a tab that names it, and still reads and writes as
+  // the thread's own; a file of another repository opens as that repository's tab, which sends its repo_id. Any other
+  // thread's files are the thread's own, with no repository on them.
+  const primaryRepoId = choice.multi && selected !== null && selected.repo_id !== undefined && selected.repo_id === choice.primary?.repo_id ? selected.repo_id : undefined;
+  const changedRepoId = selected !== null && selected.repo_id !== undefined && selected.repo_id !== (choice.primary?.repo_id ?? projectId) ? selected.repo_id : undefined;
   const bar = findOpen ? (
     <FindBar
       value={needle}
@@ -370,11 +375,12 @@ export function DiffPanel({ threadId }: { threadId: string }) {
       current={hit && hit.path === fileKey(selected) ? { row: hit.row, start: hit.start } : null}
       full={shownFully.has(fileKey(selected))}
       repoName={repoNameOf(selected)}
-      repoId={selected.repo_id !== undefined && selected.repo_id !== projectId ? selected.repo_id : undefined}
+      repoId={changedRepoId}
+      primaryRepoId={primaryRepoId}
       // The primary repository is the thread's own checkout, which carries no repository anywhere else either: stamped with
-      // the project id, its comments would never match the ones a file tab makes on that same file, and a save from that tab
-      // would leave them unmoved and unmarked.
-      fileRepoId={selected.repo_id === projectId ? undefined : selected.repo_id}
+      // its id, its comments would never match the ones a file tab makes on that same file, and a save from that tab
+      // would leave them unmoved and unmarked. Every other repository's comments carry its id.
+      fileRepoId={changedRepoId}
       split={wide}
       onShowAll={() => setShownFully(new Set(shownFully).add(fileKey(selected)))}
       canRender={source === "worktree" || source === "thread"}

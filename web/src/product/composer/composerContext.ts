@@ -23,6 +23,10 @@ export interface FileChip extends ChipBase {
   line: number | null;
   /** The last line of a selected range, when the chip names more than one line. */
   endLine?: number;
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout and for its primary repository. */
+  repoId?: string;
+  /** That repository's name, so the file says where it is; set for a repository of a multi-repository thread, the primary's too. */
+  repoName?: string;
   /** Selected in the Changes diff, so the chip can take the person back to it there. */
   fromDiff?: boolean;
   /** The file's text at the time it was attached; null until read. */
@@ -49,9 +53,9 @@ export interface ReviewChip extends ChipBase {
   line: number | null;
   /** Optional for older one-line diff comments. */
   endLine?: number;
-  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout. */
+  /** Another repository of a multi-repository thread, whose worktree holds `path`; absent for the thread's own checkout and for its primary repository. */
   repoId?: string;
-  /** The name of that repository, or of the thread's primary repository, so the comment says where the file is. */
+  /** The name of that repository, or of the thread's primary repository, so the comment says where the file is; set for a repository of a multi-repository thread, the primary's too. */
   repoName?: string;
   /** File annotations belong to the displayed source snapshot, not a later read. */
   sourceRevision?: string;
@@ -148,20 +152,22 @@ const terminalCommand = (chip: TerminalChip): string | null => {
   return exit ? `${command}${chip.command.includes("\n") ? "\n" : " "}(${exit})` : command;
 };
 
-/** Where a review comment is: a file of the thread's own checkout by its path, another repository's file under its name. */
-const reviewWhere = (chip: ReviewChip): string => (chip.repoName ? `${chip.repoName}/${chip.path}` : chip.path);
+/** Where a file or a comment on it is: the thread's own checkout by its path, another repository's file under that repository's name. */
+const where = (chip: { path: string; repoName?: string }): string => (chip.repoName ? `${chip.repoName}/${chip.path}` : chip.path);
 
 export function chipLabel(chip: ComposerChip): string {
   switch (chip.kind) {
-    case "file":
-      return chip.line === null ? chip.path : `${chip.path}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
+    case "file": {
+      const at = where(chip);
+      return chip.line === null ? at : `${at}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
+    }
     case "terminal":
       return chip.exitCode === undefined || chip.exitCode === null
         ? terminalLabel(chip)
         : `${terminalLabel(chip)} · exit ${chip.exitCode}`;
     case "review": {
-      const where = reviewWhere(chip);
-      return chip.line === null ? where : `${where}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
+      const at = where(chip);
+      return chip.line === null ? at : `${at}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `–${chip.endLine}` : ""}`;
     }
     case "annotation":
       return chip.selector || chip.url;
@@ -180,22 +186,23 @@ export function chipLabel(chip: ComposerChip): string {
 export function chipPrompt(chip: ComposerChip): string {
   switch (chip.kind) {
     case "file": {
-      const where = chip.line === null ? `File \`${chip.path}\`` : `File \`${chip.path}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `-${chip.endLine}` : ""}\``;
+      const at = where(chip);
+      const atLine = chip.line === null ? `File \`${at}\`` : `File \`${at}:${chip.line}${chip.endLine && chip.endLine !== chip.line ? `-${chip.endLine}` : ""}\``;
       const body = chip.excerpt?.trim();
-      if (!body) return where;
+      if (!body) return atLine;
       const language = chip.language ?? "";
-      return `${where}\n\`\`\`${language}\n${fenceSafe(excerptOf(body))}\n\`\`\``;
+      return `${atLine}\n\`\`\`${language}\n${fenceSafe(excerptOf(body))}\n\`\`\``;
     }
     case "terminal": {
       const command = terminalCommand(chip);
       return `${terminalLabel(chip)}${command ? `\n${command}` : ""}\n\`\`\`\n${fenceSafe(excerptOf(chip.output))}\n\`\`\``;
     }
     case "review": {
-      const where = `Review on \`${chipLabel(chip)}\`${chip.stale ? " (the file was edited afterwards: this text may have changed or moved)" : ""}`;
+      const heading = `Review on \`${chipLabel(chip)}\`${chip.stale ? " (the file was edited afterwards: this text may have changed or moved)" : ""}`;
       const excerpt = chip.excerpt?.trim()
         ? `\n\`\`\`\n${fenceSafe(excerptOf(chip.excerpt))}\n\`\`\``
         : "";
-      return `${where}\n${chip.comment.trim()}${excerpt}`;
+      return `${heading}\n${chip.comment.trim()}${excerpt}`;
     }
     case "annotation": {
       const lines = [`Element \`${chip.selector}\` on ${chip.url}`];
@@ -265,6 +272,25 @@ const text = (value: unknown, limit = CHIP_EXCERPT_LIMIT * 4): string | null =>
 const number = (value: unknown): number | null =>
   typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
 
+/** One half of a chip's repository identity: a non-blank string, or null when it is missing or the wrong shape. */
+const repositoryField = (value: unknown): string | null => {
+  const found = text(value, 256);
+  return found !== null && found.trim() !== "" ? found : null;
+};
+
+/**
+ * The repository a file or review chip names. Both halves name another repository of a multi-repository thread, whose
+ * worktree holds the path; a name alone names the thread's primary repository, whose path and reads stay the thread's
+ * own (the service's absent `repo_id` is the primary) and whose chip only says `<name>/<path>`. An id alone would read
+ * another repository's file while the chip shows the thread's own path, so such a chip is refused.
+ */
+const repositoryOf = (chip: Record<string, unknown>): { repoId?: string; repoName?: string } | null => {
+  const repoId = repositoryField(chip.repoId);
+  const repoName = repositoryField(chip.repoName);
+  if (repoId === null) return repoName === null ? {} : { repoName };
+  return repoName === null ? null : { repoId, repoName };
+};
+
 /** One stored chip, or null when a field is missing or the wrong shape. */
 export function asChip(value: unknown, id: string = chipId()): ComposerChip | null {
   if (typeof value !== "object" || value === null) return null;
@@ -273,6 +299,8 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
     case "file": {
       const path = text(chip.path, 4096);
       if (!path) return null;
+      const repo = repositoryOf(chip);
+      if (repo === null) return null;
       return {
         id,
         kind: "file",
@@ -280,6 +308,7 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
         line: number(chip.line),
         ...(number(chip.endLine) !== null ? { endLine: number(chip.endLine)! } : {}),
         ...(chip.fromDiff === true ? { fromDiff: true } : {}),
+        ...repo,
         excerpt: text(chip.excerpt),
         language: text(chip.language, 64),
       };
@@ -309,13 +338,12 @@ export function asChip(value: unknown, id: string = chipId()): ComposerChip | nu
       const line = number(chip.line);
       const endLine = number(chip.endLine);
       if (chip.endLine !== undefined && (line === null || endLine === null || endLine < line)) return null;
-      const repoId = text(chip.repoId, 256);
-      const repoName = text(chip.repoName, 256);
+      const repo = repositoryOf(chip);
+      if (repo === null) return null;
       return {
         id, kind: "review", path, line, comment, excerpt: text(chip.excerpt),
         ...(endLine === null ? {} : { endLine }),
-        ...(repoId === null ? {} : { repoId }),
-        ...(repoName === null ? {} : { repoName }),
+        ...repo,
         ...(typeof chip.sourceRevision === "string" ? { sourceRevision: text(chip.sourceRevision, 256) ?? undefined } : {}),
         ...(typeof chip.sourceCwd === "string" ? { sourceCwd: text(chip.sourceCwd, 4096) ?? undefined } : {}),
         ...(chip.stale === true ? { stale: true } : {}),
@@ -450,18 +478,19 @@ export const needsExcerpt = (chip: ComposerChip): chip is FileChip =>
   chip.kind === "file" && (chip.excerpt === null || chip.excerpt.trim() === "");
 
 /**
- * Reads the files a pasted chip named but did not carry. A file that cannot be
- * read keeps the chip and its path; the prompt then says only where it was.
+ * Reads the files a pasted chip named but did not carry. The chip says which repository holds its file, so a paste reads
+ * that repository's file and never the thread's own copy of the same path. A file that cannot be read keeps the chip and
+ * its path; the prompt then says only where it was.
  */
 export async function refillExcerpts(
   chips: readonly ComposerChip[],
-  read: (path: string) => Promise<{ text: string; language?: string | null }>,
+  read: (chip: FileChip) => Promise<{ text: string; language?: string | null }>,
 ): Promise<ComposerChip[]> {
   const filled = await Promise.all(
     chips.map(async (chip) => {
       if (!needsExcerpt(chip)) return chip;
       try {
-        const found = await read(chip.path);
+        const found = await read(chip);
         return {
           ...chip,
           excerpt: excerptOf(found.text),

@@ -25,8 +25,9 @@ export function answerQuestion(questionId: string, path: string, body?: unknown)
   return request("POST", `/api/questions/${q(questionId)}/${path}`, body);
 }
 
-export function readThreadFile(threadId: string, path: string, signal?: AbortSignal) {
-  return request<{ content: string }>("GET", `/api/threads/${q(threadId)}/files/content?path=${q(path)}`, undefined, signal);
+/** `repoId` names one repository of a multi-repository thread whose worktree holds `path`; left out, the primary one. */
+export function readThreadFile(threadId: string, path: string, signal?: AbortSignal, repoId?: string) {
+  return request<{ content: string }>("GET", `/api/threads/${q(threadId)}/files/content?path=${q(path)}${repoId === undefined ? "" : `&repo_id=${q(repoId)}`}`, undefined, signal);
 }
 
 export function saveThreadFile(threadId: string, body: { path: string; content: string; base_revision: string | null }) {

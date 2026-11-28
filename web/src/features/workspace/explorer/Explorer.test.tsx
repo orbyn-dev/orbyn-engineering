@@ -12,6 +12,7 @@ import { dataChanged } from "../../../api/shell";
 import { startDataRefresh } from "../../../lib/dataRefresh";
 import { fileTabId, useUi } from "../../../product/state/ui";
 import { installMockFetch } from "../../../test-support";
+import { FILE_MENTION_TYPE } from "../../../product/composer/skillMention";
 import { folderKey, projectKey, worktreeKey } from "./model";
 import { levelKey, useExplorer } from "./store";
 
@@ -297,7 +298,9 @@ it("lets a file of the thread's own worktree be dragged into its message, and no
   const own = await findRow(/^README\.md/);
   const setData = vi.fn();
   fireEvent.dragStart(own, { dataTransfer: { setData } });
-  expect(setData).toHaveBeenCalledWith(expect.stringContaining("file"), "README.md");
+  // The thread's own file is its path alone, exactly as before: no repository rides along.
+  expect(setData).toHaveBeenCalledTimes(1);
+  expect(setData).toHaveBeenCalledWith(FILE_MENTION_TYPE, "README.md");
   await user.click(await findRow("approval-timeout"));
   await waitFor(() => expect(within(treeOf()).getAllByRole("treeitem", { name: /^README\.md/ })).toHaveLength(2));
   expect(within(treeOf()).getAllByRole("treeitem", { name: /^README\.md/ }).at(-1)).not.toHaveAttribute("draggable");
@@ -414,7 +417,9 @@ it("names a file as a thread in a subfolder does, and only offers the thread's a
   setSubfolder();
   row(/^main\.rs/).focus();
   await user.keyboard("@");
-  expect(useComposerChips.getState().chips["t-done"]?.[0]).toMatchObject({ kind: "file", path: "main.rs" });
+  const chip = useComposerChips.getState().chips["t-done"]?.[0];
+  expect(chip).toMatchObject({ kind: "file", path: "main.rs" });
+  expect(chip).not.toHaveProperty("repoId");
 });
 
 it("opens a file below the thread's folder as the thread's own file, by the path the thread names", async () => {

@@ -1,20 +1,35 @@
 import { isFileTab, type FileTabId } from "./types";
 
+/**
+ * A file of the thread's checkout. `repoId` names a repository of a multi-repository thread whose worktree holds
+ * `path`: another repository's file, whose reads and writes send its `repo_id`. `primary` marks the thread's primary
+ * repository (its id is the project's own folder id, or the service's first when that folder is not in the thread): its
+ * tab is still the thread's own for reads, writes and failures (the service's absent `repo_id` is the primary) and only
+ * names the repository in its chip, its copy path and its line comments.
+ */
+export type ThreadFileTarget =
+  | { kind: "thread"; path: string; repoId?: undefined; primary?: undefined }
+  | { kind: "thread"; path: string; repoId: string; primary?: undefined }
+  | { kind: "thread"; path: string; repoId: string; primary: true };
+
 /** What a file tab shows: a file of the thread's own checkout, or one read through the left-bar explorer. */
 export type FileTarget =
-  /** `repoId` names another repository of a multi-repository thread (`path` is then relative to it); absent is the thread's own checkout. */
-  | { kind: "thread"; path: string; repoId?: string }
+  | ThreadFileTarget
   | { kind: "explorer"; projectId: string; worktreeId: string; path: string }
   /** A worktree with nothing to browse (its folder is missing): the tab says so. */
   | { kind: "worktree"; projectId: string; worktreeId: string }
   /** An issue opened beside the thread: it rides the file tab's identity, order, saving and closing, and reads from the tracker, not a folder. */
   | { kind: "issue"; tracker: string; scope: string; key: string };
 
-/** A file tab's id is its identity (the project and worktree ids and the path), never a display name, so a rename changes nothing. */
+/**
+ * A file tab's id is its identity (the project and worktree ids and the path), never a display name, so a rename changes
+ * nothing. A primary repository's file is its own tab (it names the repository, and reads as the thread's own), so its id
+ * carries the repository and `primary`; an ordinary thread's tab stays the one id older sessions saved.
+ */
 export function fileTabId(target: FileTarget): FileTabId {
   const parts =
     target.kind === "thread"
-      ? target.repoId === undefined ? ["t", target.path] : ["t", target.path, target.repoId]
+      ? target.repoId === undefined ? ["t", target.path] : target.primary === true ? ["t", target.path, target.repoId, "primary"] : ["t", target.path, target.repoId]
       : target.kind === "worktree"
         ? ["w", target.projectId, target.worktreeId]
         : target.kind === "issue"
@@ -35,6 +50,11 @@ export function parseFileTab(id: string): FileTarget | null {
     if (kind === "i" && rest.length === 3) return { kind: "issue", tracker: rest[0]!, scope: rest[1]!, key: rest[2]! };
     if (kind === "t" && rest.length === 1) return { kind: "thread", path: rest[0]! };
     if (kind === "t" && rest.length === 2 && rest[1] !== "") return { kind: "thread", path: rest[0]!, repoId: rest[1]! };
+    // A primary repository's file names its repository too, marked apart from another repository's tab: its reads and
+    // writes leave `repo_id` out, and the mark is what tells its tab to still resolve the path as the thread's own.
+    if (kind === "t" && rest.length === 3 && rest[1] !== "" && rest[2] === "primary") {
+      return { kind: "thread", path: rest[0]!, repoId: rest[1]!, primary: true };
+    }
     // A tab saved before names left the id carries two more parts, which are ignored.
     if (kind === "x" && (rest.length === 3 || rest.length === 5)) {
       const [projectId, worktreeId, path] = rest as [string, string, string];
