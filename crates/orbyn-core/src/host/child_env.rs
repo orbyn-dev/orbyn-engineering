@@ -3,6 +3,7 @@
 //! how a child behaves without any sign, so every spawn goes through this file. Only
 //! variable names are ever reported; a value is compared, never kept or logged.
 
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -103,6 +104,52 @@ fn name_of(name: &OsStr) -> String {
     name.to_string_lossy().into_owned()
 }
 
+/// A name in the form this platform compares it: folded to ASCII upper case on Windows, where
+/// a variable name ignores case, and left alone everywhere else, where `PATH` is the only
+/// spelling of `PATH`.
+fn compared(name: &str) -> Cow<'_, str> {
+    if cfg!(windows) {
+        Cow::Owned(name.to_ascii_uppercase())
+    } else {
+        Cow::Borrowed(name)
+    }
+}
+
+/// Whether an inherited name is `wanted` in the sense this platform means.
+fn is_named(name: &OsStr, wanted: &str) -> bool {
+    let name = name.to_string_lossy();
+    compared(&name) == compared(wanted)
+}
+
+/// The entry `wanted` names, as the environment spells it. Windows keeps the spelling a
+/// variable was set with — the search path arrives as `Path` as often as `PATH` — and treats
+/// both as one variable; POSIX treats them as two, so the comparison there is byte for byte.
+pub fn lookup<'a>(
+    vars: &'a [(OsString, OsString)],
+    wanted: &str,
+) -> Option<(&'a OsStr, &'a OsStr)> {
+    find_entry(vars, wanted).map(|(name, value)| (name.as_os_str(), value.as_os_str()))
+}
+
+fn find_entry<'a>(
+    vars: &'a [(OsString, OsString)],
+    wanted: &str,
+) -> Option<&'a (OsString, OsString)> {
+    vars.iter().find(|(name, _)| is_named(name, wanted))
+}
+
+/// The search path a child gets: the planned one when a rule changed it, otherwise the
+/// inherited one, under the name this environment spells it with, ready to widen.
+fn search_path<'a>(
+    vars: &'a [(OsString, OsString)],
+    planned: Option<&'a (OsString, OsString)>,
+) -> (OsString, Option<&'a OsStr>) {
+    planned.or_else(|| find_entry(vars, "PATH")).map_or_else(
+        || (OsString::from("PATH"), None),
+        |(name, value)| (name.clone(), Some(value.as_os_str())),
+    )
+}
+
 /// Whether an inherited `ANTHROPIC_BASE_URL` belongs to the host Claude session rather
 /// than to the person: it is nested, and no key or token for a gateway is set beside it.
 fn drops_host_endpoint(nested: bool, set: impl Fn(&str) -> bool) -> bool {
@@ -112,29 +159,31 @@ fn drops_host_endpoint(nested: bool, set: impl Fn(&str) -> bool) -> bool {
 /// Works out what to change. `engine` is true for a spawn that runs a coding engine,
 /// the only one a login preference applies to.
 pub fn plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool) -> EnvPlan {
-    let has = |wanted: &str| vars.iter().any(|(name, _)| name == wanted);
+    let has = |wanted: &str| find_entry(vars, wanted).is_some();
     let nested = has(NESTED_MARKER);
-    let app_dir = vars
-        .iter()
-        .find(|(name, _)| name == "APPDIR")
+    let app_dir = find_entry(vars, "APPDIR")
         .filter(|_| has("APPIMAGE"))
         .map(|(_, value)| PathBuf::from(value));
     let mut changes = EnvPlan::default();
     for (name, value) in vars {
-        let text = name_of(name);
+        // Every rule matches a variable by name, so it matches the way the platform does:
+        // without regard to case on Windows, byte for byte everywhere else. The name a
+        // variable is removed or set under stays as the environment spells it.
+        let spelled = name_of(name);
+        let text = compared(&spelled);
         let host_session =
-            nested && text.starts_with("CLAUDE") && !CLAUDE_SETTINGS.contains(&text.as_str());
+            nested && text.starts_with("CLAUDE") && !CLAUDE_SETTINGS.contains(&text.as_ref());
         let scrubbed_login = engine
             && prefer_saved
-            && (CLAUDE_CREDENTIALS.contains(&text.as_str())
-                || CODEX_CREDENTIALS.contains(&text.as_str())
-                || ENDPOINTS.contains(&text.as_str()));
+            && (CLAUDE_CREDENTIALS.contains(&text.as_ref())
+                || CODEX_CREDENTIALS.contains(&text.as_ref())
+                || ENDPOINTS.contains(&text.as_ref()));
         // The endpoint under the marker was set by the host session, not by the person,
         // unless a credential for it travels with it: that is a gateway of their own, and
         // dropping the URL would send its token to the default host.
         let host_endpoint =
-            engine && text == "ANTHROPIC_BASE_URL" && drops_host_endpoint(nested, |name| has(name));
-        let dev_login = engine && OAUTH_DEV_SWITCHES.contains(&text.as_str());
+            engine && text.as_ref() == "ANTHROPIC_BASE_URL" && drops_host_endpoint(nested, has);
+        let dev_login = engine && OAUTH_DEV_SWITCHES.contains(&text.as_ref());
         // Account material goes from every child: an engine, a tool, a terminal.
         let account = is_account_name(&text);
         if account
@@ -142,15 +191,15 @@ pub fn plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool) -> 
             || host_endpoint
             || dev_login
             || scrubbed_login
-            || CODEX_SESSION.contains(&text.as_str())
+            || CODEX_SESSION.contains(&text.as_ref())
         {
             changes.remove.push(name.clone());
             continue;
         }
         let Some(mount) = &app_dir else { continue };
-        if APPIMAGE_ONLY.contains(&text.as_str()) {
+        if APPIMAGE_ONLY.contains(&text.as_ref()) {
             changes.remove.push(name.clone());
-        } else if APPIMAGE_LISTS.contains(&text.as_str()) {
+        } else if APPIMAGE_LISTS.contains(&text.as_ref()) {
             let kept: Vec<PathBuf> = std::env::split_paths(value)
                 .filter(|entry| !entry.starts_with(mount))
                 .collect();
@@ -173,17 +222,13 @@ fn apply(command: &mut Command, engine: bool) {
         command.env_remove(name);
     }
     for (name, value) in &changes.set {
-        if name != "PATH" {
+        if !is_named(name, "PATH") {
             command.env(name, value);
         }
     }
-    let base = changes
-        .set
-        .iter()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, value)| value.clone())
-        .or_else(|| std::env::var_os("PATH"));
-    command.env("PATH", widened(base.as_deref()));
+    let planned = changes.set.iter().find(|(name, _)| is_named(name, "PATH"));
+    let (name, base) = search_path(&vars, planned);
+    command.env(name, widened(base));
 }
 
 /// For git, forge CLIs, browsers and anything else that is not an engine.
@@ -212,15 +257,8 @@ const MODULE_ANALYSIS_CACHE: &str = "PSModuleAnalysisCachePath";
 fn terminal_module_cache(vars: &[(OsString, OsString)]) -> Option<PathBuf> {
     // Windows environment names ignore case yet keep the spelling they were set with, so a
     // `psmoduleanalysiscachepath` inherited from a parent is the same setting as the name
-    // below; an exact comparison would miss the person's absolute path and replace it.
-    let value = |name: &str| {
-        vars.iter()
-            .find(|(key, _)| {
-                key.to_str()
-                    .is_some_and(|key| key.eq_ignore_ascii_case(name))
-            })
-            .map(|(_, value)| PathBuf::from(value))
-    };
+    // below; the lookup compares them the way Windows does.
+    let value = |name: &str| lookup(vars, name).map(|(_, value)| PathBuf::from(value));
     if value(MODULE_ANALYSIS_CACHE).is_some_and(|path| path.is_absolute()) {
         return None;
     }
@@ -268,12 +306,9 @@ pub fn for_terminal(engine: bool) -> EnvPlan {
 /// The terminal's plan for the given variables, so a test can feed it any set.
 fn terminal_plan(vars: &[(OsString, OsString)], engine: bool, prefer_saved: bool) -> EnvPlan {
     let mut changes = plan(vars, engine, prefer_saved);
-    changes.set.retain(|(name, _)| name != "PATH");
-    let base = vars
-        .iter()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, value)| value.clone());
-    changes.set.push(("PATH".into(), widened(base.as_deref())));
+    changes.set.retain(|(name, _)| !is_named(name, "PATH"));
+    let (name, base) = search_path(vars, None);
+    changes.set.push((name, widened(base)));
     #[cfg(windows)]
     if let Some(cache) = terminal_module_cache(vars) {
         changes
@@ -782,6 +817,82 @@ mod tests {
         );
         let unique: std::collections::HashSet<_> = entries.iter().collect();
         assert_eq!(unique.len(), entries.len());
+    }
+
+    /// The search path a plan sets, whatever spelling this platform gives its name.
+    fn planned_path(changes: &EnvPlan) -> &OsStr {
+        changes
+            .set
+            .iter()
+            .find(|(name, _)| name.to_string_lossy().eq_ignore_ascii_case("PATH"))
+            .map(|(_, value)| value.as_os_str())
+            .expect("the plan sets a search path")
+    }
+
+    #[test]
+    fn the_terminal_path_keeps_the_folders_the_environment_already_has() {
+        // The terminal starts from the person's own search path. On Windows it is usually
+        // spelled `Path`, and an exact lookup lost every entry, System32 among them, so a
+        // plain `ping` in that terminal was not recognised.
+        let inherited: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+        let changes = terminal_plan(&inherited, false, false);
+        let entries: Vec<PathBuf> = std::env::split_paths(planned_path(&changes)).collect();
+        let base: Vec<PathBuf> =
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+        assert!(!base.is_empty(), "the test process has no PATH");
+        assert!(
+            entries.len() >= base.len(),
+            "the terminal kept {} of the {} folders it inherited: {entries:?}",
+            entries.len(),
+            base.len()
+        );
+        assert_eq!(&entries[..base.len()], base.as_slice());
+        #[cfg(windows)]
+        {
+            let system32 =
+                PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot")).join("System32");
+            assert!(
+                entries.iter().any(|entry| entry
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&system32.to_string_lossy())),
+                "a terminal with no System32 cannot find ping: {entries:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_search_path_named_in_mixed_case_is_the_path_only_where_names_ignore_case() {
+        // Windows names ignore case, so `Path` is `PATH` there; POSIX compares the bytes.
+        let dir = crate::testing::TempDir::new();
+        let marker = dir.path();
+        let inherited = vec![(
+            OsString::from("Path"),
+            std::env::join_paths([marker]).unwrap(),
+        )];
+        let changes = terminal_plan(&inherited, false, false);
+        let entries: Vec<PathBuf> = std::env::split_paths(planned_path(&changes)).collect();
+        #[cfg(windows)]
+        assert_eq!(
+            entries.first().map(PathBuf::as_path),
+            Some(marker),
+            "Windows ignores case in a name, so `Path` is the search path: {entries:?}"
+        );
+        #[cfg(not(windows))]
+        assert!(
+            !entries.contains(&marker.to_path_buf()),
+            "POSIX compares names exactly, so `Path` is not the search path: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn a_variable_name_matches_without_regard_to_case_only_where_the_platform_does() {
+        // Windows resolves `claudecode` as `CLAUDECODE`, so the host-session rule sees it.
+        let inherited = vars(&[("claudecode", "1"), ("claude_code_simple", "1")]);
+        let gone = removed(&plan(&inherited, false, false));
+        #[cfg(windows)]
+        assert_eq!(gone, ["claudecode", "claude_code_simple"]);
+        #[cfg(not(windows))]
+        assert!(gone.is_empty(), "{gone:?}");
     }
 
     #[test]
