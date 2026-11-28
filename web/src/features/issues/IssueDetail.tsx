@@ -20,12 +20,15 @@ import { IssueGlyph } from "./IssueGlyph";
 import { Person } from "./IssuePerson";
 import { ReactionBar } from "./IssueReactions";
 import { IssueStateButton } from "./IssueStateMenu";
+import { LinkedThreadsChip } from "./LinkedThreadsChip";
+import { LinkThreadDialog } from "./LinkThreadDialog";
 import { reloadIssueLinks, useIssueThreads } from "./links";
 import { StartThreadDialog } from "./StartThreadDialog";
 
-function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
+function LinkedThreads({ issue, onStart, link, onLinked }: { issue: Detail; onStart(): void; link(threadId: string): Promise<boolean>; onLinked(): void }) {
   const { threadIds, loaded, failed, retry } = useIssueThreads(issue);
   const threads = useWorkspace((state) => state.threads);
+  const [linking, setLinking] = useState(false);
   const known = threadIds.flatMap((id) => (threads[id] ? [threads[id]] : []));
   return (
     <section className="iss-card" role="group" aria-label="Linked threads">
@@ -49,7 +52,20 @@ function LinkedThreads({ issue, onStart }: { issue: Detail; onStart(): void }) {
           ))}
         </ul>
       )}
-      <Button icon={<Plus size={14} aria-hidden />} onClick={onStart}>Start a thread from this issue</Button>
+      {failed && known.length > 0 ? (
+        // The read after a link failed while the card still lists what it knew: the header counts the linked threads from
+        // the issue's own read and can already show the new one, so the card says it is behind and Retry reads it again
+        // (the link write itself already succeeded and is not repeated).
+        <div className="iss-start-fail" role="alert">
+          <span className="iss-quiet">Couldn’t refresh the linked threads. The list may be out of date.</span>
+          <Button onClick={() => void retry()}>Retry</Button>
+        </div>
+      ) : null}
+      <div className="iss-thread-acts">
+        <Button icon={<Plus size={14} aria-hidden />} onClick={onStart}>Start a thread from this issue</Button>
+        <Button onClick={() => setLinking(true)}>Link to a thread…</Button>
+      </div>
+      {linking ? <LinkThreadDialog issue={issue} link={link} onClose={() => setLinking(false)} onLinked={onLinked} /> : null}
     </section>
   );
 }
@@ -166,9 +182,22 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
   const phone = useLayoutWidth() === "phone";
   const [starting, setStarting] = useState(false);
   const offered = useEditOffered();
-  const read = useAsync(`issues:detail:${version}:${tracker}:${scope}:${issueKey}`, async (signal) => {
+  const detailKey = `issues:detail:${version}:${tracker}:${scope}:${issueKey}`;
+  const activeKey = useRef(detailKey);
+  activeKey.current = detailKey;
+  const metadata = useRef<{ key: string; states: Detail["states"]; reactions: Detail["reactions"] } | null>(null);
+  const metadataRead = useRef(0);
+  const read = useAsync(detailKey, async (signal) => {
     if (!isTracker(tracker) || !isIssueKey(issueKey)) throw new ApiFailure("not_found", "No such tracker.", 404);
-    return issuesApi().get({ tracker, scope, key: issueKey }, signal);
+    const generation = ++metadataRead.current;
+    const next = await issuesApi().get({ tracker, scope, key: issueKey }, signal);
+    const held = metadata.current?.key === detailKey ? metadata.current : null;
+    const merged = { ...next, states: next.states ?? held?.states, reactions: next.reactions ?? held?.reactions };
+    // A stale read or a previous connection must not replace current issue metadata.
+    if (generation === metadataRead.current && activeKey.current === detailKey) {
+      metadata.current = { key: detailKey, states: merged.states, reactions: merged.reactions };
+    }
+    return merged;
   });
   const waited = useWaited(read.status === "loading");
   // One write at a time on this page, whichever control makes it: a second click, or another control, while one is in flight is
@@ -185,9 +214,38 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
       const next = await call();
       // States and the reaction counts come from some answers only (a plain detail read carries no reactions), so a write must not
       // empty what the page already showed: the bar would blink off after an unrelated edit.
-      read.setData({ ...next, states: next.states ?? shown.current?.states, reactions: next.reactions ?? shown.current?.reactions });
+      const previous = activeKey.current === detailKey ? shown.current : null;
+      const merged = { ...next, states: next.states ?? previous?.states, reactions: next.reactions ?? previous?.reactions };
+      if (activeKey.current === detailKey && next.tracker === tracker && next.scope === scope && next.key === issueKey) {
+        metadataRead.current += 1;
+        metadata.current = { key: detailKey, states: merged.states, reactions: merged.reactions };
+      }
+      read.setData(merged);
       void reloadIssueLinks(version);
       return next;
+    } finally {
+      locked.current = false;
+      setWriting(false);
+    }
+  };
+  // The card's link is a write on this page too: it takes the same guard, then reads the links again from a read that starts
+  // after the write, so the card lists the thread the tracker now holds rather than an answer read before it.
+  const linkThread = async (threadId: string): Promise<boolean> => {
+    const target = read.data;
+    if (!target || locked.current) return false;
+    locked.current = true;
+    setWriting(true);
+    try {
+      await issuesApi().link(threadId, target);
+      // The write confirmed this link even if the later detail read fails. Merge into the current
+      // issue, not the pre-write snapshot, and never copy another issue's fields after navigation.
+      const current = shown.current;
+      if (activeKey.current === detailKey && current && current.tracker === target.tracker && current.scope === target.scope && current.key === target.key) {
+        metadataRead.current += 1;
+        read.setData({ ...current, linked_threads: [...new Set([...current.linked_threads, threadId])] });
+      }
+      await reloadIssueLinks(version, { afterWrite: true });
+      return true;
     } finally {
       locked.current = false;
       setWriting(false);
@@ -199,7 +257,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
   const display = issue?.display_key ?? (/^\d+$/.test(issueKey) ? `#${issueKey}` : issueKey);
   return (
     <>
-      <PageBar back={{ name: "issues" }}>
+      <PageBar back={{ name: "issues" }} actions={issue && issue.linked_threads.length > 0 ? <LinkedThreadsChip issue={issue} /> : undefined}>
         <h1 tabIndex={-1} data-page-title>{issue?.title ?? "Issue"}</h1>
         {issue ? <span className="page-sub"><span className="page-sub-item">{issue.display_key} · {trackerName(issue.tracker)} · {issue.scope}</span><span className="page-sub-item iss-state"><IssueGlyph state={issue.state} />{stateWord(issue.state)}</span></span> : null}
       </PageBar>
@@ -223,7 +281,7 @@ export function IssueDetail({ tracker, scope, issueKey, host }: { tracker: strin
             </div>
             <aside className="iss-right">
               <Facts issue={read.data} edit={{ issue: read.data, offered, write, writing }} host={host} />
-              <LinkedThreads issue={read.data} onStart={() => setStarting(true)} />
+              <LinkedThreads issue={read.data} onStart={() => setStarting(true)} link={linkThread} onLinked={() => { void read.refreshQuietly(); }} />
             </aside>
           </div>
         )}

@@ -89,6 +89,7 @@
 .iss-card dd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin: 0; }
 .iss-threads { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; padding: 0; list-style: none; }
 .iss-threads a { display: flex; flex-direction: column; color: inherit; text-decoration: none; font-size: var(--text-meta); }
+.iss-thread-acts { display: flex; flex-wrap: wrap; gap: 8px; }
 .iss-detail-skel { display: flex; flex-direction: column; gap: 10px; }
 .iss-start { display: flex; flex-direction: column; gap: 6px; min-width: min(420px, 80vw); }
 .iss-start textarea, .iss-start select { font: inherit; }
@@ -102,6 +103,8 @@
 .iss-prow { position: relative; display: flex; align-items: center; gap: 4px; }
 .iss-prow-open { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .iss-prow-open:hover { background: var(--color-rowHover); }
+.iss-pop a.iss-prow-open { color: inherit; text-decoration: none; }
+.iss-pop a.iss-prow-open:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; }
 .iss-prow-title { display: flex; gap: 6px; font-size: var(--text-meta); min-width: 0; }
 .iss-prow-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .iss-key { color: var(--color-muted); flex: none; }
