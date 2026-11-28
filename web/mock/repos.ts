@@ -11,6 +11,7 @@
 import { ApiFailure } from "../src/api/client.ts";
 import type { PermissionMode, Thread } from "../src/api/types.ts";
 import type { PublishInput, RepoScan, ReposApi, RepoRow, StartThreadInput, TaskFolder, ThreadRepo } from "../src/features/repos/contract.ts";
+import { multiRepoThreadId } from "./multiRepo.ts";
 
 const row = (id: string, branch: string | null, extra: Partial<RepoRow> = {}): RepoRow => ({
   id, name: id, path: `~/Documents/Github/${id}`, is_git: branch !== null, trusted: true, branch,
@@ -49,11 +50,14 @@ export function createReposMock(init: {
   repositories?: RepoRow[] | null; threads?: Record<string, ThreadRepo[]>; permissionModes?: Record<string, PermissionMode[]>; delayMs?: number; publish?: "unsupported" | "works"; maxPerThread?: number; takenBranches?: Record<string, string[]>; cloneDirectory?: string | null; scan?: (path: string) => RepoScan | null;
 } = {}): ReposMock {
   let repositories = init.repositories === undefined ? repoFixtures() : init.repositories;
+  const sampleThread: ThreadRepo[] = [
+    { repo_id: "orbyn-engineering", name: "orbyn-engineering", branch: "fix/login", added: 4, deleted: 3, trusted: true, files: ["auth/redirect.ts", "auth/redirect.test.ts"] },
+    { repo_id: "orbyn-planner", name: "orbyn-planner", branch: "fix/login", added: 3, deleted: 0, trusted: true, files: ["calendar/feed.ts"] },
+  ];
   const threads: Record<string, ThreadRepo[]> = init.threads ?? {
-    "thread-1": [
-      { repo_id: "orbyn-engineering", name: "orbyn-engineering", branch: "fix/login", added: 4, deleted: 3, trusted: true, files: ["auth/redirect.ts", "auth/redirect.test.ts"] },
-      { repo_id: "orbyn-planner", name: "orbyn-planner", branch: "fix/login", added: 3, deleted: 0, trusted: true, files: ["calendar/feed.ts"] },
-    ],
+    "thread-1": sampleThread,
+    // The plain dev mock's own multi-repository thread (mock/fixtures.ts), so `#/preview/repos` shows its Repos chip too.
+    [multiRepoThreadId]: sampleThread,
   };
   const writes: string[] = [];
   const scans: string[] = [];
