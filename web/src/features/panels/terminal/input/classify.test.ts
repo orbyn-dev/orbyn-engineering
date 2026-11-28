@@ -93,4 +93,13 @@ describe("looksSecret", () => {
     "PASSPHRASE=`printf RAN`",
     "PASSPHRASE=$(printf RAN)",
     "PASSPHRASE=$'   '"])("passes %j", (text) => expect(looksSecret(text)).toBe(false));
+  it("reads a very long line without a stack overflow, and a value past the bound is a typed secret", () => {
+    // 20,000 characters of nesting would recurse far past the stack if read in full.
+    for (const nested of ['"'.repeat(20000), '"${A:-'.repeat(4000), '"$('.repeat(7000), "${A:-".repeat(4000) + "}".repeat(4000)]) {
+      expect(() => looksSecret(`API_TOKEN=${nested}`)).not.toThrow();
+      expect(looksSecret(`API_TOKEN=${nested}`)).toBe(true);
+    }
+    // A copy or a command is still not a secret, however long the rest of the line is.
+    expect(looksSecret(`API_TOKEN=$(gh auth token) ${"echo ok ".repeat(5000)}`)).toBe(false);
+  });
 });

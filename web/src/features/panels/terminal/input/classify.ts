@@ -366,10 +366,20 @@ const SECRET_ASSIGNMENT = /\b[A-Z0-9_]*(?:PASSPHRASE|KEY|TOKEN|SECRET|PASSWORD|P
  */
 function typedAssignment(line: string): boolean {
   for (const found of line.matchAll(SECRET_ASSIGNMENT)) {
-    if (typedValue(valueAt(line, (found.index ?? 0) + found[0].length))) return true;
+    // The readers above call each other once per nesting level, so a value nested thousands deep would overflow the stack
+    // (and a long one is read again for each assignment). Only the first MAX_VALUE characters are read: a secret-named
+    // assignment whose value runs past that is no copy or command of a few words, so it is read as a typed secret.
+    const window = line.slice((found.index ?? 0) + found[0].length, (found.index ?? 0) + found[0].length + MAX_VALUE + 1);
+    const value = valueAt(window, 0);
+    // A read that stopped short of a word's end inside a window that was cut is a span that was still open at the cut.
+    const open = window.length > MAX_VALUE && !/^[ \t\r\n;&|<>]/.test(window.slice(value.length));
+    if (value.length > MAX_VALUE || open || typedValue(value)) return true;
   }
   return false;
 }
+
+/** The longest assignment value `typedAssignment` reads in full; a longer one counts as a typed secret. */
+const MAX_VALUE = 1024;
 
 /**
  * Whether the text looks like a credential. This is a local heuristic, not the Settings › Secrets rules (those live in
