@@ -135,12 +135,17 @@ jobs:
       # The parity counter's own tests: scripts/ is Rust scope, so this runs whenever the counter changes.
       - if: env.RUST == 'true'
         run: python3 scripts/test_count_parity.py
-      - if: env.WEB == 'true'
+      - if: env.RUST == 'true' || env.WEB == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # The macOS signing config read at rest: only the engine host is signed with an entitlements file.
+      # The desktop build's macOS leg proves it against real ad hoc codesign, but that job is skipped on a
+      # light pull request, so this guard runs here too, wherever scripts/ changes.
+      - if: env.RUST == 'true'
+        run: node --test scripts/macos-signing-config.test.mjs
       - if: env.WEB == 'true'
         run: npm ci
         working-directory: web
@@ -686,7 +691,7 @@ jobs:
           done
       - name: Release script tests
         shell: bash
-        run: node --test scripts/release-evidence.test.mjs scripts/smoke-service.test.mjs scripts/smoke-app-diagnostics.test.mjs scripts/smoke-app-environment.test.mjs scripts/smoke-app-providers.test.mjs scripts/smoke-app-usage.test.mjs scripts/verify-macos-release.test.mjs scripts/install.test.mjs scripts/check-desktop-assets.test.mjs
+        run: node --test scripts/release-evidence.test.mjs scripts/smoke-service.test.mjs scripts/smoke-app-diagnostics.test.mjs scripts/smoke-app-environment.test.mjs scripts/smoke-app-providers.test.mjs scripts/smoke-app-usage.test.mjs scripts/verify-macos-release.test.mjs scripts/install.test.mjs scripts/check-desktop-assets.test.mjs scripts/sign-macos-release.test.mjs scripts/check-macos-entitlements.test.mjs
       - name: Load the packaged service
         shell: bash
         run: node scripts/smoke-package.mjs

@@ -19,7 +19,7 @@ How a release is built today. Nothing here publishes: a person reviews and promo
 
 A local build is ad-hoc signed the same way by `scripts/sign-adhoc-macos.sh` (run it after `npm run build` in `desktop/`; it signs the whole `.app` with `-`, no hardened runtime, and verifies it). Without it a local bundle fails `codesign --verify --deep --strict` ("code has no resources but signature indicates they must be present"), because Tauri does not sign a bundle when it has no identity.
 
-`scripts/sign-macos-release.sh` is the per-binary release signer (the host with `engine-host/entitlements.plist`, everything else with none); no release job runs it yet.
+`scripts/sign-macos-release.sh` is the per-binary release signer (the host with `engine-host/entitlements.plist`, everything else with none); no release job runs it yet. The desktop build runs the signer's and the check's tests on the macOS leg, and `scripts/macos-signing-config.test.mjs` guards the per-binary config on every platform.
 
 In both macOS cases `codesign --verify --deep --strict` runs on the `.app` and the dmg's `.app`, and a failure fails the job.
 
@@ -27,7 +27,7 @@ There is no Apple Developer account, so no Developer ID and no notarization. Exp
 
 ## Not built
 
-- The hardened-runtime, `get-task-allow` and `disable-library-validation` release check that [the sign-in gate](account.md#sign-in-gate) relies on. Nothing in CI or `scripts/` runs it. Ad-hoc builds set no hardened runtime.
+- The hardened-runtime, `get-task-allow` and `disable-library-validation` release check that [the sign-in gate](account.md#sign-in-gate) relies on, run against a real Developer ID build: `scripts/sign-macos-release.sh` ends with `scripts/check-macos-entitlements.sh --release`, but no release job runs that signer, so CI only runs their tests on ad hoc signed stand-in bundles. Ad-hoc builds set no hardened runtime.
 - Windows signing, notarization, an MSI or MSIX.
 
 ## Updates
