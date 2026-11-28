@@ -9,7 +9,7 @@ use orbyn_contracts::{
 use serde_json::{Value, json};
 
 use super::harness::{KEY_MARKER, Turn, brief, key, world};
-use super::review_support::{arc, built, crew, finding, reviewed};
+use super::review_support::{arc, built, commit_all, crew, finding, reviewed};
 use crate::crew::Page;
 use crate::store::FindingRepro;
 
@@ -75,7 +75,7 @@ pub(super) fn crew_rows(w: &super::harness::World) -> Vec<(String, i64)> {
 }
 
 /// Every Flow read for a task and its crew, as one text, so a leak anywhere shows.
-fn everything(w: &super::harness::World, crew_id: &str, task: &str) -> String {
+async fn everything(w: &super::harness::World, crew_id: &str, task: &str) -> String {
     let list = w
         .core
         .crew_flow_tasks(crew_id, None, None, None, page())
@@ -83,13 +83,12 @@ fn everything(w: &super::harness::World, crew_id: &str, task: &str) -> String {
     let detail = w.core.crew_flow_task(task).unwrap();
     let crews = w.core.crew_flow_crews(page()).unwrap();
     // Each lane on its own, named as the zoom shows it.
-    let lanes: Vec<String> = detail
-        .lanes
-        .iter()
-        .map(|lane| {
-            serde_json::to_string(&w.core.crew_flow_lane(task, &lane.lane).unwrap()).unwrap()
-        })
-        .collect();
+    let mut lanes: Vec<String> = Vec::new();
+    for lane in &detail.lanes {
+        lanes.push(
+            serde_json::to_string(&w.core.crew_flow_lane(task, &lane.lane).await.unwrap()).unwrap(),
+        );
+    }
     format!(
         "{} {} {} {}",
         serde_json::to_string(&list).unwrap(),
@@ -223,7 +222,11 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
 
     // A lane is read on its own: the row the zoom shows, what it was given, and the finding it filed with the
     // reviewer's own evidence.
-    let one = w.core.crew_flow_lane(&subject, "correctness").unwrap();
+    let one = w
+        .core
+        .crew_flow_lane(&subject, "correctness")
+        .await
+        .unwrap();
     assert_eq!(one.task, subject);
     assert_eq!(one.crew, crew_id);
     assert_eq!(
@@ -250,13 +253,13 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
     assert_eq!(filed.severity, "high");
     assert!(!one.truncated);
     // The security lane is read for itself and does not carry the code lane's finding.
-    let security = w.core.crew_flow_lane(&subject, "security").unwrap();
+    let security = w.core.crew_flow_lane(&subject, "security").await.unwrap();
     assert_eq!(security.lane.group, "security");
     assert!(security.findings.iter().all(|f| f.lane == "security"));
     // A lane that did not run, a reviewer's own task and a name that is not a lane are refused.
     for lane in &lanes {
         assert!(
-            w.core.crew_flow_lane(lane, "correctness").is_err(),
+            w.core.crew_flow_lane(lane, "correctness").await.is_err(),
             "a reviewer's own task answered for {lane}"
         );
     }
@@ -266,7 +269,7 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
         (&subject, "a lane"),
     ] {
         assert!(
-            w.core.crew_flow_lane(task, lane).is_err(),
+            w.core.crew_flow_lane(task, lane).await.is_err(),
             "{lane} answered for {task}"
         );
     }
@@ -305,11 +308,178 @@ async fn the_cells_follow_a_task_through_its_review_and_the_reads_change_nothing
     let moved = w.task(&subject).updated_at;
     let rows = crew_rows(&w);
     for _ in 0..3 {
-        everything(&w, &crew_id, &subject);
+        everything(&w, &crew_id, &subject).await;
     }
     assert_eq!(rows, crew_rows(&w));
     assert_eq!(moved, w.task(&subject).updated_at);
     assert!(before.len() >= 20, "every crew table was counted");
+}
+
+/// The lane read answers what the lane pages draw and what the Map's lane chips name: the repository rule that asked for
+/// the lane, read at the commit the work started from as the review read it, and the change the lane read, pinned at the
+/// commit it read. It answers for one lane, and for the work's own task.
+#[tokio::test]
+async fn a_lane_read_serves_its_rule_and_the_change_it_read_alone() {
+    let w = crew(arc(|n, root| match n {
+        0 => {
+            // The work is committed before it reports, so the checks verify a commit of its own and a lane can be pinned to
+            // it: a review of a checkout with nothing committed reads the commit the work started from.
+            let turn = built(root);
+            commit_all(root, "the work");
+            turn
+        }
+        _ => reviewed(vec![finding(
+            "src/lib.txt",
+            1,
+            "It wraps on a large value.",
+        )]),
+    }))
+    .await;
+    // The rules of the commit the work starts from: a locked rule asks for `security` under `src/**`, a rule asks for no
+    // lane the change runs, and no rule names `correctness`, which the review call names itself.
+    super::review::commit_rules(
+        &w,
+        &json!({ "required": ["checks"], "lanes": [
+            { "lane": "security", "when": { "paths": ["src/**"] }, "locked": true },
+            { "lane": "docs", "when": { "paths": ["docs/**"] } },
+        ] })
+        .to_string(),
+    );
+    let subject = w.built_work().await;
+    let base = w
+        .core
+        .store
+        .crew_run(&subject)
+        .unwrap()
+        .unwrap()
+        .base_commit
+        .expect("the commit the work started from");
+    let lanes = w.review(&subject, &["correctness", "security"]).await;
+    for lane in &lanes {
+        w.until_state(lane, "passed").await;
+    }
+
+    // The security lane: a rule of the repository asks for it, locks it, and names the paths the change must touch.
+    let security = w.core.crew_flow_lane(&subject, "security").await.unwrap();
+    assert_eq!(security.rule_absent, None);
+    let rule = security.rule.expect("the security lane's rule");
+    assert!(rule.by_rule, "a rule of the repository asks for it");
+    assert!(rule.locked, "the rule locks the lane");
+    assert_eq!(rule.when_paths, Some(vec!["src/**".to_owned()]));
+    // The change it read: the builder's committed file, as counts and never a patch, from the commit the work started from.
+    assert_eq!(security.given.diff_absent, None);
+    let diff = security.given.diff.expect("the change the lane read");
+    assert_eq!(diff.base, base);
+    assert!(diff.files_total >= 1);
+    assert!(diff.added >= 1);
+    let added = diff
+        .files
+        .iter()
+        .find(|file| file.path == "src/lib.txt")
+        .expect("the file the builder committed is in the change the lane read");
+    assert_eq!(added.status, "added");
+    assert_eq!(security.given.commit, security.lane.commit);
+    // The diff is pinned at the commit the lane read: a commit made after the review is not in it.
+    std::fs::write(w.repo.join("src/after.txt"), "after the review\n").unwrap();
+    commit_all(&w.repo, "after the review");
+    let after = w.core.crew_flow_lane(&subject, "security").await.unwrap();
+    assert!(
+        after
+            .given
+            .diff
+            .expect("the change the lane read")
+            .files
+            .iter()
+            .all(|file| file.path != "src/after.txt"),
+        "the lane's diff reads the commit it read, not the checkout's head"
+    );
+    // The lane read answers one lane: the code lane has its own rule (no rule names it) and its own findings, and the
+    // security lane's rule is not in it.
+    let code = w
+        .core
+        .crew_flow_lane(&subject, "correctness")
+        .await
+        .unwrap();
+    assert_eq!(code.rule_absent, None);
+    let code_rule = code.rule.expect("the code lane answers its rule");
+    assert!(!code_rule.by_rule, "no rule of the repository names it");
+    assert!(!code_rule.locked);
+    assert_eq!(code_rule.when_paths, None, "no rule names it at all");
+    assert_eq!(code.lane.lane, "correctness");
+    assert!(code.findings.iter().all(|f| f.lane == "correctness"));
+    assert!(security.findings.iter().all(|f| f.lane == "security"));
+    assert!(
+        code.given.diff.is_some(),
+        "the code lane read the same commit"
+    );
+    // The rule of another lane is not the lane's: `docs` runs for no line of this change, and its paths are not `code`'s.
+    assert_ne!(code_rule.when_paths, Some(vec!["docs/**".to_owned()]));
+}
+
+#[tokio::test]
+async fn a_redacted_commit_still_reads_the_change_the_lane_saw() {
+    // The response shows the lane's commit scrubbed, while the change is read from the stored revision: a scrubbed
+    // value is not a revision, so reading the shown one would report a readable change as unreadable.
+    use orbyn_contracts::{PatternKind, PatternScope, RedactionPatternInput};
+
+    let w = crew(arc(|n, root| match n {
+        0 => {
+            let turn = built(root);
+            commit_all(root, "the work");
+            turn
+        }
+        _ => reviewed(vec![finding(
+            "src/lib.txt",
+            1,
+            "It wraps on a large value.",
+        )]),
+    }))
+    .await;
+    let subject = w.built_work().await;
+    let lanes = w.review(&subject, &["correctness"]).await;
+    for lane in &lanes {
+        w.until_state(lane, "passed").await;
+    }
+    let first = w
+        .core
+        .crew_flow_lane(&subject, "correctness")
+        .await
+        .unwrap();
+    let commit = first.given.commit.clone().expect("the lane's commit");
+    assert_eq!(first.given.diff_absent, None);
+    // A personal pattern that matches the commit itself: the row's commit is scrubbed, the revision is not.
+    w.core
+        .save_redaction_pattern(
+            "local",
+            None,
+            &RedactionPatternInput {
+                name: "A commit".into(),
+                pattern: commit.clone(),
+                kind: PatternKind::Text,
+                applies_to: PatternScope::Anywhere,
+                accept_broad: None,
+            },
+        )
+        .unwrap();
+    let redacted = w
+        .core
+        .crew_flow_lane(&subject, "correctness")
+        .await
+        .unwrap();
+    let shown = redacted.given.commit.clone().unwrap_or_default();
+    assert!(
+        shown != commit && shown.contains("A commit"),
+        "the response shows the person's own mask over the commit: {shown}"
+    );
+    assert_eq!(
+        redacted.given.diff_absent, None,
+        "the change is still read, from the stored revision"
+    );
+    let diff = redacted.given.diff.expect("the change the lane read");
+    assert!(
+        diff.files.iter().any(|file| file.path == "src/lib.txt"),
+        "the change is the one the lane read"
+    );
 }
 
 #[tokio::test]
@@ -344,7 +514,7 @@ async fn the_answer_key_and_a_checks_text_are_never_in_a_read() {
     for check in &key.checks {
         forbidden.push(check.id.as_str().to_owned());
     }
-    let text = everything(&w, &crew_id, &subject);
+    let text = everything(&w, &crew_id, &subject).await;
     for (n, needle) in forbidden.iter().filter(|n| n.len() > 3).enumerate() {
         assert!(
             !text.contains(needle.as_str()),
@@ -429,7 +599,11 @@ async fn a_findings_evidence_is_withheld_and_cut_and_keeps_a_path() {
         "withholding happens before the leak check"
     );
     // The lane read serves the same scrubbed text, and never the key's id.
-    let one = w.core.crew_flow_lane(&subject, "correctness").unwrap();
+    let one = w
+        .core
+        .crew_flow_lane(&subject, "correctness")
+        .await
+        .unwrap();
     let filed = one
         .findings
         .iter()
@@ -438,7 +612,7 @@ async fn a_findings_evidence_is_withheld_and_cut_and_keeps_a_path() {
     assert_eq!(&filed.evidence, evidence);
     assert!(!filed.evidence.contains(&key_id));
     // The crew's whole read surface is held to it, the lane read included.
-    let everything = everything(&w, &crew_id, &subject);
+    let everything = everything(&w, &crew_id, &subject).await;
     assert!(
         !everything.contains(KEY_MARKER),
         "the key's command reached a read"
@@ -503,7 +677,7 @@ async fn a_task_that_is_not_final_shows_no_check_text_and_no_gate_reason() {
             .unwrap();
     }
 
-    let text = everything(&w, &task.crew_id, &running);
+    let text = everything(&w, &task.crew_id, &running).await;
     assert!(
         !text.contains(&nonce),
         "check text reached a read of a task that is running"
@@ -699,7 +873,7 @@ async fn a_gate_reason_that_quotes_a_repro_or_another_tasks_check_is_withheld() 
         "the task is final, so reasons are read"
     );
 
-    let text = everything(&w, &crew_id, &subject);
+    let text = everything(&w, &crew_id, &subject).await;
     assert!(
         text.contains("ran "),
         "the reason is read once the task is final"
