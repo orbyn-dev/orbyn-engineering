@@ -97,8 +97,8 @@ type ThreadRepo = { repo_id; name; branch; base_branch?: string | null; added: n
 - `ThreadRepo.base_branch`: **confirmed.** The branch this repository's worktree branch was cut from: the
   repository's `StartRepoChoice.base_branch` at the start, or the branch checked out in that repository when
   it was added later. Absent only for a repository stored before the service recorded it (migration 90): the
-  base is then not known and is never guessed. The web app does not read it yet; a follow-up compares a
-  branch against it instead of the primary repository's base.
+  base is then not known and is never guessed. The Changes panel's branch-ahead check compares the selected
+  repository against it, and keeps the older base when it is absent.
 - `StartThreadInput.permission_mode`: **confirmed.** The thread is created in that mode, checked against the
   engine's `permission_modes`; a mode the engine does not offer is `400 permission_mode_unsupported`
   (Cursor refuses what it cannot enforce, as for a single-repository thread). `model` of `null` is the
@@ -323,8 +323,19 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   keeps none and is not read.
 - **The 200-file cap.** A repository's `ThreadRepo.files` is cut at 200 by the service. A repository group whose list holds 200
   says "200 shown" quietly on its header.
-- **Still primary only.** Pull request screens, Publish repository (a quiet disabled item with a title when another repository is
-  chosen) and the Create pull request base check of the Changes footer act on the primary repository.
+- **The Changes footer's Create pull request** follows the thread's chosen repository: its linked-pull read and branch-ahead check
+  carry the repository's `repo_id` (left out for the primary) and the dialog acts on that repository only, so a linked pull request
+  there keeps the button off. The branch-ahead check compares the selected repository against the base that repository's worktree
+  was cut from (`ThreadRepo.base_branch`, migration 90), and keeps the older base (the picked base, the thread's worktree base or
+  `main`) when the service has none: an ordinary thread, or a repository stored before migration 90. The offer counts the chosen
+  repository's own changes: the working-tree, turn and thread lists hold every trusted repository's files, and another
+  repository's change is not this one's to carry. The dialog keeps the repository it was opened for until it closes, so a
+  repository read that fails while it is open cannot move the pull request to the primary or drop the note naming the repository it
+  acts on. The offer also follows the chosen repository's Git availability: a primary checkout that cannot answer Git questions no
+  longer hides Create pull request for another repository that can, and a chosen repository that cannot answer hides the offer. An
+  ordinary thread has no choice and no call changes.
+- **Still primary only.** Pull request screens and Publish repository (a quiet disabled item with a title when another repository is
+  chosen) act on the primary repository.
 - **Verified against a live service.** The project repository screens and the thread's repository routes ran against a real
   `orbynd` with `ORBYN_MULTI_REPO=1`: `web/e2e/real/multi-repo.spec.ts`, 3 passed @ app 7734e4991 + spec 3152baf7;
   `web/e2e/real/multi-repo-repositories.spec.ts`, 7 passed @ app f2b539677 + spec f2b539677, 26 Nov 2026; and

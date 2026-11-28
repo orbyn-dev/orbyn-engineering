@@ -164,8 +164,8 @@ describe("Flow on the real routes", () => {
     expect(document.body.textContent).not.toContain("A reason for a task that is not over");
     await user.click(screen.getByRole("button", { name: "All tasks" }));
     await user.click(within(await screen.findByRole("list", { name: "Tasks" })).getByRole("button", { name: /Update the login docs/ }));
-    // The same service text for a task that is over is shown.
-    expect(await screen.findAllByText("A reason for a task that is not over", { selector: "span" })).toHaveLength(2);
+    // The same service text for a task that is over is shown, once per gate it decided.
+    expect(await screen.findAllByText("A reason for a task that is not over", { selector: "span" })).toHaveLength(4);
   });
 
   it("says how each reviewer lane ran (tier, commit read, same engine) and words a finding by its check", async () => {
@@ -242,6 +242,34 @@ describe("Flow on the real routes", () => {
     expect(await screen.findByText("This service has no artifacts read")).toBeVisible();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByText(/stay Planned/)).toBeVisible();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("opens the gates view from the zoomed task on the task's read, with the served decisions and reasons, and back", async () => {
+    mock.reset("crew");
+    const user = userEvent.setup();
+    render(<FlowZoom id="task-merged" onBack={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Gates" }));
+    const view = await screen.findByRole("region", { name: "Gates" });
+    expect(view).toHaveTextContent("Checks → passed");
+    expect(view).toHaveTextContent("Review → passed");
+    expect(view).toHaveTextContent("Decided by");
+    expect(view).toHaveTextContent("2 of 2 checks ran on the commit and passed");
+    expect(view).toHaveTextContent("Merged by Crew <b>docs</b>");
+    expect(view).toHaveTextContent("Docs");
+    await user.click(screen.getByRole("button", { name: "Task" }));
+    expect(await screen.findByRole("list", { name: "Stages" })).toBeVisible();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("hides a gate's reason on the gates view while the task is not over", async () => {
+    mock.reset("crew-flow-leak");
+    const user = userEvent.setup();
+    render(<FlowZoom id="task-redirect" onBack={() => undefined} />);
+    await user.click(await screen.findByRole("button", { name: "Gates" }));
+    const view = await screen.findByRole("region", { name: "Gates" });
+    expect(view).toHaveTextContent("Checks → passed");
+    expect(view).not.toHaveTextContent("A reason for a task that is not over");
     expect(writes()).toHaveLength(0);
   });
 

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createReposMock } from "../../../../mock/repos";
@@ -7,6 +7,7 @@ import { pullsApi } from "../../../api/pulls";
 import type { FileDiff } from "../../../api/types";
 import { chipLabel, chipPrompt } from "../../../product/composer/composerContext";
 import { useComposerChips } from "../../../product/state/composerChipStore";
+import { useThreadLogs } from "../../../product/state/threadLogs";
 import { fileTabId, useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { chooseRepo, setReposApi, type RepoRow, type ThreadRepo } from "../../repos";
@@ -18,8 +19,8 @@ const FILE: FileDiff = { path: "auth/redirect.ts", status: "modified", additions
   patch: "diff --git a/auth/redirect.ts b/auth/redirect.ts\nindex 1111111..2222222 100644\n--- a/auth/redirect.ts\n+++ b/auth/redirect.ts\n@@ -14,3 +14,4 @@ after(req)\n export function after(req) {\n-  return \"/home\"\n+  const next = req.query.next\n+  return inside(next) ? next : \"/\"\n }\n" };
 const DISK = `${"// filler\n".repeat(13)}export function after(req) {\n  const next = req.query.next\n  return inside(next) ? next : "/"\n}\n`;
 const repos: ThreadRepo[] = [
-  { repo_id: "p", name: "app", branch: "fix/login", added: 1, deleted: 0, trusted: true, files: ["auth/redirect.ts"] },
-  { repo_id: "planner", name: "orbyn-planner", branch: "fix/plan", added: 2, deleted: 1, trusted: true, files: ["auth/redirect.ts"] },
+  { repo_id: "p", name: "app", branch: "fix/login", base_branch: "main", added: 1, deleted: 0, trusted: true, files: ["auth/redirect.ts"] },
+  { repo_id: "planner", name: "orbyn-planner", branch: "fix/plan", base_branch: "develop", added: 2, deleted: 1, trusted: true, files: ["auth/redirect.ts"] },
 ];
 const row = (id: string, over: Partial<RepoRow> = {}): RepoRow => ({ id, name: id === "p" ? "app" : "orbyn-planner", path: `~/Github/${id}`, is_git: true, trusted: true,
   branch: "main", branches: ["main"], has_remote: false, primary: id === "p", clone: null, ...over });
@@ -352,4 +353,156 @@ it("an ordinary thread's turn totals read once, with the three arguments they al
   await waitFor(() => expect(within(picker).getByRole("menuitem")).toHaveTextContent("14:12 · +1 −0 · 1 file"));
   expect(within(picker).getByRole("menuitem")).not.toHaveTextContent("not counted");
   expect(diff).toHaveBeenCalledWith("t", expect.any(AbortSignal), "turn&run=r1");
+});
+
+// The Changes footer's Create pull request is the thread's chosen repository's, like the header's Git menu: an ordinary
+// thread and the primary repository are unchanged and send no repo_id.
+it("creates the pull request in the chosen repository, whose links and branches are read with its repo_id", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { branches, diff } = setup([FILE], "planner");
+  chooseRepo("t", "planner");
+  const action = vi.spyOn(api, "gitAction").mockResolvedValue({ phases: [] } as never);
+  render(<DiffPanel threadId="t" />);
+  const create = await screen.findByRole("button", { name: "Create pull request" });
+  await waitFor(() => expect(pullsApi.linked).toHaveBeenCalledWith("t", expect.any(AbortSignal), "planner"));
+  await user.click(create);
+  const dialog = await screen.findByRole("dialog", { name: "Create pull request", hidden: true });
+  expect(within(dialog).getByText("Acts on orbyn-planner only.")).toBeVisible();
+  await waitFor(() => expect(branches.mock.calls.some((call) => call[2] === "planner")).toBe(true));
+  await user.click(within(dialog).getByRole("button", { name: "Create pull request" }));
+  await waitFor(() => expect(action).toHaveBeenCalledWith("t", expect.objectContaining({ push: true, pull_request: expect.any(Object), repo_id: "planner" })));
+  // The branch-ahead check, which decides whether there is anything to carry, is that repository's read too, against
+  // the base that repository's worktree was cut from.
+  expect(diff.mock.calls.some((call) => call[2] === "branch&base=develop" && call[3] === "planner")).toBe(true);
+});
+
+it("compares the branch-ahead check against each selected repository's own base", async () => {
+  // The primary's worktree was cut from trunk and the planner's from develop. A multi-repository thread has no single
+  // worktree base, so before migration 90 both were compared against "main".
+  const based: ThreadRepo[] = [{ ...repos[0]!, base_branch: "trunk" }, { ...repos[1]!, base_branch: "develop" }];
+  setReposApi(createReposMock({ threads: { t: based } }));
+  const { diff } = setup([FILE], "planner");
+  render(<DiffPanel threadId="t" />);
+  // The primary repository's own base, read without a repo_id as the primary's calls are.
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "branch&base=trunk" && call.length === 3)).toBe(true));
+  // The chosen repository's own base, read with its repo_id.
+  act(() => chooseRepo("t", "planner"));
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "branch&base=develop" && call[3] === "planner")).toBe(true));
+});
+
+it("falls back to the older base when the repository's base was not recorded", async () => {
+  // A repository stored before migration 90 serves no base, so the thread's worktree base stays the comparison base,
+  // as it was before the service recorded one per repository.
+  const unrecorded: ThreadRepo[] = repos.map((repo) => ({ ...repo, base_branch: null }));
+  setReposApi(createReposMock({ threads: { t: unrecorded } }));
+  const { diff } = setup([FILE], "planner");
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "release" } } as never } });
+  chooseRepo("t", "planner");
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "branch&base=release" && call[3] === "planner")).toBe(true));
+  expect(diff.mock.calls.some((call) => String(call[2]).startsWith("branch&base=main"))).toBe(false);
+});
+
+it("an ordinary thread keeps comparing ahead against its worktree base, with no repository", async () => {
+  setReposApi(createReposMock({ threads: {} }));
+  const { diff } = setup();
+  useWorkspace.setState({ threads: { t: { id: "t", project_id: "p", cwd: "/repo", active_run: null, worktree: { path: "/repo", branch: "fix/login", base: "release" } } as never } });
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "branch&base=release" && call.length === 3)).toBe(true));
+  expect(diff.mock.calls.filter((call) => String(call[2]).startsWith("branch&")).every((call) => call.length === 3)).toBe(true);
+});
+
+// The offer follows the chosen repository's Git availability: a primary checkout whose Git read fails is not the
+// repository the button acts on, and a chosen repository whose own read fails keeps the button off.
+it("offers Create pull request for a chosen repository that answers Git when the primary's read fails", async () => {
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { branches } = setup([FILE], "planner");
+  branches.mockImplementation(async (_t, _s, repoId) => {
+    if (repoId === undefined) throw new ApiFailure("unexpected", "Git is not available.", 0);
+    return [{ name: "fix/plan", current: true, remote: false }, { name: "develop", current: false, remote: false }] as never;
+  });
+  chooseRepo("t", "planner");
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(branches.mock.calls.some((call) => call[2] === "planner")).toBe(true));
+  expect(await screen.findByRole("button", { name: "Create pull request" })).toBeVisible();
+});
+
+it("hides Create pull request when the chosen repository's own Git read fails", async () => {
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { branches } = setup();
+  branches.mockImplementation(async (_t, _s, repoId) => {
+    if (repoId === "planner") throw new ApiFailure("unexpected", "Git is not available.", 0);
+    return [{ name: "fix/login", current: true, remote: false }, { name: "main", current: false, remote: false }] as never;
+  });
+  chooseRepo("t", "planner");
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(branches.mock.calls.some((call) => call[2] === "planner")).toBe(true));
+  expect(screen.queryByRole("button", { name: "Create pull request" })).toBeNull();
+});
+
+it("offers no Create pull request where the chosen repository already has one linked", async () => {
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  setup([FILE], "planner");
+  chooseRepo("t", "planner");
+  vi.mocked(pullsApi.linked).mockImplementation(async (_threadId, _signal, repoId) => (repoId === "planner" ? [{ number: 4 } as never] : []));
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(pullsApi.linked).toHaveBeenCalledWith("t", expect.any(AbortSignal), "planner"));
+  expect(screen.queryByRole("button", { name: "Create pull request" })).toBeNull();
+});
+
+it("an ordinary thread's Create pull request reads and sends no repository", async () => {
+  const user = userEvent.setup();
+  setReposApi(createReposMock({ threads: {} }));
+  setup();
+  const action = vi.spyOn(api, "gitAction").mockResolvedValue({ phases: [] } as never);
+  render(<DiffPanel threadId="t" />);
+  await user.click(await screen.findByRole("button", { name: "Create pull request" }));
+  const dialog = await screen.findByRole("dialog", { name: "Create pull request", hidden: true });
+  await user.click(within(dialog).getByRole("button", { name: "Create pull request" }));
+  await waitFor(() => expect(action).toHaveBeenCalledWith("t", expect.objectContaining({ push: true, pull_request: expect.any(Object) })));
+  expect(action.mock.calls[0]![1]).not.toHaveProperty("repo_id");
+  expect(vi.mocked(pullsApi.linked).mock.calls.every((call) => call.length === 2)).toBe(true);
+});
+
+it("counts only the chosen repository's own changes before offering Create pull request", async () => {
+  setReposApi(createReposMock({ threads: { t: repos } }));
+  const { diff } = setup();
+  // The working tree holds changes in the primary repository only; the chosen repository is clean and nothing is committed
+  // ahead of its base there. Another repository's file in the same list is not the chosen repository's to carry.
+  diff.mockImplementation(async (_t, _s, scope, repoId) =>
+    (String(scope).startsWith("branch&") || repoId === "planner" ? [] : [FILE]));
+  chooseRepo("t", "planner");
+  render(<DiffPanel threadId="t" />);
+  await waitFor(() => expect(pullsApi.linked).toHaveBeenCalledWith("t", expect.any(AbortSignal), "planner"));
+  // The chosen repository's own read has answered before the offer is judged.
+  await waitFor(() => expect(diff.mock.calls.some((call) => call[2] === "worktree" && call[3] === "planner")).toBe(true));
+  await waitFor(() => expect(screen.queryByRole("button", { name: "Create pull request" })).toBeNull());
+});
+
+it("keeps the pull request dialog on the repository it opened for when the repository read fails behind it", async () => {
+  const user = userEvent.setup();
+  const mock = createReposMock({ threads: { t: repos } });
+  setReposApi(mock);
+  const { diff } = setup([FILE], "planner");
+  chooseRepo("t", "planner");
+  const action = vi.spyOn(api, "gitAction").mockResolvedValue({ phases: [] } as never);
+  const threadRepos = vi.spyOn(mock, "threadRepos");
+  render(<DiffPanel threadId="t" />);
+  await user.click(await screen.findByRole("button", { name: "Create pull request" }));
+  const dialog = await screen.findByRole("dialog", { name: "Create pull request", hidden: true });
+  expect(within(dialog).getByText("Acts on orbyn-planner only.")).toBeVisible();
+  // A repository read fails behind the open dialog, as a refresh during a service hiccup can: the list is gone, the target is not.
+  threadRepos.mockRejectedValueOnce(new ApiFailure("unexpected", "Something went wrong.", 0));
+  act(() => useThreadLogs.getState().touchDiff("t"));
+  await waitFor(() => expect(threadRepos.mock.calls.length).toBeGreaterThan(1));
+  // The list really went: the changes read again names no repository, as it does with no list to choose from.
+  await waitFor(() => {
+    const worktree = diff.mock.calls.filter((call) => call[2] === "worktree");
+    expect(worktree.at(-1)?.[3]).toBeUndefined();
+  });
+  const kept = await screen.findByRole("dialog", { name: "Create pull request", hidden: true });
+  expect(within(kept).getByText("Acts on orbyn-planner only.")).toBeVisible();
+  await user.click(within(kept).getByRole("button", { name: "Create pull request" }));
+  await waitFor(() => expect(action).toHaveBeenCalledWith("t", expect.objectContaining({ repo_id: "planner" })));
 });

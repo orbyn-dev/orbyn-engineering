@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FlowCell } from "../../../../generated/FlowCell";
 import type { FlowTaskRow } from "../../../../generated/FlowTaskRow";
 import { tasksPath } from "./api";
-import { cellOf, cellView, checkName, countOf, decidedBy, laneWord, roundView, shortCommit, shown, stageWord, STAGES, when, resumedNote, wasResumed } from "./model";
+import { cellOf, cellView, checkName, countOf, decidedBy, gateBlocks, gateDecisionWord, gateStageWord, laneWord, roundView, shortCommit, shown, stageWord, STAGES, taskFinal, when, resumedNote, wasResumed } from "./model";
 
 const row = (over: Partial<FlowTaskRow>): FlowTaskRow => ({ id: "t", name: "n", kind: "implement", owner: "Lead", state: "running", could_not_start: false, resumed: false, round: 1, cells: [], created_at: "", updated_at: "", ...over });
 
@@ -85,6 +85,24 @@ describe("the list's chips, counts and read", () => {
   it("reads a moment on the clock and shows an unreadable one as sent", () => {
     expect(when("not a time")).toBe("not a time");
     expect(when("2026-11-07T14:02:00Z")).toMatch(/Nov/);
+  });
+});
+
+describe("the gates view's words", () => {
+  it("titles a card by the served stage and decision", () => {
+    expect(gateStageWord("finding_check")).toBe("Finding check");
+    expect(gateStageWord("code_review")).toBe("Code review");
+    expect(gateStageWord("checks")).toBe("Checks");
+    expect(gateDecisionWord("pass")).toBe("passed");
+    expect(gateDecisionWord("fail")).toBe("failed");
+    expect(gateDecisionWord("confirmed")).toBe("confirmed");
+    expect(gateDecisionWord("unconfirmed")).toBe("unconfirmed");
+  });
+
+  it("marks a failed check or a confirmed finding as blocking, and knows the states a reason is served for", () => {
+    expect(["pass", "fail", "confirmed", "unconfirmed"].map(gateBlocks)).toEqual([false, true, true, false]);
+    expect(["passed", "stopped", "cancelled"].every(taskFinal)).toBe(true);
+    expect(["briefed", "running", "verifying", "failed", "needs_person", "changed_approach"].some(taskFinal)).toBe(false);
   });
 });
 

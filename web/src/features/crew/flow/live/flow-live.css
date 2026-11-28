@@ -114,3 +114,11 @@
 .fv-check-run b { font-weight: 500; color: var(--color-text); }
 .fv-artifacts { list-style: none; margin: 2px 0 0; padding: 0 0 0 10px; display: flex; flex-direction: column; gap: 3px; }
 .fv-artifacts li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 11.5px; color: var(--color-textSoft); }
+
+/* The gates view: the design's cards, one per served decision, wrapping at the view's width. */
+.fv-gates-cards { display: flex; flex-wrap: wrap; gap: 16px; min-width: 0; }
+.fv-gates-cards .cx-fbx { width: 340px; max-width: 100%; gap: 8px; }
+.fv-gates-cards .cx-fgt { position: static; }
+.fv-gate-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.fv-gate-head h6 { overflow-wrap: anywhere; }
+.fv-gate-reason { color: var(--color-textSoft); overflow-wrap: anywhere; }
