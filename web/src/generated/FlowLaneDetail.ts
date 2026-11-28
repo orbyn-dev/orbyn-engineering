@@ -2,15 +2,25 @@
 import type { FlowFinding } from "./FlowFinding";
 import type { FlowLane } from "./FlowLane";
 import type { FlowLaneGiven } from "./FlowLaneGiven";
+import type { FlowLaneRule } from "./FlowLaneRule";
 
 /**
- * One reviewer lane in full: the row the task zoom shows, what it was given and the findings it filed.
+ * One reviewer lane in full: the row the task zoom shows, what it was given, the repository rule that asked for it and the
+ * findings it filed.
  */
 export type FlowLaneDetail = { crew: string, 
 /**
  * The work task the lane reviewed.
  */
 task: string, lane: FlowLane, given: FlowLaneGiven, 
+/**
+ * The rule that asked for this lane, read at the commit the work started from.
+ */
+rule?: FlowLaneRule | null, 
+/**
+ * Why there is no rule: `no_checkout`, `no_base` or `unreadable`. Absent when `rule` is there.
+ */
+rule_absent?: string | null, 
 /**
  * Every finding this lane filed, in every round.
  */
