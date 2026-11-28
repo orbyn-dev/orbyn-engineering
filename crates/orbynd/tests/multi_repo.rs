@@ -443,3 +443,122 @@ async fn a_watch_names_the_repository_its_pull_request_is_in() {
         .await;
     assert_eq!(watches.as_array().unwrap().len(), 1);
 }
+
+/// A run in a multi-repository thread is snapshotted in each repository's worktree, so its turn and thread
+/// diffs read in the repository one names instead of answering `404 not_found` because the task folder is
+/// not a checkout. The engine names the file it writes by its absolute path, as a tool call may.
+#[tokio::test]
+async fn a_multi_repository_run_keeps_a_checkpoint_in_each_repository() {
+    let dir = TempDir::new();
+    let data = dir.path().join("data");
+    let service = Service::start(
+        &data,
+        Options {
+            env: vec![
+                ("ORBYN_MULTI_REPO".to_owned(), "1".to_owned()),
+                (
+                    "ORBYN_FAKE_CHECKOUT".to_owned(),
+                    data.to_string_lossy().into_owned(),
+                ),
+            ],
+            ..Options::default()
+        },
+    );
+    let project = service.project(&dir.path().join("project"), true).await;
+    // The project's own repository and a second one of the thread, each with one commit so HEAD exists.
+    seed_repo(
+        &dir.path().join("library/repo/project"),
+        &[("base.txt", "base\n")],
+    );
+    let other = seed_repo(&dir.path().join("other"), &[("base.txt", "base\n")]);
+    let other_id = add_trusted(&service, &project, &other).await;
+    let (status, thread) = service
+        .send(
+            &format!("/api/projects/{project}/repo-threads"),
+            json!({
+                "repos": [
+                    { "repo_id": project, "base_branch": "main" },
+                    { "repo_id": other_id, "base_branch": "main" },
+                ],
+                "engine": "codex",
+                "model": null,
+                "permission_mode": "supervised",
+                "message": null,
+                "branch_name": null,
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{thread}");
+    let thread_id = thread["id"].as_str().unwrap().to_owned();
+    let task = service
+        .json(&format!("/api/threads/{thread_id}/task-folder"))
+        .await;
+    let primary_dir = worktree_of(&task, &project);
+    let other_dir = worktree_of(&task, &other_id);
+    let written = primary_dir.join("written.txt");
+    let run = service
+        .admit(&thread_id, &format!("[write:{}]", written.display()))
+        .await;
+    assert_eq!(service.finished(&thread_id).await, "completed");
+
+    // The run's turn diff is the primary repository's, read in its worktree rather than the task folder.
+    let turn = service
+        .json(&format!(
+            "/api/threads/{thread_id}/diff?scope=turn&run={run}"
+        ))
+        .await;
+    assert_eq!(paths(&turn), ["written.txt"]);
+    // The second repository has the run's checkpoint too, and its tree did not change.
+    let second = service
+        .json(&format!(
+            "/api/threads/{thread_id}/diff?scope=turn&run={run}&repo_id={other_id}"
+        ))
+        .await;
+    assert!(
+        second.as_array().unwrap().is_empty(),
+        "the run changed nothing in the second repository: {second}"
+    );
+    // The whole-thread diff starts at the first checkpoint of the repository it names.
+    let whole = service
+        .json(&format!("/api/threads/{thread_id}/diff?scope=thread"))
+        .await;
+    assert_eq!(paths(&whole), ["written.txt"]);
+    // The turn picker lists the run, so a person can ask for its diff.
+    let checkpoints = service
+        .json(&format!("/api/threads/{thread_id}/checkpoints"))
+        .await;
+    assert!(
+        checkpoints
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|checkpoint| checkpoint["run_id"] == run),
+        "{checkpoints}"
+    );
+    assert!(
+        !other_dir.join("written.txt").exists(),
+        "the write was in the primary repository's worktree only"
+    );
+    // A restore moves each worktree to the run's start, in that repository's own Git objects.
+    // A file only the second worktree has makes its own restore observable: skipping that worktree would leave it.
+    std::fs::write(other_dir.join("later.txt"), "later\n").unwrap();
+    let (status, body) = service
+        .send(
+            &format!("/api/threads/{thread_id}/restore"),
+            json!({ "run_id": run, "point": "start" }),
+        )
+        .await;
+    assert_eq!(status, 204, "{body}");
+    assert!(
+        !written.exists(),
+        "the restore removed the file the run added"
+    );
+    assert!(
+        !other_dir.join("later.txt").exists(),
+        "the restore moved the second repository's worktree to the run's start too"
+    );
+    assert!(
+        primary_dir.join("base.txt").exists() && other_dir.join("base.txt").exists(),
+        "a restore leaves the tracked files it did not change"
+    );
+}

@@ -1,5 +1,6 @@
+use crate::store::NewThread;
 use crate::store::thread_repos::ThreadRepoRecord;
-use orbyn_contracts::{GitAction, OpenInEditor, WriteFile};
+use orbyn_contracts::{GitAction, OpenInEditor, RestorePoint, RestoreWorkspace, WriteFile};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -1741,36 +1742,185 @@ async fn a_turn_diff_reads_the_checkpoint_in_the_repository_its_scope_names() {
         &[(&project, "main", &main), (&other_id, "other", &other)],
     );
     let index = dir.path().join("checkpoint-index");
-    // A checkpoint of the primary repository, read with no repository named.
-    let start = git::snapshot(&folder.join("main"), None, &index)
+    // A checkpoint of the primary repository, read with no repository named. Capture keeps the repository's own
+    // ends, and the run's row keeps the first repository's, which is this one.
+    let primary_start = git::snapshot(&folder.join("main"), None, &index)
         .await
         .unwrap();
     std::fs::write(folder.join("main/primary.txt"), "primary\n").unwrap();
-    let end = git::snapshot(&folder.join("main"), None, &index)
+    let primary_end = git::snapshot(&folder.join("main"), None, &index)
         .await
         .unwrap();
     core.store
-        .add_checkpoint(&thread, "run-primary", &start)
+        .add_repository_checkpoint(&thread, "run-primary", &project, &primary_start)
         .unwrap();
-    core.store.finish_checkpoint("run-primary", &end).unwrap();
+    core.store
+        .finish_repository_checkpoint("run-primary", &project, &primary_end)
+        .unwrap();
+    core.store
+        .add_checkpoint(&thread, "run-primary", &primary_start)
+        .unwrap();
+    core.store
+        .finish_checkpoint("run-primary", &primary_end)
+        .unwrap();
     let files = core.turn_diff(&thread, "run-primary").await.unwrap();
     assert_eq!(diff_paths(&files), ["primary.txt"]);
-    // A checkpoint of the second repository, read through its scope.
-    let start = git::snapshot(&folder.join("other"), None, &index)
+    // A checkpoint of the second repository, read through its scope. The run's own row still holds the first
+    // repository's ends, so a read in the second repository has to take its own row.
+    let second_start = git::snapshot(&folder.join("other"), None, &index)
         .await
         .unwrap();
     std::fs::write(folder.join("other/second.txt"), "second\n").unwrap();
-    let end = git::snapshot(&folder.join("other"), None, &index)
+    let second_end = git::snapshot(&folder.join("other"), None, &index)
         .await
         .unwrap();
     core.store
-        .add_checkpoint(&thread, "run-second", &start)
+        .add_repository_checkpoint(&thread, "run-second", &other_id, &second_start)
         .unwrap();
-    core.store.finish_checkpoint("run-second", &end).unwrap();
+    core.store
+        .finish_repository_checkpoint("run-second", &other_id, &second_end)
+        .unwrap();
+    core.store
+        .add_checkpoint(&thread, "run-second", &primary_start)
+        .unwrap();
+    core.store
+        .finish_checkpoint("run-second", &primary_end)
+        .unwrap();
     let files = crate::in_repo(Some(other_id), core.turn_diff(&thread, "run-second"))
         .await
         .unwrap();
     assert_eq!(diff_paths(&files), ["second.txt"]);
+}
+
+/// A run with a checkpoint in each of a two-repository thread's worktrees, taken before either one changed.
+async fn seed_restore_checkpoints(
+    core: &Core,
+    thread: &str,
+    project: &str,
+    other_id: &str,
+    folder: &Path,
+    run: &str,
+    index: &Path,
+) {
+    for (repo_id, worktree) in [
+        (project, folder.join("main")),
+        (other_id, folder.join("other")),
+    ] {
+        let start = crate::source_control::git::snapshot(&worktree, None, index)
+            .await
+            .unwrap();
+        core.store
+            .add_repository_checkpoint(thread, run, repo_id, &start)
+            .unwrap();
+    }
+}
+
+/// A live thread in `project` whose folder is `cwd`: someone else's work in one of the folders a restore reads.
+fn neighbor(core: &Core, project: &str, cwd: &Path) -> String {
+    core.store
+        .create_thread(NewThread {
+            project_id: project.to_owned(),
+            title: "neighbor".into(),
+            engine: "codex".into(),
+            model: None,
+            cwd: path_text(cwd),
+            worktree: None,
+            skill_profile: None,
+            parent_thread_id: None,
+            relation: None,
+            scratch: false,
+        })
+        .unwrap()
+        .id
+}
+
+/// A restore moves every trusted worktree of a multi-repository thread, so it is refused while another live thread
+/// works in any one of them. The thread's own folder is the task folder here, so checking only that folder would
+/// move a repository another thread is working in.
+#[tokio::test]
+async fn a_restore_moves_no_worktree_another_live_thread_is_working_in() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let (thread, folder) = repo_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&other_id, "other", &other)],
+    );
+    let run = "run-shared-root";
+    let index = dir.path().join("restore-index");
+    seed_restore_checkpoints(&core, &thread, &project, &other_id, &folder, run, &index).await;
+    // Another live thread works in the second repository's worktree, with a file of its own there. A file only the
+    // first worktree has makes a partial restore observable: the refusal must come before either worktree moves.
+    let _neighbor = neighbor(&core, &project, &folder.join("other"));
+    std::fs::write(folder.join("other/theirs.txt"), "theirs\n").unwrap();
+    std::fs::write(folder.join("main/kept.txt"), "kept\n").unwrap();
+    let error = core
+        .restore_workspace(
+            &thread,
+            &RestoreWorkspace {
+                run_id: run.into(),
+                point: RestorePoint::Start,
+            },
+            "tester",
+        )
+        .await
+        .expect_err("a restore must not move a worktree another live thread is working in");
+    assert!(matches!(error, CoreError::SharedDirectory(_)), "{error:?}");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("other/theirs.txt")).unwrap(),
+        "theirs\n",
+        "no worktree was moved"
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("main/kept.txt")).unwrap(),
+        "kept\n",
+        "the first worktree was not moved before the refusal"
+    );
+}
+
+/// The thread's own folder is checked as well: a multi-repository thread's folder is a task folder another live
+/// thread can be working in, though a restore never writes it.
+#[tokio::test]
+async fn a_restore_is_refused_while_another_live_thread_works_in_the_threads_folder() {
+    let dir = TempDir::new();
+    let (core, project, other_id, main, other) = two_trusted(&dir).await;
+    let (thread, folder) = repo_thread(
+        &core,
+        &project,
+        &[(&project, "main", &main), (&other_id, "other", &other)],
+    );
+    let run = "run-shared-folder";
+    let index = dir.path().join("restore-index");
+    seed_restore_checkpoints(&core, &thread, &project, &other_id, &folder, run, &index).await;
+    let stored = core.store.thread(&thread).unwrap();
+    let _neighbor = neighbor(&core, &project, Path::new(&stored.cwd));
+    std::fs::write(folder.join("theirs.txt"), "theirs\n").unwrap();
+    // A file only the first worktree has shows the refusal came before any worktree moved.
+    std::fs::write(folder.join("main/kept.txt"), "kept\n").unwrap();
+    let error = core
+        .restore_workspace(
+            &thread,
+            &RestoreWorkspace {
+                run_id: run.into(),
+                point: RestorePoint::Start,
+            },
+            "tester",
+        )
+        .await
+        .expect_err(
+            "a restore must not move files while another live thread works in the thread's folder",
+        );
+    assert!(matches!(error, CoreError::SharedDirectory(_)), "{error:?}");
+    assert_eq!(
+        std::fs::read_to_string(folder.join("theirs.txt")).unwrap(),
+        "theirs\n",
+        "no worktree was moved"
+    );
+    assert_eq!(
+        std::fs::read_to_string(folder.join("main/kept.txt")).unwrap(),
+        "kept\n",
+        "the first worktree was not moved before the refusal"
+    );
 }
 
 #[tokio::test]

@@ -208,6 +208,9 @@ pub struct Core {
     pub(crate) tool_probes:
         Mutex<std::collections::HashMap<String, Arc<crate::agents::tools_report::ToolsProbe>>>,
     pub(crate) cleanup_policy_gate: tokio::sync::RwLock<()>,
+    /// One workspace restore at a time: a second one could snapshot the folders the first has already moved and not
+    /// the rest, recording half a restore as the point to come back to.
+    pub(crate) workspace_restores: tokio::sync::Mutex<()>,
     /// Crew Preview: one `crew_start` at a time, so two briefs cannot both be granted a path.
     pub(crate) crew_starts: tokio::sync::Mutex<()>,
     /// Crew Preview: one lease step at a time, so the live-lease read and the grant or terminal
@@ -411,6 +414,7 @@ impl Core {
             tool_lists: Mutex::new(Default::default()),
             tool_probes: Mutex::new(Default::default()),
             cleanup_policy_gate: tokio::sync::RwLock::new(()),
+            workspace_restores: tokio::sync::Mutex::new(()),
             crew_starts: tokio::sync::Mutex::new(()),
             crew_lease_grants: tokio::sync::Mutex::new(()),
             crew_bus: crate::crew::Bus::default(),
