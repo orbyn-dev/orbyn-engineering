@@ -292,8 +292,11 @@ Thread repositories and `repo_id` on Git and file calls, real against the first 
   said in words. A text file of that tab is drawn like the thread's own: Markdown and its siblings render, with Source and line
   comments beside Preview, and any other text is the editor; a line comment carries that repository's `repo_id` and name, so the
   chip and the message the agent receives name its file. It still offers no "Add file to message" and no absolute path (those name
-  a checkout's path), and a file link inside its rendered Markdown resolves against the thread's folder (the Changes panel's rendered
-  Markdown has the same limit). Its image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
+  a checkout's path), and a link in its rendered Markdown opens that repository's tab while an image or video it draws
+  loads from that repository's worktree. An absolute path is left as written there: the thread's task folder holds every
+  worktree, so the app has no absolute root for one repository to strip, and asking it without the `repo_id` would read
+  whichever same-named file the folder happens to hold. The Changes panel's rendered Markdown still resolves against the
+  thread's folder. Its image, PDF, video, audio, font, archive, document, binary and truncated files load from their own repository's
   worktree: the client sends `repo_id` on `GET .../files/raw`, whose bytes, `Range` answers, inline-or-attachment decision and
   `download` are that repository's file (see "As built: repo_id on Git and file calls"). The service's `previews/file` and
   `files/open` take one now too: the file-tab menu's outside editor, the binary view's Reveal/Open in editor and the viewer's Open in

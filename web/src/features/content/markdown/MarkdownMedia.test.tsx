@@ -5,7 +5,7 @@ import type { Thread } from "../../../api/types";
 import { useUi } from "../../../product/state/ui";
 import { useWorkspace } from "../../../product/state/workspace";
 import { Markdown } from "./Markdown";
-import { mediaCopyTarget, resolveMediaSource, workspacePath } from "./mediaSource";
+import { mediaCopyTarget, mediaSaveUrl, resolveMediaSource, workspacePath } from "./mediaSource";
 
 const atThread = () => {
   window.location.hash = "#/threads/t1";
@@ -134,6 +134,23 @@ describe("media sources", () => {
     expect(resolveMediaSource("https://example.com/clip.mp4?v=1", "a", null)?.kind).toBe("video");
     expect(resolveMediaSource("https://example.com/a.png", "a", null)?.kind).toBe("image");
     expect(resolveMediaSource("mailto:ada@example.com", "a", null)).toBeNull();
+  });
+
+  it("reads a named repository's media from that repository and never from the thread's checkout", () => {
+    const foreign = { id: "t1", cwd: "/work/threads/7", repoId: "planner" };
+    const item = resolveMediaSource("art/plan.png", "plan", foreign)!;
+    expect(item).toMatchObject({ kind: "image", path: "art/plan.png", threadId: "t1", repoId: "planner" });
+    expect(new URL(item.src, "http://localhost").searchParams.get("repo_id")).toBe("planner");
+    expect(new URL(mediaSaveUrl(item)!, "http://localhost").searchParams.get("repo_id")).toBe("planner");
+    // The task folder holds every worktree, so an absolute path is not one repository's: it stays text rather
+    // than reading the primary or another worktree's same-named file.
+    expect(resolveMediaSource("/work/threads/7/planner/art/plan.png", "plan", foreign)).toBeNull();
+    expect(resolveMediaSource("/work/threads/7/art/plan.png", "plan", foreign)).toBeNull();
+    // Remote media names no repository, as for any message.
+    expect(resolveMediaSource("https://example.com/a.png", "a", foreign)).toMatchObject({
+      src: "/api/media/image?url=https%3A%2F%2Fexample.com%2Fa.png",
+    });
+    expect(resolveMediaSource("https://example.com/a.png", "a", foreign)).not.toHaveProperty("repoId");
   });
 });
 
