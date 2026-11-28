@@ -149,6 +149,10 @@ impl McpService {
             core.gate
                 .bind_review(Arc::new(crate::crew::GateReview(Arc::downgrade(core))));
         }
+        // A Crew worker's lease is not a Preview feature of the gate: it is bound whether or not
+        // Autopilot's review above was, so a write outside the lease is refused either way.
+        core.gate
+            .bind_lease(Arc::new(crate::crew::LeaseGuard(Arc::downgrade(core))));
     }
 
     pub fn register(&self, binding: McpBinding) -> Result<String> {

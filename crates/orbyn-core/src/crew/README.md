@@ -97,6 +97,8 @@ ids and enums, never text.
 - A lease is read for expiry when it is used, never by a timer; a lapsed one is recorded `expired`
   once and blocks nobody. `crew_start` takes one lock, so two briefs cannot both be granted a path.
   A worker's file change is refused at the gate when it is outside the lease, with the lease's own words.
+  The gate asks that check whether or not Autopilot's chain was bound, and a lease it cannot read is a
+  refusal, not a pass.
 - A crew-wide turn budget is one device-local number (`crew_turn_budget`, whole turns; 0 or unset is
   none), set in Settings › General. A crew's spend is the per-task tally summed over its tasks, so the two budgets cannot disagree; a new
   task is refused once the crew has spent it, and a task already running is never stopped by it. It fails closed: a budget or a

@@ -87,6 +87,7 @@ pub use classes::{
 };
 pub use gather::{LeftOut, Machine};
 pub use guard::{find_secret, key_needles, redact, refuse_leak, refuse_secret, withhold};
+pub(crate) use leases::LeaseGuard;
 pub use leases::refuse_protected;
 pub use needs_you::WORKER_STOPPED_TWICE;
 pub use protect::protected_changes;
